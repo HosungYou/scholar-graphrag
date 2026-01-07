@@ -4,36 +4,43 @@ Chat API Router
 Handles multi-agent chat interactions with graph-grounded responses.
 """
 
+import os
+import logging
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 
+from ..agents.orchestrator import AgentOrchestrator
+from ..llm.claude_provider import ClaudeProvider
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 # Pydantic Models
 class ChatMessage(BaseModel):
-    role: str  # "user" or "assistant"
+    role: str
     content: str
     timestamp: datetime
     citations: Optional[List[str]] = None
     highlighted_nodes: Optional[List[str]] = None
     highlighted_edges: Optional[List[str]] = None
+    suggested_follow_ups: Optional[List[str]] = None
 
 
 class ChatRequest(BaseModel):
     project_id: UUID
     message: str
     conversation_id: Optional[str] = None
+    include_trace: bool = False
 
 
 class ChatResponse(BaseModel):
     conversation_id: str
     message: ChatMessage
-    agent_trace: Optional[dict] = None  # Debug: show agent pipeline steps
+    agent_trace: Optional[dict] = None
 
 
 class ConversationHistory(BaseModel):
@@ -46,6 +53,26 @@ class ConversationHistory(BaseModel):
 
 # In-memory storage
 _conversations_db: dict = {}
+
+# Global orchestrator instance (lazy loaded)
+_orchestrator: Optional[AgentOrchestrator] = None
+
+
+def get_orchestrator() -> AgentOrchestrator:
+    """Get or create the global orchestrator instance."""
+    global _orchestrator
+    if _orchestrator is None:
+        llm_provider = None
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if api_key:
+            try:
+                llm_provider = ClaudeProvider(api_key=api_key)
+                logger.info("Initialized Claude LLM provider")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Claude provider: {e}")
+
+        _orchestrator = AgentOrchestrator(llm_provider=llm_provider)
+    return _orchestrator
 
 
 @router.post("/query", response_model=ChatResponse)
@@ -61,32 +88,49 @@ async def chat_query(request: ChatRequest):
     5. Reasoning Agent - Synthesize results
     6. Response Agent - Generate user-friendly response
     """
-    from uuid import uuid4
-
-    # Create or get conversation
     conversation_id = request.conversation_id or str(uuid4())
 
-    # TODO: Implement actual multi-agent pipeline
-    # For now, return a placeholder response
+    # Get orchestrator and process query
+    orchestrator = get_orchestrator()
 
-    user_message = ChatMessage(
-        role="user",
-        content=request.message,
-        timestamp=datetime.now(),
-    )
+    try:
+        result = await orchestrator.process_query(
+            query=request.message,
+            project_id=str(request.project_id),
+            conversation_id=conversation_id,
+            include_processing_steps=request.include_trace,
+        )
 
-    assistant_message = ChatMessage(
-        role="assistant",
-        content=f"[Placeholder] Processing query: '{request.message}'\n\n"
-        "The multi-agent system will analyze your query and provide "
-        "graph-grounded responses with citations.",
-        timestamp=datetime.now(),
-        citations=[],
-        highlighted_nodes=[],
-        highlighted_edges=[],
-    )
+        assistant_message = ChatMessage(
+            role="assistant",
+            content=result.content,
+            timestamp=datetime.now(),
+            citations=result.citations,
+            highlighted_nodes=result.highlighted_nodes,
+            highlighted_edges=result.highlighted_edges,
+            suggested_follow_ups=result.suggested_follow_ups,
+        )
 
-    # Store in conversation
+        agent_trace = None
+        if request.include_trace:
+            agent_trace = {
+                "intent": result.intent,
+                "confidence": result.confidence,
+                "processing_steps": result.processing_steps,
+            }
+
+    except Exception as e:
+        logger.error(f"Chat query failed: {e}")
+        assistant_message = ChatMessage(
+            role="assistant",
+            content=f"I encountered an error processing your request. Please try again.\n\nError: {str(e)}",
+            timestamp=datetime.now(),
+        )
+        agent_trace = {"error": str(e)} if request.include_trace else None
+
+    # Store conversation
+    user_message = ChatMessage(role="user", content=request.message, timestamp=datetime.now())
+
     if conversation_id not in _conversations_db:
         _conversations_db[conversation_id] = {
             "conversation_id": conversation_id,
@@ -96,21 +140,15 @@ async def chat_query(request: ChatRequest):
             "updated_at": datetime.now(),
         }
 
-    _conversations_db[conversation_id]["messages"].extend(
-        [user_message.model_dump(), assistant_message.model_dump()]
-    )
+    _conversations_db[conversation_id]["messages"].extend([
+        user_message.model_dump(), assistant_message.model_dump()
+    ])
     _conversations_db[conversation_id]["updated_at"] = datetime.now()
 
     return ChatResponse(
         conversation_id=conversation_id,
         message=assistant_message,
-        agent_trace={
-            "intent": "search",
-            "concepts_extracted": [],
-            "tasks_planned": [],
-            "queries_executed": [],
-            "reasoning_steps": [],
-        },
+        agent_trace=agent_trace,
     )
 
 
@@ -143,21 +181,91 @@ async def delete_conversation(conversation_id: str):
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
+class ExplainRequest(BaseModel):
+    node_name: Optional[str] = None
+    node_type: Optional[str] = None
+    node_properties: Optional[dict] = None
+
+
 @router.post("/explain/{node_id}")
-async def explain_node(node_id: str, project_id: UUID):
+async def explain_node(node_id: str, project_id: UUID, request: Optional[ExplainRequest] = None):
     """
     Generate AI explanation for a node when clicked in Exploration Mode.
-
-    This is called when user clicks a node in the graph visualization.
+    Uses the orchestrator's LLM provider for generation.
     """
-    # TODO: Implement node explanation using LLM
-    return {
-        "node_id": node_id,
-        "explanation": f"[Placeholder] AI explanation for node {node_id}",
-        "related_nodes": [],
-        "suggested_questions": [
-            "What methods does this paper use?",
-            "What are the key findings?",
-            "How does this relate to other papers?",
-        ],
-    }
+    orchestrator = get_orchestrator()
+
+    # Build context for explanation
+    node_name = request.node_name if request else node_id
+    node_type = request.node_type if request else "Entity"
+    properties = request.node_properties if request else {}
+
+    # Generate explanation using orchestrator
+    query = f"Explain this {node_type}: {node_name}"
+
+    try:
+        result = await orchestrator.process_query(
+            query=query,
+            project_id=str(project_id),
+        )
+
+        return {
+            "node_id": node_id,
+            "explanation": result.content,
+            "related_nodes": result.highlighted_nodes,
+            "suggested_questions": result.suggested_follow_ups or [
+                f"What papers discuss {node_name}?",
+                f"How does {node_name} relate to other concepts?",
+                f"What are the key findings about {node_name}?",
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Node explanation failed: {e}")
+        return {
+            "node_id": node_id,
+            "explanation": f"Unable to generate explanation for {node_name}.",
+            "related_nodes": [],
+            "suggested_questions": [
+                "What papers discuss this topic?",
+                "Show related concepts",
+                "What are the key findings?",
+            ],
+        }
+
+
+@router.post("/ask-about/{node_id}")
+async def ask_about_node(node_id: str, project_id: UUID, question: str):
+    """
+    Ask a specific question about a node.
+    Called from NodeDetails "Ask AI" button.
+    """
+    conversation_id = str(uuid4())
+    orchestrator = get_orchestrator()
+
+    try:
+        result = await orchestrator.process_query(
+            query=question,
+            project_id=str(project_id),
+            conversation_id=conversation_id,
+        )
+
+        return {
+            "conversation_id": conversation_id,
+            "node_id": node_id,
+            "question": question,
+            "answer": result.content,
+            "citations": result.citations,
+            "highlighted_nodes": result.highlighted_nodes,
+            "suggested_follow_ups": result.suggested_follow_ups,
+        }
+    except Exception as e:
+        logger.error(f"Ask about node failed: {e}")
+        return {
+            "conversation_id": conversation_id,
+            "node_id": node_id,
+            "question": question,
+            "answer": f"I couldn't process your question. Error: {str(e)}",
+            "citations": [],
+            "highlighted_nodes": [],
+            "suggested_follow_ups": [],
+        }

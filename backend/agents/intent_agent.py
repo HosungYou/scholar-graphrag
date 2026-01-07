@@ -1,23 +1,27 @@
 """
 Intent Agent
 
-Classifies user intent using Few-Shot Learning.
-Categories: search, explore, explain, compare, create
+Classifies user intent using Few-Shot Learning with LLM.
+Categories: search, explore, explain, compare, create, summarize, identify_gaps
 """
 
+import json
+import logging
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
 
 class IntentType(str, Enum):
-    SEARCH = "search"           # Find papers/concepts matching criteria
-    EXPLORE = "explore"         # Navigate the graph
-    EXPLAIN = "explain"         # Explain a concept/paper/relationship
-    COMPARE = "compare"         # Compare multiple entities
-    CREATE = "create"           # Create new entities/relationships
-    SUMMARIZE = "summarize"     # Summarize a set of papers
-    IDENTIFY_GAPS = "identify_gaps"  # Find research gaps
+    SEARCH = "search"
+    EXPLORE = "explore"
+    EXPLAIN = "explain"
+    COMPARE = "compare"
+    CREATE = "create"
+    SUMMARIZE = "summarize"
+    IDENTIFY_GAPS = "identify_gaps"
 
 
 class IntentResult(BaseModel):
@@ -25,76 +29,68 @@ class IntentResult(BaseModel):
     confidence: float
     entities_mentioned: list[str] = []
     keywords: list[str] = []
+    reasoning: str = ""
 
 
 class IntentAgent:
-    """
-    Intent Agent using Few-Shot Learning to classify user queries.
-    """
+    """Intent Agent using Few-Shot Learning to classify user queries."""
 
-    # Few-shot examples for intent classification
     FEW_SHOT_EXAMPLES = [
-        {
-            "query": "What papers discuss machine learning?",
-            "intent": "search",
-            "reason": "User wants to find papers about a specific topic",
-        },
-        {
-            "query": "Show me papers connected to this author",
-            "intent": "explore",
-            "reason": "User wants to navigate the graph from a specific node",
-        },
-        {
-            "query": "Explain what this methodology means",
-            "intent": "explain",
-            "reason": "User wants an explanation of a concept",
-        },
-        {
-            "query": "Compare paper A with paper B",
-            "intent": "compare",
-            "reason": "User wants to compare multiple entities",
-        },
-        {
-            "query": "What are the research gaps in this field?",
-            "intent": "identify_gaps",
-            "reason": "User wants to find under-researched areas",
-        },
-        {
-            "query": "Summarize the findings from these papers",
-            "intent": "summarize",
-            "reason": "User wants a summary of multiple sources",
-        },
+        {"query": "What papers discuss machine learning?", "intent": "search"},
+        {"query": "Show me papers connected to this author", "intent": "explore"},
+        {"query": "Explain what this methodology means", "intent": "explain"},
+        {"query": "Compare paper A with paper B", "intent": "compare"},
+        {"query": "What are the research gaps?", "intent": "identify_gaps"},
+        {"query": "Summarize the findings", "intent": "summarize"},
     ]
+
+    SYSTEM_PROMPT = """Classify queries into: search, explore, explain, compare, summarize, identify_gaps.
+Respond with JSON: {"intent": "<type>", "confidence": 0.0-1.0, "keywords": [], "reasoning": "brief"}"""
 
     def __init__(self, llm_provider=None):
         self.llm = llm_provider
 
     async def classify(self, query: str) -> IntentResult:
-        """
-        Classify the intent of a user query.
-        """
-        # TODO: Use LLM with few-shot examples for classification
-        # For now, use simple keyword matching
+        """Classify user query intent. Uses LLM if available."""
+        if self.llm:
+            try:
+                return await self._classify_with_llm(query)
+            except Exception as e:
+                logger.warning(f"LLM classification failed: {e}")
+        return self._classify_with_keywords(query)
 
-        query_lower = query.lower()
+    async def _classify_with_llm(self, query: str) -> IntentResult:
+        """Use LLM with few-shot examples."""
+        examples = "\n".join([f"Q: \"{ex['query']}\" -> {ex['intent']}" for ex in self.FEW_SHOT_EXAMPLES])
+        prompt = f"Examples:\n{examples}\n\nClassify: \"{query}\""
 
-        # Simple keyword-based classification
-        if any(word in query_lower for word in ["compare", "versus", "vs", "difference"]):
-            intent = IntentType.COMPARE
-        elif any(word in query_lower for word in ["explain", "what is", "what does", "define"]):
-            intent = IntentType.EXPLAIN
-        elif any(word in query_lower for word in ["gap", "missing", "underresearched"]):
-            intent = IntentType.IDENTIFY_GAPS
-        elif any(word in query_lower for word in ["summarize", "summary", "overview"]):
-            intent = IntentType.SUMMARIZE
-        elif any(word in query_lower for word in ["show", "navigate", "connected", "related"]):
-            intent = IntentType.EXPLORE
-        else:
-            intent = IntentType.SEARCH
-
-        return IntentResult(
-            intent=intent,
-            confidence=0.8,  # Placeholder confidence
-            entities_mentioned=[],  # Will be extracted by ConceptExtractionAgent
-            keywords=query_lower.split()[:5],  # Simple keyword extraction
+        response = await self.llm.generate(
+            prompt=prompt, system_prompt=self.SYSTEM_PROMPT, max_tokens=200, temperature=0.1
         )
+
+        try:
+            json_str = response.strip().replace("```json", "").replace("```", "").strip()
+            data = json.loads(json_str)
+            return IntentResult(
+                intent=IntentType(data.get("intent", "search")),
+                confidence=float(data.get("confidence", 0.8)),
+                keywords=data.get("keywords", []),
+                reasoning=data.get("reasoning", ""),
+            )
+        except Exception:
+            return self._classify_with_keywords(query)
+
+    def _classify_with_keywords(self, query: str) -> IntentResult:
+        """Fallback keyword-based classification."""
+        q = query.lower()
+        mappings = [
+            (IntentType.COMPARE, ["compare", "versus", "vs", "difference"]),
+            (IntentType.EXPLAIN, ["explain", "what is", "define", "meaning"]),
+            (IntentType.IDENTIFY_GAPS, ["gap", "missing", "underresearched"]),
+            (IntentType.SUMMARIZE, ["summarize", "summary", "overview"]),
+            (IntentType.EXPLORE, ["show", "connected", "related", "relationship"]),
+        ]
+        for intent, words in mappings:
+            if any(w in q for w in words):
+                return IntentResult(intent=intent, confidence=0.75, keywords=q.split()[:5])
+        return IntentResult(intent=IntentType.SEARCH, confidence=0.6, keywords=q.split()[:5])
