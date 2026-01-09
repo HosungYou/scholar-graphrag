@@ -1,10 +1,10 @@
 /**
  * Graph layout algorithms for Knowledge Graph visualization
- * Uses D3-force simulation for force-directed layout
+ * Enhanced with relationship-type styling and performance optimizations
  */
 
 import type { GraphEntity, GraphEdge, EntityType } from '@/types';
-import { Node, Edge } from 'reactflow';
+import { Node, Edge, MarkerType } from 'reactflow';
 
 interface LayoutNode {
   id: string;
@@ -40,6 +40,87 @@ const entityTypeGroups: Record<EntityType, { angle: number; radius: number }> = 
   Finding: { angle: Math.PI * 1.6, radius: 0.6 },
 };
 
+// Enhanced edge styling by relationship type
+const relationshipStyles: Record<string, {
+  stroke: string;
+  strokeWidth: number;
+  strokeDasharray?: string;
+  animated?: boolean;
+  markerEnd?: boolean;
+}> = {
+  AUTHORED_BY: {
+    stroke: '#10b981', // emerald
+    strokeWidth: 2,
+    markerEnd: true,
+  },
+  CITES: {
+    stroke: '#3b82f6', // blue
+    strokeWidth: 1.5,
+    strokeDasharray: '5 3',
+    animated: true,
+    markerEnd: true,
+  },
+  DISCUSSES_CONCEPT: {
+    stroke: '#8b5cf6', // violet
+    strokeWidth: 1.5,
+    markerEnd: true,
+  },
+  USES_METHOD: {
+    stroke: '#f59e0b', // amber
+    strokeWidth: 2,
+    markerEnd: true,
+  },
+  USES_DATASET: {
+    stroke: '#06b6d4', // cyan
+    strokeWidth: 1.5,
+    markerEnd: true,
+  },
+  SUPPORTS: {
+    stroke: '#22c55e', // green
+    strokeWidth: 2.5,
+    markerEnd: true,
+  },
+  CONTRADICTS: {
+    stroke: '#ef4444', // red
+    strokeWidth: 2.5,
+    strokeDasharray: '8 4',
+    markerEnd: true,
+  },
+  RELATED_TO: {
+    stroke: '#94a3b8', // slate
+    strokeWidth: 1,
+    strokeDasharray: '3 3',
+  },
+  AFFILIATED_WITH: {
+    stroke: '#10b981', // emerald
+    strokeWidth: 1.5,
+    strokeDasharray: '2 2',
+  },
+  COLLABORATION: {
+    stroke: '#14b8a6', // teal
+    strokeWidth: 1.5,
+  },
+};
+
+// Default edge style
+const defaultEdgeStyle = {
+  stroke: '#94a3b8',
+  strokeWidth: 1,
+  markerEnd: false,
+};
+
+/**
+ * Get styled edge configuration based on relationship type
+ */
+function getEdgeStyle(relationshipType: string): Edge['style'] & { animated?: boolean } {
+  const style = relationshipStyles[relationshipType] || defaultEdgeStyle;
+  return {
+    stroke: style.stroke,
+    strokeWidth: style.strokeWidth,
+    ...(style.strokeDasharray && { strokeDasharray: style.strokeDasharray }),
+  };
+}
+
 /**
  * Simple force-directed layout without D3 dependency
  * Uses custom implementation for better bundle size
@@ -61,7 +142,7 @@ export function forceDirectedLayout(
   const centerY = height / 2;
 
   // Initialize node positions using entity type clustering
-  const layoutNodes: LayoutNode[] = nodes.map((node, i) => {
+  const layoutNodes: LayoutNode[] = nodes.map((node) => {
     const group = entityTypeGroups[node.entity_type];
     const jitter = Math.random() * 100 - 50;
     const radiusOffset = Math.random() * 100;
@@ -159,7 +240,7 @@ export function forceDirectedLayout(
     }
   }
 
-  // Convert to React Flow format
+  // Convert to React Flow format with enhanced styling
   const flowNodes: Node[] = nodes.map((node) => {
     const layoutNode = nodeMap.get(node.id)!;
     return {
@@ -171,24 +252,54 @@ export function forceDirectedLayout(
         entityType: node.entity_type,
         properties: node.properties,
         isHighlighted: false,
+        importance: calculateImportance(node, edges),
+        citationCount: (node.properties as Record<string, unknown>)?.citation_count as number | undefined,
       },
     };
   });
 
-  const flowEdges: Edge[] = edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    label: edge.relationship_type.replace(/_/g, ' '),
-    type: 'smoothstep',
-    animated: false,
-    style: {
-      stroke: '#94A3B8',
-      strokeWidth: 1,
-    },
-  }));
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: edge.relationship_type.replace(/_/g, ' '),
+      type: 'smoothstep',
+      animated: style.animated || false,
+      style: getEdgeStyle(edge.relationship_type),
+      labelStyle: {
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono, monospace',
+        fill: '#64748b',
+      },
+      labelBgStyle: {
+        fill: 'rgba(255, 255, 255, 0.8)',
+        fillOpacity: 0.8,
+      },
+      markerEnd: style.markerEnd ? {
+        type: MarkerType.ArrowClosed,
+        color: style.stroke,
+        width: 15,
+        height: 15,
+      } : undefined,
+      className: `edge-${edge.relationship_type.toLowerCase().replace(/_/g, '-')}`,
+    };
+  });
 
   return { nodes: flowNodes, edges: flowEdges };
+}
+
+/**
+ * Calculate node importance based on connections
+ */
+function calculateImportance(node: GraphEntity, edges: GraphEdge[]): number {
+  const connections = edges.filter(
+    e => e.source === node.id || e.target === node.id
+  ).length;
+  
+  // Normalize to 0-1 scale (assuming max 20 connections)
+  return Math.min(connections / 20, 1);
 }
 
 /**
@@ -294,21 +405,105 @@ export function hierarchicalLayout(
       entityType: node.entity_type,
       properties: node.properties,
       isHighlighted: false,
+      importance: calculateImportance(node, edges),
     },
   }));
 
-  const flowEdges: Edge[] = edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    label: edge.relationship_type.replace(/_/g, ' '),
-    type: 'smoothstep',
-    animated: false,
-    style: {
-      stroke: '#94A3B8',
-      strokeWidth: 1,
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: edge.relationship_type.replace(/_/g, ' '),
+      type: 'smoothstep',
+      animated: style.animated || false,
+      style: getEdgeStyle(edge.relationship_type),
+      markerEnd: style.markerEnd ? {
+        type: MarkerType.ArrowClosed,
+        color: style.stroke,
+        width: 15,
+        height: 15,
+      } : undefined,
+    };
+  });
+
+  return { nodes: flowNodes, edges: flowEdges };
+}
+
+/**
+ * Radial layout - Central node with others arranged in concentric circles
+ */
+export function radialLayout(
+  nodes: GraphEntity[],
+  edges: GraphEdge[],
+  options: LayoutOptions = {}
+): { nodes: Node[]; edges: Edge[] } {
+  const { width = 1200, height = 800 } = options;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  // Group nodes by entity type
+  const nodesByType = new Map<EntityType, GraphEntity[]>();
+  for (const node of nodes) {
+    const group = nodesByType.get(node.entity_type) || [];
+    group.push(node);
+    nodesByType.set(node.entity_type, group);
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+  const typeOrder: EntityType[] = ['Paper', 'Author', 'Concept', 'Method', 'Finding'];
+  
+  let currentRadius = 0;
+  const radiusIncrement = 150;
+
+  for (const type of typeOrder) {
+    const typeNodes = nodesByType.get(type) || [];
+    if (typeNodes.length === 0) continue;
+
+    currentRadius += radiusIncrement;
+    const angleStep = (2 * Math.PI) / typeNodes.length;
+
+    typeNodes.forEach((node, i) => {
+      const angle = i * angleStep - Math.PI / 2; // Start from top
+      positions.set(node.id, {
+        x: centerX + Math.cos(angle) * currentRadius,
+        y: centerY + Math.sin(angle) * currentRadius,
+      });
+    });
+  }
+
+  // Convert to React Flow format
+  const flowNodes: Node[] = nodes.map((node) => ({
+    id: node.id,
+    type: node.entity_type.toLowerCase(),
+    position: positions.get(node.id) || { x: centerX, y: centerY },
+    data: {
+      label: node.name,
+      entityType: node.entity_type,
+      properties: node.properties,
+      isHighlighted: false,
+      importance: calculateImportance(node, edges),
     },
   }));
+
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: 'bezier', // Bezier curves work better for radial layout
+      animated: style.animated || false,
+      style: getEdgeStyle(edge.relationship_type),
+      markerEnd: style.markerEnd ? {
+        type: MarkerType.ArrowClosed,
+        color: style.stroke,
+        width: 15,
+        height: 15,
+      } : undefined,
+    };
+  });
 
   return { nodes: flowNodes, edges: flowEdges };
 }
@@ -340,15 +535,16 @@ export function updateEdgeHighlights(
   const highlightSet = new Set(highlightedEdgeIds);
   return edges.map(edge => ({
     ...edge,
-    animated: highlightSet.has(edge.id),
+    animated: highlightSet.has(edge.id) || edge.animated,
     style: {
-      stroke: highlightSet.has(edge.id) ? '#F59E0B' : '#94A3B8',
-      strokeWidth: highlightSet.has(edge.id) ? 2 : 1,
+      ...edge.style,
+      stroke: highlightSet.has(edge.id) ? '#facc15' : edge.style?.stroke,
+      strokeWidth: highlightSet.has(edge.id) ? 3 : edge.style?.strokeWidth,
     },
   }));
 }
 
-export type LayoutType = 'force' | 'hierarchical';
+export type LayoutType = 'force' | 'hierarchical' | 'radial';
 
 export function applyLayout(
   nodes: GraphEntity[],
@@ -359,6 +555,8 @@ export function applyLayout(
   switch (layoutType) {
     case 'hierarchical':
       return hierarchicalLayout(nodes, edges, options);
+    case 'radial':
+      return radialLayout(nodes, edges, options);
     case 'force':
     default:
       return forceDirectedLayout(nodes, edges, options);

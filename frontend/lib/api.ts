@@ -81,8 +81,21 @@ class ApiClient {
     return this.request<GraphData['edges']>(`/api/graph/edges?project_id=${projectId}`);
   }
 
-  async getVisualizationData(projectId: string): Promise<GraphData> {
-    return this.request<GraphData>(`/api/graph/visualization/${projectId}`);
+  async getVisualizationData(
+    projectId: string,
+    params?: { limit?: number; cursor?: string | null; entity_types?: EntityType[] }
+  ): Promise<GraphData> {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set('limit', params.limit.toString());
+    if (params?.cursor) searchParams.set('cursor', params.cursor);
+    if (params?.entity_types) {
+      params.entity_types.forEach((type) => searchParams.append('entity_types', type));
+    }
+    const query = searchParams.toString();
+    const endpoint = query
+      ? `/api/graph/visualization/${projectId}?${query}`
+      : `/api/graph/visualization/${projectId}`;
+    return this.request<GraphData>(endpoint);
   }
 
   async getSubgraph(nodeId: string, depth: number = 1): Promise<GraphData> {

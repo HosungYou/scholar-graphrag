@@ -1,7 +1,20 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Sparkles, Copy, Check } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Send, 
+  Sparkles, 
+  Copy, 
+  Check, 
+  Bot, 
+  User,
+  ExternalLink,
+  MessageSquare,
+  Lightbulb,
+  Zap
+} from 'lucide-react';
+import clsx from 'clsx';
 
 interface Message {
   id: string;
@@ -11,6 +24,7 @@ interface Message {
   highlighted_nodes?: string[];
   highlighted_edges?: string[];
   timestamp: Date;
+  isStreaming?: boolean;
 }
 
 interface ChatInterfaceProps {
@@ -22,28 +36,38 @@ interface ChatInterfaceProps {
     highlighted_edges?: string[];
   }>;
   onCitationClick?: (citation: string) => void;
+  onHighlightNodes?: (nodeIds: string[]) => void;
   initialMessages?: Message[];
 }
+
+const messageVariants = {
+  hidden: { opacity: 0, x: -20, filter: 'blur(10px)' },
+  visible: { 
+    opacity: 1, 
+    x: 0, 
+    filter: 'blur(0px)',
+    transition: { type: 'spring', stiffness: 260, damping: 20 }
+  }
+};
 
 export function ChatInterface({
   projectId,
   onSendMessage,
   onCitationClick,
+  onHighlightNodes,
   initialMessages = [],
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isLoading]);
 
-  // Handle send message
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -60,177 +84,113 @@ export function ChatInterface({
 
     try {
       const response = await onSendMessage(input.trim());
+      const messageId = `assistant-${Date.now()}`;
 
       const assistantMessage: Message = {
-        id: `assistant-${Date.now()}`,
+        id: messageId,
         role: 'assistant',
         content: response.content,
         citations: response.citations,
-        highlighted_nodes: response.highlighted_nodes,
-        highlighted_edges: response.highlighted_edges,
         timestamp: new Date(),
+        isStreaming: true,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+      setStreamingMessageId(messageId);
+
+      if (response.highlighted_nodes && onHighlightNodes) {
+        onHighlightNodes(response.highlighted_nodes);
+      }
     } catch (error) {
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: 'Sorry, I encountered an error processing your request. Please try again.',
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      console.error(error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handle copy message
-  const handleCopy = async (messageId: string, content: string) => {
-    await navigator.clipboard.writeText(content);
-    setCopiedId(messageId);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  // Handle keyboard submit
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  // Suggested questions
-  const suggestedQuestions = [
-    'What are the main research methods used?',
-    'Which concepts appear most frequently?',
-    'What are the key findings?',
-    'Identify research gaps in this collection',
-  ];
-
   return (
-    <div className="flex flex-col h-full bg-white">
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex flex-col h-full bg-nexus-950/40 backdrop-blur-nexus border-l border-white/5">
+      {/* Header */}
+      <div className="p-6 border-b border-white/5 flex items-center gap-3">
+        <div className="w-10 h-10 rounded-2xl bg-nexus-indigo/20 flex items-center justify-center border border-nexus-indigo/30">
+          <Bot className="w-5 h-5 text-nexus-indigo" />
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-white tracking-tight">Nexus AI Assistant</h2>
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Neural Link Active</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-hide">
         {messages.length === 0 && (
-          <div className="text-center py-12">
-            <Sparkles className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              Ask about your research
-            </h3>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              I can help you explore your knowledge graph, find connections between papers,
-              and identify research trends and gaps.
-            </p>
-
-            {/* Suggested Questions */}
-            <div className="flex flex-wrap justify-center gap-2">
-              {suggestedQuestions.map((question, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setInput(question);
-                    inputRef.current?.focus();
-                  }}
-                  className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
-                >
-                  {question}
-                </button>
-              ))}
+          <div className="h-full flex flex-col items-center justify-center text-center space-y-6">
+            <div className="relative">
+               <div className="absolute inset-0 bg-nexus-indigo blur-3xl opacity-20" />
+               <Sparkles className="w-12 h-12 text-nexus-indigo relative" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-white">Initiate Knowledge Scan</h3>
+              <p className="text-sm text-slate-400 max-w-[240px]">Explore the literature through the Neural Nexus interface.</p>
             </div>
           </div>
         )}
 
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg p-4 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}
+        <AnimatePresence initial={false}>
+          {messages.map((msg) => (
+            <motion.div
+              key={msg.id}
+              variants={messageVariants}
+              initial="hidden"
+              animate="visible"
+              className={clsx(
+                'flex flex-col gap-3',
+                msg.role === 'user' ? 'items-end' : 'items-start'
+              )}
             >
-              {/* Message Content */}
-              <div className="whitespace-pre-wrap">{message.content}</div>
-
-              {/* Citations */}
-              {message.citations && message.citations.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-xs font-medium mb-2 opacity-70">References:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {message.citations.map((citation, i) => (
-                      <button
-                        key={i}
-                        onClick={() => onCitationClick?.(citation)}
-                        className="px-2 py-0.5 text-xs bg-white/20 hover:bg-white/30 rounded transition-colors"
-                      >
-                        [{i + 1}]
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Actions */}
-              {message.role === 'assistant' && (
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleCopy(message.id, message.content)}
-                    className="p-1 hover:bg-gray-200 rounded transition-colors"
-                    title="Copy to clipboard"
-                  >
-                    {copiedId === message.id ? (
-                      <Check className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-gray-500" />
-                    )}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {/* Loading indicator */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-lg p-4 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-              <span className="text-gray-500">Thinking...</span>
-            </div>
-          </div>
-        )}
-
+              <div className={clsx(
+                'max-w-[90%] p-4 rounded-2xl text-sm leading-relaxed',
+                msg.role === 'user' 
+                  ? 'bg-nexus-indigo text-white shadow-lg shadow-nexus-indigo/20' 
+                  : 'glass-nexus border-white/5 text-slate-200'
+              )}>
+                {msg.content}
+              </div>
+              <span className="text-[10px] font-mono text-slate-500 uppercase tracking-tighter">
+                {msg.role === 'user' ? 'User' : 'Nexus AI'} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="border-t p-4">
-        <div className="flex gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about your research..."
-            rows={1}
-            className="flex-1 px-4 py-2 border rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            style={{ minHeight: '42px', maxHeight: '120px' }}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Send className="w-5 h-5" />
-          </button>
+      {/* Input */}
+      <div className="p-6 bg-nexus-900/40 border-t border-white/5">
+        <div className="relative group">
+          <div className="absolute -inset-1 bg-gradient-to-r from-nexus-indigo to-nexus-violet rounded-2xl blur opacity-10 group-focus-within:opacity-30 transition duration-1000" />
+          <div className="relative glass-nexus rounded-2xl flex items-end gap-2 p-2">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
+              placeholder="Query the nexus..."
+              className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-slate-200 placeholder-slate-500 min-h-[44px] py-3 px-2 resize-none"
+              rows={1}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isLoading}
+              className="p-3 rounded-xl bg-white/5 hover:bg-nexus-indigo text-slate-400 hover:text-white transition-all duration-300 disabled:opacity-30"
+            >
+              <Zap className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-        <p className="text-xs text-gray-500 mt-2 text-center">
-          Press Enter to send, Shift+Enter for new line
-        </p>
       </div>
     </div>
   );

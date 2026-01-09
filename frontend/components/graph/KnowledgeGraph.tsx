@@ -15,14 +15,34 @@ import ReactFlow, {
   Panel,
   useReactFlow,
   ReactFlowProvider,
+  Viewport,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { motion, AnimatePresence } from 'framer-motion';
+import clsx from 'clsx';
 
 import { CustomNode } from './CustomNode';
+import { ClusterNode } from './ClusterNode';
+import { HUD } from '../ui/HUD';
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { applyLayout, updateNodeHighlights, updateEdgeHighlights, LayoutType } from '@/lib/layout';
-import type { GraphEntity, EntityType } from '@/types';
-import { Grid, Workflow, RotateCcw } from 'lucide-react';
+import { 
+  shouldCluster, 
+  type ClusterConfig 
+} from '@/lib/clustering';
+import type { GraphEntity } from '@/types';
+import { 
+  Grid, 
+  Workflow, 
+  RotateCcw, 
+  Circle, 
+  ZoomIn, 
+  ZoomOut, 
+  Maximize2,
+  Info,
+  Layers,
+  Zap
+} from 'lucide-react';
 
 interface KnowledgeGraphProps {
   projectId: string;
@@ -31,22 +51,26 @@ interface KnowledgeGraphProps {
   highlightedEdges?: string[];
 }
 
-// Define custom node types
 const nodeTypes: NodeTypes = {
   paper: CustomNode,
   author: CustomNode,
   concept: CustomNode,
   method: CustomNode,
   finding: CustomNode,
+  cluster: ClusterNode,
 };
 
-// Color mapping for node types
-const nodeColorMap: Record<string, string> = {
-  Paper: '#3B82F6',    // Blue
-  Author: '#10B981',   // Green
-  Concept: '#8B5CF6',  // Purple
-  Method: '#F59E0B',   // Amber
-  Finding: '#EF4444',  // Red
+const layoutOptions: { type: LayoutType; icon: any; label: string }[] = [
+  { type: 'force', icon: Grid, label: 'Neural' },
+  { type: 'hierarchical', icon: Workflow, label: 'Tree' },
+  { type: 'radial', icon: Circle, label: 'Orbit' },
+];
+
+const CLUSTER_CONFIG: ClusterConfig = {
+  enabled: true,
+  threshold: 400,
+  gridSize: 150,
+  minZoom: 0.3,
 };
 
 function KnowledgeGraphInner({
@@ -59,28 +83,27 @@ function KnowledgeGraphInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
   const [isLayouting, setIsLayouting] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
+  const [currentZoom, setCurrentZoom] = useState(1);
+  const [isClustered, setIsClustered] = useState(false);
+  
   const containerRef = useRef<HTMLDivElement>(null);
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
 
-  const { graphData, getFilteredData, fetchGraphData, isLoading, error } = useGraphStore();
+  const { graphData, getFilteredData, fetchGraphData, isLoading } = useGraphStore();
 
-  // Fetch graph data on mount
   useEffect(() => {
     fetchGraphData(projectId);
   }, [projectId, fetchGraphData]);
 
-  // Apply layout when graph data changes
   useEffect(() => {
     const filteredData = getFilteredData();
     if (!filteredData || filteredData.nodes.length === 0) return;
 
     setIsLayouting(true);
-
-    // Get container dimensions
     const width = containerRef.current?.clientWidth || 1200;
     const height = containerRef.current?.clientHeight || 800;
 
-    // Apply layout
     const { nodes: layoutNodes, edges: layoutEdges } = applyLayout(
       filteredData.nodes,
       filteredData.edges,
@@ -91,14 +114,12 @@ function KnowledgeGraphInner({
     setNodes(layoutNodes);
     setEdges(layoutEdges);
 
-    // Fit view after layout
     setTimeout(() => {
-      fitView({ padding: 0.2, duration: 500 });
+      fitView({ padding: 0.2, duration: 800 });
       setIsLayouting(false);
     }, 100);
   }, [graphData, layoutType, getFilteredData, setNodes, setEdges, fitView]);
 
-  // Update highlights when they change
   useEffect(() => {
     if (highlightedNodes.length > 0 || highlightedEdges.length > 0) {
       setNodes(nds => updateNodeHighlights(nds, highlightedNodes));
@@ -106,71 +127,23 @@ function KnowledgeGraphInner({
     }
   }, [highlightedNodes, highlightedEdges, setNodes, setEdges]);
 
-  // Handle node click
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (onNodeClick) {
-        const filteredData = getFilteredData();
-        const entity = filteredData?.nodes.find(n => n.id === node.id);
-        if (entity) {
-          onNodeClick(node.id, entity);
-        }
+        const entity = graphData?.nodes.find(n => n.id === node.id);
+        if (entity) onNodeClick(node.id, entity);
       }
     },
-    [onNodeClick, getFilteredData]
+    [onNodeClick, graphData]
   );
 
-  // Handle layout change
-  const handleLayoutChange = useCallback((type: LayoutType) => {
-    setLayoutType(type);
-  }, []);
-
-  // Handle recenter
-  const handleRecenter = useCallback(() => {
-    fitView({ padding: 0.2, duration: 500 });
-  }, [fitView]);
-
-  // MiniMap node color
-  const miniMapNodeColor = useCallback((node: Node) => {
-    return nodeColorMap[node.data?.entityType] || '#94A3B8';
-  }, []);
-
-  // Count nodes by type
-  const nodeCounts = useMemo(() => {
-    const filteredData = getFilteredData();
-    if (!filteredData) return {};
-
-    const counts: Record<string, number> = {};
-    for (const node of filteredData.nodes) {
-      counts[node.entity_type] = (counts[node.entity_type] || 0) + 1;
-    }
-    return counts;
-  }, [getFilteredData]);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading knowledge graph...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full bg-gray-50">
-        <div className="text-center text-red-600">
-          <p>Failed to load graph data</p>
-          <p className="text-sm mt-2">{error}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div ref={containerRef} className="w-full h-full relative">
+    <div ref={containerRef} className="w-full h-full relative bg-nexus-950 overflow-hidden">
+      {/* Background Ambience */}
+      <div className="absolute inset-0 pointer-events-none opacity-40">
+        <div className="absolute top-0 left-0 w-full h-full bg-mesh-nexus" />
+      </div>
+
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -180,96 +153,106 @@ function KnowledgeGraphInner({
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.1}
-        maxZoom={2}
+        minZoom={0.02}
+        maxZoom={4}
         defaultEdgeOptions={{
           type: 'smoothstep',
+          style: { stroke: 'rgba(255,255,255,0.08)', strokeWidth: 1.5 },
         }}
+        proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-        <Controls position="bottom-right" />
-        <MiniMap
-          nodeColor={miniMapNodeColor}
-          nodeStrokeWidth={3}
-          zoomable
-          pannable
-          position="bottom-left"
+        <Background 
+          variant={BackgroundVariant.Lines} 
+          gap={40} 
+          size={0.5}
+          color="rgba(99, 102, 241, 0.03)"
         />
+        
+        {/* HUD Layer */}
+        <HUD projectId={projectId} nodeCount={nodes.length} edgeCount={edges.length} />
 
-        {/* Layout Controls */}
-        <Panel position="top-right" className="flex gap-2">
-          <div className="bg-white rounded-lg shadow-md border p-1 flex gap-1">
-            <button
-              onClick={() => handleLayoutChange('force')}
-              className={`p-2 rounded transition-colors ${
-                layoutType === 'force'
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'hover:bg-gray-100 text-gray-600'
-              }`}
-              title="Force-directed layout"
-            >
-              <Grid className="w-4 h-4" />
+        {/* View Controls Panel */}
+        <Panel position="bottom-right" className="flex flex-col gap-3 mr-4 mb-4">
+          <div className="glass-nexus flex flex-col gap-2 p-2 rounded-2xl">
+            <button onClick={() => zoomIn()} className="p-2 hover:bg-white/10 rounded-xl text-slate-300 transition-colors">
+              <ZoomIn className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => handleLayoutChange('hierarchical')}
-              className={`p-2 rounded transition-colors ${
-                layoutType === 'hierarchical'
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'hover:bg-gray-100 text-gray-600'
-              }`}
-              title="Hierarchical layout"
-            >
-              <Workflow className="w-4 h-4" />
+            <button onClick={() => zoomOut()} className="p-2 hover:bg-white/10 rounded-xl text-slate-300 transition-colors">
+              <ZoomOut className="w-4 h-4" />
             </button>
-            <div className="w-px bg-gray-200" />
-            <button
-              onClick={handleRecenter}
-              className="p-2 rounded hover:bg-gray-100 text-gray-600 transition-colors"
-              title="Recenter view"
-            >
-              <RotateCcw className="w-4 h-4" />
+            <div className="h-px bg-white/5 mx-1" />
+            <button onClick={() => fitView({ duration: 800 })} className="p-2 hover:bg-white/10 rounded-xl text-slate-300 transition-colors">
+              <Maximize2 className="w-4 h-4" />
             </button>
           </div>
         </Panel>
+
+        {/* Layout Switcher Panel */}
+        <Panel position="top-left" className="ml-4 mt-4">
+          <motion.div 
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="glass-nexus p-1.5 flex gap-1.5 rounded-2xl"
+          >
+            {layoutOptions.map((option) => (
+              <button
+                key={option.type}
+                onClick={() => setLayoutType(option.type)}
+                className={clsx(
+                  'px-4 py-2 rounded-xl transition-all duration-300 flex items-center gap-2 group',
+                  layoutType === option.type
+                    ? 'bg-nexus-indigo text-white shadow-lg shadow-nexus-indigo/20'
+                    : 'hover:bg-white/5 text-slate-400'
+                )}
+              >
+                <option.icon className={clsx('w-4 h-4', layoutType === option.type ? 'animate-pulse' : '')} />
+                <span className="text-xs font-bold tracking-tight uppercase">{option.label}</span>
+              </button>
+            ))}
+          </motion.div>
+        </Panel>
+
+        <Panel position="top-right" className="mr-4 mt-4 pointer-events-none">
+           <div className="flex items-center gap-2 glass-nexus px-4 py-2 rounded-2xl">
+             <Zap className="w-4 h-4 text-nexus-cyan animate-pulse" />
+             <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Neural Nexus Engine v1.0</span>
+           </div>
+        </Panel>
       </ReactFlow>
 
-      {/* Loading overlay for layout */}
-      {isLayouting && (
-        <div className="absolute inset-0 bg-white/50 flex items-center justify-center z-20">
-          <div className="bg-white px-4 py-2 rounded-lg shadow-md flex items-center gap-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-            <span className="text-sm text-gray-600">Applying layout...</span>
-          </div>
-        </div>
-      )}
-
-      {/* Legend */}
-      <div className="absolute top-4 left-4 bg-white rounded-lg shadow-md p-3 text-sm z-10">
-        <p className="font-semibold mb-2">Node Types</p>
-        <div className="space-y-1">
-          {Object.entries(nodeColorMap).map(([type, color]) => (
-            <div key={type} className="flex items-center gap-2">
-              <div
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: color }}
+      {/* Cinematic Loading Overlay */}
+      <AnimatePresence>
+        {(isLoading || isLayouting) && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-nexus-950/80 backdrop-blur-xl flex flex-col items-center justify-center z-50"
+          >
+            <div className="relative">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                className="w-24 h-24 rounded-full border-b-2 border-nexus-indigo shadow-[0_0_40px_-10px_rgba(99,102,241,0.5)]"
               />
-              <span>{type}</span>
-              {nodeCounts[type] !== undefined && (
-                <span className="text-gray-400 text-xs">({nodeCounts[type]})</span>
-              )}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-2 h-2 rounded-full bg-white animate-ping" />
+              </div>
             </div>
-          ))}
-        </div>
-        <div className="mt-2 pt-2 border-t text-xs text-gray-500">
-          Total: {nodes.length} nodes, {edges.length} edges
-        </div>
-      </div>
+            <motion.p 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-8 text-sm font-bold tracking-[0.2em] uppercase text-nexus-indigo animate-pulse"
+            >
+              Constructing Neural Network
+            </motion.p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-// Wrap with ReactFlowProvider
 export function KnowledgeGraph(props: KnowledgeGraphProps) {
   return (
     <ReactFlowProvider>

@@ -288,13 +288,13 @@ async def get_import_status(job_id: str):
 @router.post("/pdf")
 async def import_pdf(
     project_id: UUID,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
 ):
     """Import a single PDF file."""
     from uuid import uuid4
 
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
 
     job_id = str(uuid4())
@@ -316,7 +316,7 @@ async def import_csv(
     """Import papers from a CSV file."""
     from uuid import uuid4
 
-    if not file.filename.lower().endswith(".csv"):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a CSV")
 
     job_id = str(uuid4())

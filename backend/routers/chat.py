@@ -5,10 +5,11 @@ Handles multi-agent chat interactions with graph-grounded responses.
 """
 
 import os
+import asyncio
 import logging
 from typing import List, Optional
 from uuid import UUID, uuid4
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -269,3 +270,53 @@ async def ask_about_node(node_id: str, project_id: UUID, question: str):
             "highlighted_nodes": [],
             "suggested_follow_ups": [],
         }
+
+
+@router.websocket("/ws/{project_id}")
+async def chat_stream(websocket: WebSocket, project_id: UUID):
+    await websocket.accept()
+    orchestrator = get_orchestrator()
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data.get("type") != "message":
+                continue
+
+            content = (data.get("content") or "").strip()
+            if not content:
+                continue
+
+            message_id = data.get("message_id") or str(uuid4())
+            conversation_id = data.get("conversation_id") or str(uuid4())
+
+            await websocket.send_json({"type": "stream_start", "message_id": message_id})
+
+            result = await orchestrator.process_query(
+                query=content,
+                project_id=str(project_id),
+                conversation_id=conversation_id,
+            )
+
+            chunk_size = 40
+            for i in range(0, len(result.content), chunk_size):
+                await websocket.send_json({
+                    "type": "stream_chunk",
+                    "message_id": message_id,
+                    "chunk": result.content[i : i + chunk_size],
+                })
+                await asyncio.sleep(0)
+
+            await websocket.send_json({
+                "type": "stream_end",
+                "message_id": message_id,
+                "content": result.content,
+                "citations": result.citations,
+                "highlighted_nodes": result.highlighted_nodes,
+                "highlighted_edges": result.highlighted_edges,
+            })
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        logger.error(f"WebSocket chat error: {e}")
+        await websocket.send_json({"type": "error", "error": str(e)})

@@ -2,221 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS Variables for theming */
+/* Neural Nexus Font Imports */
+@import '@fontsource/outfit/400.css';
+@import '@fontsource/outfit/500.css';
+@import '@fontsource/outfit/600.css';
+@import '@fontsource/outfit/700.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
 :root {
-  --color-background: 255 255 255;
-  --color-foreground: 17 24 39;
-  --color-muted: 107 114 128;
-  --color-border: 229 231 235;
-  --color-card: 255 255 255;
-  --color-accent: 59 130 246;
+  --nexus-bg: #020617;
+  --glass-bg: rgba(15, 23, 42, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --node-paper-rgb: 59, 130, 246;
+  --node-author-rgb: 16, 185, 129;
+  --node-concept-rgb: 139, 92, 246;
+  --node-method-rgb: 245, 158, 11;
+  --node-finding-rgb: 239, 68, 68;
 }
 
-.dark {
-  --color-background: 17 24 39;
-  --color-foreground: 243 244 246;
-  --color-muted: 156 163 175;
-  --color-border: 55 65 81;
-  --color-card: 31 41 55;
-  --color-accent: 96 165 250;
-}
-
-/* Base layer with dark mode support */
 @layer base {
   body {
-    @apply bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200;
+    @apply bg-nexus-950 text-slate-200 antialiased font-sans transition-colors duration-500;
+    background-image: 
+      radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.15) 0, transparent 50%),
+      radial-gradient(circle at 100% 0%, rgba(139, 92, 246, 0.15) 0, transparent 50%),
+      radial-gradient(circle at 50% 100%, rgba(34, 211, 238, 0.1) 0, transparent 50%);
+    background-attachment: fixed;
+  }
+
+  /* Scanline effect for that cybernetic feel */
+  body::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.05) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+    z-index: 9999;
+    pointer-events: none;
+    background-size: 100% 4px, 3px 100%;
+    opacity: 0.3;
   }
 }
 
-/* React Flow custom styles */
-.react-flow__node {
-  cursor: pointer;
+@layer components {
+  /* Premium Glassmorphism */
+  .glass-nexus {
+    @apply backdrop-blur-nexus bg-nexus-900/60 border border-white/10 shadow-2xl;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  .glass-card-nexus {
+    @apply glass-nexus rounded-3xl p-6 transition-all duration-300;
+  }
+
+  .glass-card-nexus:hover {
+    @apply bg-nexus-800/70 border-white/20 -translate-y-1;
+    box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.2);
+  }
+
+  /* Interactive Graph Nodes */
+  .nexus-node {
+    @apply relative flex items-center justify-center rounded-2xl transition-all duration-500;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1.5px solid var(--node-color);
+  }
+
+  .nexus-node::before {
+    content: '';
+    @apply absolute inset-0 rounded-2xl opacity-0 transition-opacity duration-500;
+    box-shadow: 0 0 25px var(--node-color);
+  }
+
+  .nexus-node:hover::before, .nexus-node.highlighted::before {
+    @apply opacity-60;
+  }
+
+  /* Animated HUD Widget */
+  .hud-container {
+    @apply fixed top-4 right-4 flex flex-col gap-3 z-50;
+  }
+
+  .hud-stat {
+    @apply glass-nexus rounded-xl px-4 py-2 flex items-center gap-3 animate-slide-left;
+  }
 }
 
-.react-flow__node.selected {
-  box-shadow: 0 0 0 2px #3B82F6;
+/* React Flow Theming */
+.react-flow__background {
+  @apply bg-nexus-950;
 }
 
-.react-flow__edge.selected .react-flow__edge-path {
-  stroke: #3B82F6;
+.react-flow__edge-path {
   stroke-width: 2;
+  stroke: rgba(255, 255, 255, 0.1);
+  transition: all 0.3s;
 }
 
-/* Dark mode React Flow */
-.dark .react-flow__background {
-  background-color: rgb(17 24 39);
+.react-flow__edge.highlighted .react-flow__edge-path {
+  stroke: var(--edge-color, #6366f1);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 8px var(--edge-color, #6366f1));
+  animation: flowLine 2s linear infinite;
+  stroke-dasharray: 10, 5;
 }
 
-.dark .react-flow__controls button {
-  background-color: rgb(31 41 55);
-  color: rgb(243 244 246);
-  border-color: rgb(55 65 81);
+@keyframes flowLine {
+  from { stroke-dashoffset: 30; }
+  to { stroke-dashoffset: 0; }
 }
 
-.dark .react-flow__controls button:hover {
-  background-color: rgb(55 65 81);
-}
-
-.dark .react-flow__minimap {
-  background-color: rgb(31 41 55);
-}
-
-/* Custom node styles */
-.custom-node {
-  @apply rounded-lg shadow-md border-2 p-3 transition-all duration-200;
-}
-
-.custom-node:hover {
-  @apply shadow-lg scale-105;
-}
-
-.custom-node.paper {
-  @apply bg-blue-50 border-blue-400 dark:bg-blue-900/30 dark:border-blue-500;
-}
-
-.custom-node.author {
-  @apply bg-green-50 border-green-400 dark:bg-green-900/30 dark:border-green-500;
-}
-
-.custom-node.concept {
-  @apply bg-purple-50 border-purple-400 dark:bg-purple-900/30 dark:border-purple-500;
-}
-
-.custom-node.method {
-  @apply bg-amber-50 border-amber-400 dark:bg-amber-900/30 dark:border-amber-500;
-}
-
-.custom-node.finding {
-  @apply bg-red-50 border-red-400 dark:bg-red-900/30 dark:border-red-500;
-}
-
-/* Highlighted nodes */
-.custom-node.highlighted {
-  @apply ring-4 ring-yellow-400 ring-opacity-75;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-/* Shimmer animation for skeleton loading */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-
-.animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgb(229 231 235) 0%,
-    rgb(243 244 246) 50%,
-    rgb(229 231 235) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-.dark .animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgb(55 65 81) 0%,
-    rgb(75 85 99) 50%,
-    rgb(55 65 81) 100%
-  );
-  background-size: 200% 100%;
-}
-
-/* Chat styles */
-.chat-message {
-  @apply p-4 rounded-lg mb-4;
-}
-
-.chat-message.user {
-  @apply bg-blue-100 ml-12 dark:bg-blue-900/30;
-}
-
-.chat-message.assistant {
-  @apply bg-gray-100 mr-12 dark:bg-gray-800;
-}
-
-/* Citation card */
-.citation-card {
-  @apply inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded cursor-pointer hover:bg-blue-200 transition-colors;
-  @apply dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50;
-}
-
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-gray-100 rounded dark:bg-gray-800;
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500;
-}
-
-/* Focus styles for accessibility */
-:focus-visible {
-  @apply outline-2 outline-offset-2 outline-blue-500;
-}
-
-/* Skip link for accessibility */
-.skip-link {
-  @apply absolute -top-10 left-4 bg-blue-600 text-white px-4 py-2 rounded z-50 transition-all;
-}
-
-.skip-link:focus {
-  @apply top-4;
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* Mobile-specific utilities */
-@layer utilities {
-  .safe-area-inset-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  .safe-area-inset-top {
-    padding-top: env(safe-area-inset-top);
-  }
-
-  /* Touch-friendly tap targets */
-  .touch-target {
-    @apply min-h-[44px] min-w-[44px];
-  }
-
-  /* Hide scrollbar but keep functionality */
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
+/* Typography Enhancements */
+.text-nexus-gradient {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-nexus-indigo via-nexus-violet to-nexus-cyan;
 }

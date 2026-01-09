@@ -12,7 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import db, init_db, close_db
-from routers import chat, graph, import_, projects
+from routers.projects import router as projects_router
+from routers.graph import router as graph_router
+from routers.chat import router as chat_router
+from routers.import_ import router as import_router
+from routers.metrics import router as metrics_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,7 +27,14 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("ScholaRAG_Graph Backend starting...")
-    logger.info(f"   Database: {settings.database_url[:50]}...")
+    db_url = settings.database_url
+    if "://" in db_url and "@" in db_url:
+        prefix, rest = db_url.split("://", 1)
+        creds, host = rest.split("@", 1)
+        if ":" in creds:
+            user, _password = creds.split(":", 1)
+            db_url = f"{prefix}://{user}:***@{host}"
+    logger.info(f"   Database: {db_url}")
     logger.info(f"   Default LLM: {settings.default_llm_provider}/{settings.default_llm_model}")
 
     # Initialize database connection
@@ -63,11 +74,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
-app.include_router(graph.router, prefix="/api/graph", tags=["Graph"])
-app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
-app.include_router(import_.router, prefix="/api/import", tags=["Import"])
+app.include_router(projects_router, prefix="/api/projects", tags=["Projects"])
+app.include_router(graph_router, prefix="/api/graph", tags=["Graph"])
+app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
+app.include_router(import_router, prefix="/api/import", tags=["Import"])
+app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
 
 
 @app.get("/")

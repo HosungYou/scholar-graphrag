@@ -54,6 +54,11 @@ class GraphDataResponse(BaseModel):
     edges: List[EdgeResponse]
 
 
+class GraphDataPageResponse(GraphDataResponse):
+    cursor: Optional[str] = None
+    total: int
+
+
 class SearchRequest(BaseModel):
     query: str
     entity_types: Optional[List[EntityType]] = None
@@ -97,21 +102,34 @@ async def get_edges(
     return edges[offset : offset + limit]
 
 
-@router.get("/visualization/{project_id}", response_model=GraphDataResponse)
+@router.get("/visualization/{project_id}", response_model=GraphDataPageResponse)
 async def get_visualization_data(
     project_id: UUID,
     entity_types: Optional[List[EntityType]] = Query(None),
-    max_nodes: int = Query(200, le=500),
+    limit: int = Query(200, le=500),
+    cursor: Optional[str] = Query(None),
+    max_nodes: Optional[int] = Query(None, le=500),
 ):
     """Get graph data optimized for visualization (React Flow format)."""
-    nodes = list(_nodes_db.values())[:max_nodes]
+    nodes = list(_nodes_db.values())
+
+    if entity_types:
+        nodes = [n for n in nodes if n.get("entity_type") in entity_types]
+
+    total = len(nodes)
+    effective_limit = max_nodes or limit
+    start = int(cursor) if cursor and cursor.isdigit() else 0
+    end = start + effective_limit
+
+    nodes = nodes[start:end]
     edges = list(_edges_db.values())
 
-    # Filter edges to only include those connecting visible nodes
     node_ids = {n["id"] for n in nodes}
     edges = [e for e in edges if e["source"] in node_ids and e["target"] in node_ids]
 
-    return GraphDataResponse(nodes=nodes, edges=edges)
+    next_cursor = str(end) if end < total else None
+
+    return GraphDataPageResponse(nodes=nodes, edges=edges, cursor=next_cursor, total=total)
 
 
 @router.get("/subgraph/{node_id}", response_model=GraphDataResponse)

@@ -117,16 +117,16 @@ class ScholarAGImporter:
 
     def _update_progress(
         self,
-        status: str = None,
-        progress: float = None,
-        message: str = None,
+        status: Optional[str] = None,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
     ):
         """Update and broadcast progress."""
-        if status:
+        if status is not None:
             self.progress.status = status
         if progress is not None:
             self.progress.progress = progress
-        if message:
+        if message is not None:
             self.progress.message = message
 
         if self.progress_callback:
@@ -728,6 +728,11 @@ class ScholarAGImporter:
 
                 if (i + 1) % 100 == 0:
                     logger.info(f"  Stored {i + 1}/{len(entities)} entities...")
+                    self._update_progress(
+                        "building_graph",
+                        0.9 + (0.05 * (i + 1) / len(entities)),
+                        f"Storing entities in database ({i + 1}/{len(entities)})...",
+                    )
 
             except Exception as e:
                 logger.error(f"Failed to store entity {entity.name}: {e}")
@@ -799,6 +804,11 @@ class ScholarAGImporter:
 
                 if (i + 1) % 100 == 0:
                     logger.info(f"  Stored {i + 1}/{len(relationships)} relationships...")
+                    self._update_progress(
+                        "building_graph",
+                        0.95 + (0.04 * (i + 1) / len(relationships)),
+                        f"Storing relationships in database ({i + 1}/{len(relationships)})...",
+                    )
 
             except Exception as e:
                 logger.error(f"Failed to store relationship {rel.relationship_type}: {e}")
