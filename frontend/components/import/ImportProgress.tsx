@@ -19,17 +19,25 @@ interface StepInfo {
 }
 
 const IMPORT_STEPS: StepInfo[] = [
-  { id: 'validate', label: 'Validation', description: 'Validating project structure' },
-  { id: 'parse_config', label: 'Parse Config', description: 'Reading config.yaml' },
-  { id: 'import_papers', label: 'Import Papers', description: 'Importing papers from CSV' },
-  { id: 'extract_entities', label: 'Extract Entities', description: 'Extracting concepts, methods, findings' },
-  { id: 'build_relationships', label: 'Build Graph', description: 'Creating relationships between entities' },
-  { id: 'create_embeddings', label: 'Embeddings', description: 'Generating vector embeddings' },
-  { id: 'finalize', label: 'Complete', description: 'Finalizing import' },
+  { id: 'validating', label: 'Validation', description: 'Validating project structure' },
+  { id: 'extracting', label: 'Parse Config', description: 'Reading config.yaml' },
+  { id: 'processing', label: 'Import Papers', description: 'Importing papers from CSV' },
+  { id: 'building_graph', label: 'Build Graph', description: 'Creating entities and relationships' },
+  { id: 'completed', label: 'Complete', description: 'Finalizing import' },
 ];
 
-function getStepIndex(stepId: string): number {
-  return IMPORT_STEPS.findIndex(s => s.id === stepId);
+// Map backend status to step index
+function getStepIndexFromStatus(status: string): number {
+  const statusToStepMap: Record<string, number> = {
+    'pending': 0,
+    'validating': 0,
+    'extracting': 1,
+    'processing': 2,
+    'building_graph': 3,
+    'completed': 4,
+    'failed': -1,
+  };
+  return statusToStepMap[status] ?? 0;
 }
 
 export function ImportProgress({ jobId, onComplete, onError }: ImportProgressProps) {
@@ -47,13 +55,13 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         const status = await api.getImportStatus(jobId);
         setJob(status);
 
-        if (status.status === 'completed' && status.result?.project_id) {
+        if (status.status === 'completed' && status.project_id) {
           clearInterval(intervalId);
-          onComplete?.(status.result.project_id);
+          onComplete?.(status.project_id);
         } else if (status.status === 'failed') {
           clearInterval(intervalId);
-          setError(status.error || 'Import failed');
-          onError?.(status.error || 'Import failed');
+          setError(status.message || 'Import failed');
+          onError?.(status.message || 'Import failed');
         }
       } catch (err) {
         console.error('Failed to fetch import status:', err);
@@ -102,7 +110,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
     );
   }
 
-  const currentStepIndex = job.current_step ? getStepIndex(job.current_step) : 0;
+  const currentStepIndex = getStepIndexFromStatus(job.status);
   const isComplete = job.status === 'completed';
 
   return (
@@ -116,8 +124,8 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             </h3>
             <p className="text-blue-100 text-sm">
               {isComplete
-                ? `Created ${job.result?.nodes_created || 0} nodes and ${job.result?.edges_created || 0} edges`
-                : `Step ${currentStepIndex + 1} of ${IMPORT_STEPS.length}`}
+                ? `Created ${job.stats?.total_entities || 0} entities and ${job.stats?.total_relationships || 0} relationships`
+                : job.message || `Step ${currentStepIndex + 1} of ${IMPORT_STEPS.length}`}
             </p>
           </div>
           <div className="text-right">
@@ -213,10 +221,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         </div>
 
         {/* Complete action */}
-        {isComplete && job.result?.project_id && (
+        {isComplete && job.project_id && (
           <div className="mt-6 pt-4 border-t">
             <button
-              onClick={() => router.push(`/projects/${job.result!.project_id}`)}
+              onClick={() => router.push(`/projects/${job.project_id}`)}
               className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all font-medium"
             >
               Open Project

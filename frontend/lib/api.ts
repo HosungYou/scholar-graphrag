@@ -163,6 +163,63 @@ class ApiClient {
   async getImportStatus(jobId: string): Promise<ImportJob> {
     return this.request<ImportJob>(`/api/import/status/${jobId}`);
   }
+
+  // Folder Browser
+  async browseFolder(path?: string): Promise<BrowseResponse> {
+    const searchParams = new URLSearchParams();
+    if (path) searchParams.set('path', path);
+    const query = searchParams.toString();
+    return this.request<BrowseResponse>(
+      query ? `/api/import/browse?${query}` : '/api/import/browse'
+    );
+  }
+
+  async getQuickAccessPaths(): Promise<{ paths: QuickAccessPath[] }> {
+    return this.request<{ paths: QuickAccessPath[] }>('/api/import/browse/quick-access');
+  }
+
+  async discoverProjects(path: string): Promise<DiscoverResponse> {
+    return this.request<DiscoverResponse>(
+      `/api/import/scholarag/discover?path=${encodeURIComponent(path)}`,
+      { method: 'POST' }
+    );
+  }
+}
+
+// Types for folder browser
+export interface FolderItem {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  is_scholarag_project: boolean;
+  has_subprojects: boolean;
+}
+
+export interface BrowseResponse {
+  current_path: string;
+  parent_path: string | null;
+  items: FolderItem[];
+  is_scholarag_project: boolean;
+  suggested_projects: FolderItem[];
+}
+
+export interface QuickAccessPath {
+  name: string;
+  path: string;
+  icon: string;
+}
+
+export interface DiscoveredProject {
+  name: string;
+  path: string;
+  papers_count: number;
+  has_config: boolean;
+}
+
+export interface DiscoverResponse {
+  root_path: string;
+  projects: DiscoveredProject[];
+  count: number;
 }
 
 export const api = new ApiClient(API_URL);

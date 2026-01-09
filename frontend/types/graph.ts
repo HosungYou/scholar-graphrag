@@ -154,16 +154,16 @@ export interface ImportValidationResult {
 
 export interface ImportJob {
   job_id: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'validating' | 'extracting' | 'processing' | 'building_graph' | 'completed' | 'failed';
   progress: number;
-  current_step?: string;
-  total_steps?: number;
-  completed_steps?: number;
-  error?: string;
-  result?: {
-    project_id: string;
-    nodes_created: number;
-    edges_created: number;
+  message?: string;
+  project_id?: string;
+  stats?: {
+    papers_imported: number;
+    authors_extracted: number;
+    concepts_extracted: number;
+    total_entities: number;
+    total_relationships: number;
   };
 }
 

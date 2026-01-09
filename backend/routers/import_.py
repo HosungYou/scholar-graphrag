@@ -5,9 +5,11 @@ Handles data import from ScholaRAG folders, PDFs, and CSVs.
 """
 
 import logging
-from typing import Optional
+import os
+from pathlib import Path
+from typing import Optional, List
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Query
 from pydantic import BaseModel
 from datetime import datetime
 from enum import Enum
@@ -19,6 +21,281 @@ from importers.scholarag_importer import ScholarAGImporter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ============================================================================
+# Folder Browser API - 파일 탐색기 기능
+# ============================================================================
+
+class FolderItem(BaseModel):
+    """폴더/파일 항목"""
+    name: str
+    path: str
+    is_directory: bool
+    is_scholarag_project: bool = False  # config.yaml이 있는 폴더인지
+    has_subprojects: bool = False  # projects 하위 폴더에 프로젝트가 있는지
+
+
+class BrowseResponse(BaseModel):
+    """폴더 브라우징 응답"""
+    current_path: str
+    parent_path: Optional[str]
+    items: List[FolderItem]
+    is_scholarag_project: bool = False
+    suggested_projects: List[FolderItem] = []  # 자동 감지된 프로젝트 목록
+
+
+class DiscoveredProject(BaseModel):
+    """발견된 ScholaRAG 프로젝트"""
+    name: str
+    path: str
+    papers_count: int = 0
+    has_config: bool = True
+
+
+def _is_scholarag_project(folder: Path) -> bool:
+    """폴더가 ScholaRAG 프로젝트인지 확인"""
+    config_path = folder / "config.yaml"
+    return config_path.exists()
+
+
+def _get_safe_home_paths() -> List[str]:
+    """안전한 시작 경로 목록 반환"""
+    home = Path.home()
+    paths = [
+        str(home),
+        str(home / "Documents"),
+        str(home / "Desktop"),
+        str(home / "Downloads"),
+    ]
+    # macOS의 /Volumes 경로도 허용
+    volumes = Path("/Volumes")
+    if volumes.exists():
+        paths.append(str(volumes))
+    return paths
+
+
+def _is_path_allowed(path: str) -> bool:
+    """경로 접근이 허용되는지 확인 (보안)"""
+    try:
+        resolved = Path(path).resolve()
+        # 홈 디렉토리 또는 /Volumes 하위만 허용
+        home = Path.home().resolve()
+        allowed_roots = [home, Path("/Volumes").resolve()]
+        return any(
+            str(resolved).startswith(str(root)) or resolved == root
+            for root in allowed_roots
+        )
+    except Exception:
+        return False
+
+
+@router.get("/browse", response_model=BrowseResponse)
+async def browse_folder(
+    path: Optional[str] = Query(None, description="탐색할 폴더 경로 (없으면 홈 디렉토리)"),
+):
+    """
+    폴더 내용을 탐색합니다.
+
+    보안: 사용자 홈 디렉토리 및 /Volumes 하위만 접근 가능
+    """
+    # 기본 경로 설정
+    if not path:
+        path = str(Path.home())
+
+    folder = Path(path)
+
+    # 경로 유효성 검사
+    if not folder.exists():
+        raise HTTPException(status_code=404, detail=f"경로를 찾을 수 없습니다: {path}")
+
+    if not folder.is_dir():
+        raise HTTPException(status_code=400, detail="파일이 아닌 폴더 경로를 입력하세요")
+
+    # 보안 검사
+    if not _is_path_allowed(path):
+        raise HTTPException(status_code=403, detail="접근이 허용되지 않은 경로입니다")
+
+    # 부모 경로 계산
+    parent_path = None
+    if folder.parent != folder:  # 루트가 아니면
+        parent = folder.parent
+        if _is_path_allowed(str(parent)):
+            parent_path = str(parent)
+
+    # 폴더 내용 읽기
+    items: List[FolderItem] = []
+    suggested_projects: List[FolderItem] = []
+
+    try:
+        for entry in sorted(folder.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            # 숨김 파일 제외 (. 으로 시작하는 파일)
+            if entry.name.startswith('.'):
+                continue
+
+            is_dir = entry.is_dir()
+            is_project = False
+            has_subprojects = False
+
+            if is_dir:
+                is_project = _is_scholarag_project(entry)
+                # projects 하위 폴더 확인
+                projects_subdir = entry / "projects"
+                if projects_subdir.exists() and projects_subdir.is_dir():
+                    try:
+                        for sub in projects_subdir.iterdir():
+                            if sub.is_dir() and _is_scholarag_project(sub):
+                                has_subprojects = True
+                                suggested_projects.append(FolderItem(
+                                    name=sub.name,
+                                    path=str(sub),
+                                    is_directory=True,
+                                    is_scholarag_project=True,
+                                ))
+                    except PermissionError:
+                        pass
+
+            items.append(FolderItem(
+                name=entry.name,
+                path=str(entry),
+                is_directory=is_dir,
+                is_scholarag_project=is_project,
+                has_subprojects=has_subprojects,
+            ))
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="폴더를 읽을 권한이 없습니다")
+
+    return BrowseResponse(
+        current_path=str(folder),
+        parent_path=parent_path,
+        items=items,
+        is_scholarag_project=_is_scholarag_project(folder),
+        suggested_projects=suggested_projects,
+    )
+
+
+@router.get("/browse/quick-access")
+async def get_quick_access_paths():
+    """
+    빠른 접근 경로 목록 반환 (홈, Documents, Volumes 등)
+    """
+    home = Path.home()
+    paths = []
+
+    # 기본 경로들
+    default_paths = [
+        ("홈", home),
+        ("Documents", home / "Documents"),
+        ("Desktop", home / "Desktop"),
+        ("Downloads", home / "Downloads"),
+    ]
+
+    for name, p in default_paths:
+        if p.exists():
+            paths.append({
+                "name": name,
+                "path": str(p),
+                "icon": "folder"
+            })
+
+    # 외장 드라이브 (macOS의 /Volumes)
+    volumes = Path("/Volumes")
+    if volumes.exists():
+        try:
+            for vol in volumes.iterdir():
+                if vol.is_dir() and not vol.name.startswith('.'):
+                    # 내장 디스크 (Macintosh HD) 제외
+                    if vol.name != "Macintosh HD":
+                        paths.append({
+                            "name": f"📁 {vol.name}",
+                            "path": str(vol),
+                            "icon": "hard-drive"
+                        })
+        except PermissionError:
+            pass
+
+    return {"paths": paths}
+
+
+@router.post("/scholarag/discover")
+async def discover_scholarag_projects(path: str = Query(..., description="탐색할 루트 경로")):
+    """
+    주어진 경로에서 ScholaRAG 프로젝트를 자동으로 찾습니다.
+
+    루트 폴더나 projects 폴더를 입력하면 하위의 모든 프로젝트를 찾습니다.
+    """
+    folder = Path(path)
+
+    if not folder.exists():
+        raise HTTPException(status_code=404, detail=f"경로를 찾을 수 없습니다: {path}")
+
+    if not _is_path_allowed(path):
+        raise HTTPException(status_code=403, detail="접근이 허용되지 않은 경로입니다")
+
+    projects: List[DiscoveredProject] = []
+
+    # 현재 폴더가 프로젝트인지 확인
+    if _is_scholarag_project(folder):
+        papers_count = _count_papers(folder)
+        projects.append(DiscoveredProject(
+            name=folder.name,
+            path=str(folder),
+            papers_count=papers_count,
+        ))
+
+    # projects 하위 폴더 탐색
+    projects_dir = folder / "projects"
+    if projects_dir.exists():
+        for sub in projects_dir.iterdir():
+            if sub.is_dir() and _is_scholarag_project(sub):
+                papers_count = _count_papers(sub)
+                projects.append(DiscoveredProject(
+                    name=sub.name,
+                    path=str(sub),
+                    papers_count=papers_count,
+                ))
+
+    # 직접 하위 폴더도 탐색 (depth 1)
+    if not projects and folder.is_dir():
+        try:
+            for sub in folder.iterdir():
+                if sub.is_dir() and _is_scholarag_project(sub):
+                    papers_count = _count_papers(sub)
+                    projects.append(DiscoveredProject(
+                        name=sub.name,
+                        path=str(sub),
+                        papers_count=papers_count,
+                    ))
+        except PermissionError:
+            pass
+
+    return {
+        "root_path": path,
+        "projects": projects,
+        "count": len(projects),
+    }
+
+
+def _count_papers(folder: Path) -> int:
+    """폴더에서 논문 수 카운트"""
+    csv_paths = [
+        folder / "data" / "02_screening" / "relevant_papers.csv",
+        folder / "data" / "02_screening" / "all_screened_papers.csv",
+    ]
+
+    for csv_path in csv_paths:
+        if csv_path.exists():
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    return max(0, sum(1 for _ in f) - 1)
+            except Exception:
+                pass
+    return 0
+
+
+# ============================================================================
+# Import API
+# ============================================================================
 
 
 # Enums

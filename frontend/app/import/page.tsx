@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, DragEvent, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -17,12 +17,14 @@ import {
   Database,
   BookOpen,
   Info,
+  MousePointerClick,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Header } from '@/components/layout';
 import { ThemeToggle, ErrorBoundary, ErrorDisplay } from '@/components/ui';
 import { ImportProgress } from '@/components/import/ImportProgress';
+import { FolderBrowser } from '@/components/import/FolderBrowser';
 import type { ImportValidationResult } from '@/types';
 
 /**
@@ -63,8 +65,8 @@ export default function ImportPage() {
   const [folderPath, setFolderPath] = useState('');
   const [validation, setValidation] = useState<ImportValidationResult | null>(null);
   const [importJobId, setImportJobId] = useState<string | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
   const [pathNormalized, setPathNormalized] = useState<{ wasNormalized: boolean; originalPath: string } | null>(null);
+  const [showBrowser, setShowBrowser] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -98,27 +100,6 @@ export default function ImportPage() {
   const handleImport = () => {
     if (!folderPath.trim() || !validation?.valid) return;
     importMutation.mutate(folderPath);
-  };
-
-  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-
-    if (e.dataTransfer.items.length > 0) {
-      alert(
-        '웹 브라우저 보안 정책으로 인해 드래그 앤 드롭으로는 폴더 경로를 가져올 수 없습니다.\n\nFinder에서 폴더를 우클릭 → "정보 가져오기" → 위치를 복사하거나,\n터미널에서 폴더로 이동 후 pwd 명령어로 경로를 복사해주세요.'
-      );
-    }
   };
 
   const handlePaste = async () => {
@@ -212,36 +193,28 @@ export default function ImportPage() {
               </div>
             </div>
 
-            {/* Drag & Drop Zone */}
+            {/* Folder Selection Area */}
             <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => inputRef.current?.focus()}
-              className={`
-                border-2 border-dashed rounded-xl p-6 sm:p-8 mb-6 text-center transition-all cursor-pointer
-                ${isDragOver
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                }
-              `}
-              role="button"
-              tabIndex={0}
-              aria-label="프로젝트 폴더 경로 입력"
+              className="border-2 border-dashed rounded-xl p-6 sm:p-8 mb-6 text-center transition-all border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50"
             >
               <FolderSearch
-                className={`w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-3 sm:mb-4 ${
-                  isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'
-                }`}
+                className="w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-3 sm:mb-4 text-gray-400 dark:text-gray-500"
               />
-              <p className={`text-base sm:text-lg font-medium ${
-                isDragOver ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
-              }`}>
-                ScholaRAG 프로젝트 폴더 경로를 입력하세요
+              <p className="text-base sm:text-lg font-medium text-gray-700 dark:text-gray-300">
+                ScholaRAG 프로젝트 폴더를 선택하세요
               </p>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-2">
-                Finder에서 폴더를 우클릭 → "경로명 복사"로 복사한 후 아래에 붙여넣기
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-2 mb-4">
+                아래 버튼을 클릭하여 폴더를 찾거나, 경로를 직접 입력하세요
               </p>
+
+              {/* Browse Button */}
+              <button
+                onClick={() => setShowBrowser(true)}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-md shadow-blue-500/20"
+              >
+                <MousePointerClick className="w-5 h-5" />
+                폴더 찾기
+              </button>
             </div>
 
             {/* Folder Path Input */}
@@ -463,19 +436,31 @@ export default function ImportPage() {
             <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
               <h3 className="font-medium text-gray-700 dark:text-gray-300 mb-2">폴더 경로 찾는 방법</h3>
               <ol className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 space-y-2">
-                <li>1. Finder에서 ScholaRAG 프로젝트 폴더로 이동</li>
-                <li>
-                  2. 폴더를 우클릭 → <strong>"경로명 복사"</strong> 선택 (Option 키를 누르면 표시됨)
-                </li>
-                <li>3. 위 입력창에 붙여넣기 (Cmd+V)</li>
+                <li>1. 위의 <strong>"폴더 찾기"</strong> 버튼을 클릭하여 폴더 탐색기 열기</li>
+                <li>2. ScholaRAG 프로젝트 폴더로 이동 (녹색으로 표시됨)</li>
+                <li>3. 프로젝트 폴더 클릭하여 선택</li>
               </ol>
               <p className="text-xs text-gray-500 dark:text-gray-500 mt-3">
-                또는 터미널에서:{' '}
-                <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded">cd [폴더] && pwd</code>
+                또는 직접 경로 입력: Finder에서 폴더 우클릭 → "경로명 복사" (Option 키 누름)
               </p>
             </div>
           </div>
         </ErrorBoundary>
+
+        {/* Folder Browser Modal */}
+        {showBrowser && (
+          <FolderBrowser
+            onSelectPath={(path) => {
+              handlePathChange(path);
+              setShowBrowser(false);
+              // Auto-validate after selection
+              setTimeout(() => {
+                validateMutation.mutate(path);
+              }, 100);
+            }}
+            onClose={() => setShowBrowser(false)}
+          />
+        )}
       </main>
     </div>
   );
