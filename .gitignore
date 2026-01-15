@@ -57,3 +57,4 @@ site/
 
 # pip installation artifacts
 =*
+.serena/
