@@ -8,18 +8,18 @@ consistent test behavior.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.integrations.semantic_scholar import (
+from integrations.semantic_scholar import (
     SemanticScholarClient,
     SemanticScholarPaper,
     SemanticScholarAuthor,
 )
-from backend.integrations.openalex import (
+from integrations.openalex import (
     OpenAlexClient,
     OpenAlexWork,
     OpenAlexAuthor,
     OpenAlexConcept,
 )
-from backend.integrations.zotero import (
+from integrations.zotero import (
     ZoteroClient,
     ZoteroItem,
     ZoteroCollection,
