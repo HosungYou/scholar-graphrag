@@ -47,3 +47,13 @@ temp/
 
 # Uploads (if storing locally)
 uploads/
+
+# MkDocs
+site/
+
+# Backup files
+*.bak
+*~
+
+# pip installation artifacts
+=*
