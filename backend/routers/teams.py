@@ -5,6 +5,7 @@ Handles team creation, member management, and project collaboration.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional, List
 from uuid import uuid4
 
@@ -593,7 +594,3 @@ async def remove_collaborator(
     )
     
     return {"message": "Collaborator removed"}
-
-
-# Import datetime at the top
-from datetime import datetime

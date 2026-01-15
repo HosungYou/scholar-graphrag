@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Network, Plus, Calendar, FileText, Users } from 'lucide-react';
+import { Network, Plus, ArrowRight, FileText, Users, Hexagon } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Header, Footer } from '@/components/layout';
 import {
@@ -13,49 +13,107 @@ import {
 } from '@/components/ui';
 import type { Project } from '@/types';
 
-function ProjectCard({ project }: { project: Project }) {
+/* ============================================================
+   ScholaRAG Graph - Projects Page
+   VS Design Diverge: Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - List view by default (not card grid)
+   - Project numbers (01, 02, 03) instead of icons
+   - Monospace metrics display
+   - Line-based row structure
+   - Hover reveals arrow indicator
+   ============================================================ */
+
+function ProjectRow({ project, index }: { project: Project; index: number }) {
+  const projectNumber = String(index + 1).padStart(2, '0');
+  const dateStr = new Date(project.created_at).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 shadow-sm hover:shadow-md transition-all p-5 sm:p-6 touch-target"
+      className="project-row group flex items-center gap-6 py-6 border-b border-ink/10 dark:border-paper/10 hover:bg-surface/5 transition-colors -mx-6 px-6"
     >
-      <div className="flex items-start justify-between mb-4">
-        <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg group-hover:bg-blue-200 dark:group-hover:bg-blue-900/50 transition-colors">
-          <Network className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-        </div>
-        <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
-          <Calendar className="w-4 h-4" />
-          {new Date(project.created_at).toLocaleDateString('ko-KR')}
+      {/* Number Indicator */}
+      <div className="flex-shrink-0 w-12">
+        <span className="font-mono text-2xl text-accent-teal/40 group-hover:text-accent-teal transition-colors">
+          {projectNumber}
         </span>
       </div>
 
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
-        {project.name}
-      </h3>
+      {/* Project Info */}
+      <div className="flex-1 min-w-0">
+        <h3 className="font-display text-xl text-ink dark:text-paper group-hover:text-accent-teal transition-colors truncate">
+          {project.name}
+        </h3>
+        {project.research_question && (
+          <p className="text-muted text-sm mt-1 line-clamp-1">
+            {project.research_question}
+          </p>
+        )}
+      </div>
 
-      {project.research_question && (
-        <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">
-          {project.research_question}
-        </p>
-      )}
+      {/* Metrics */}
+      <div className="hidden md:flex items-center gap-8">
+        {project.stats?.total_papers !== undefined && (
+          <div className="text-right">
+            <div className="font-mono text-lg text-ink dark:text-paper">
+              {project.stats.total_papers}
+            </div>
+            <div className="text-xs text-muted uppercase tracking-wider">papers</div>
+          </div>
+        )}
+        {project.stats?.total_authors !== undefined && (
+          <div className="text-right">
+            <div className="font-mono text-lg text-ink dark:text-paper">
+              {project.stats.total_authors}
+            </div>
+            <div className="text-xs text-muted uppercase tracking-wider">authors</div>
+          </div>
+        )}
+      </div>
 
-      {project.stats && (
-        <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-          {project.stats.total_papers !== undefined && (
-            <span className="flex items-center gap-1">
-              <FileText className="w-4 h-4" />
-              {project.stats.total_papers} papers
-            </span>
-          )}
-          {project.stats.total_authors !== undefined && (
-            <span className="flex items-center gap-1">
-              <Users className="w-4 h-4" />
-              {project.stats.total_authors} authors
-            </span>
-          )}
-        </div>
-      )}
+      {/* Date */}
+      <div className="hidden sm:block text-right w-28">
+        <span className="font-mono text-sm text-muted">{dateStr}</span>
+      </div>
+
+      {/* Arrow */}
+      <div className="flex-shrink-0 w-8">
+        <ArrowRight className="w-5 h-5 text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
     </Link>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="text-center py-20">
+      <div className="relative inline-block mb-8">
+        <Hexagon className="w-24 h-24 text-accent-teal/20" strokeWidth={1} />
+        <Network className="w-10 h-10 text-accent-teal absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+      </div>
+
+      <h3 className="font-display text-2xl text-ink dark:text-paper mb-3">
+        No Projects Yet
+      </h3>
+      <p className="text-muted max-w-md mx-auto mb-8">
+        Import your ScholaRAG folder to create your first Knowledge Graph
+        and start exploring research connections.
+      </p>
+
+      <Link
+        href="/import"
+        className="btn btn--primary inline-flex items-center gap-2"
+      >
+        <Plus className="w-5 h-5" />
+        <span>Import ScholaRAG Project</span>
+      </Link>
+    </div>
   );
 }
 
@@ -73,38 +131,32 @@ function ProjectsContent() {
     return (
       <ErrorDisplay
         error={error as Error}
-        title="프로젝트를 불러올 수 없습니다"
-        message="백엔드 서버가 실행 중인지 확인해주세요."
+        title="Failed to load projects"
+        message="Please check if the backend server is running."
         onRetry={() => refetch()}
       />
     );
   }
 
   if (!projects || projects.length === 0) {
-    return (
-      <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700">
-        <Network className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-          프로젝트가 없습니다
-        </h3>
-        <p className="text-gray-600 dark:text-gray-300 mb-6">
-          ScholaRAG 폴더를 Import하여 첫 번째 Knowledge Graph를 만들어보세요.
-        </p>
-        <Link
-          href="/import"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors touch-target"
-        >
-          <Plus className="w-5 h-5" />
-          Import ScholaRAG Project
-        </Link>
-      </div>
-    );
+    return <EmptyState />;
   }
 
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-      {projects.map((project) => (
-        <ProjectCard key={project.id} project={project} />
+    <div className="divide-y-0">
+      {/* List Header */}
+      <div className="hidden md:flex items-center gap-6 py-3 border-b border-ink/20 dark:border-paper/20 text-xs text-muted uppercase tracking-wider font-mono">
+        <div className="w-12">#</div>
+        <div className="flex-1">Project</div>
+        <div className="w-16 text-right">Papers</div>
+        <div className="w-16 text-right">Authors</div>
+        <div className="w-28 text-right">Created</div>
+        <div className="w-8"></div>
+      </div>
+
+      {/* Project Rows */}
+      {projects.map((project, index) => (
+        <ProjectRow key={project.id} project={project} index={index} />
       ))}
     </div>
   );
@@ -112,7 +164,7 @@ function ProjectsContent() {
 
 export default function ProjectsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       <a href="#main-content" className="skip-link">
         메인 콘텐츠로 건너뛰기
       </a>
@@ -120,23 +172,29 @@ export default function ProjectsPage() {
       <Header
         breadcrumbs={[{ label: 'Projects' }]}
         rightContent={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <ThemeToggle />
             <Link
               href="/import"
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors touch-target"
+              className="btn btn--primary flex items-center gap-2"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Import Project</span>
             </Link>
           </div>
         }
       />
 
-      <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 py-6 sm:py-8 w-full">
-        <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-6">
-          Your Projects
-        </h2>
+      <main id="main-content" className="flex-1 max-w-5xl mx-auto px-6 py-8 md:py-12 w-full">
+        {/* Page Header */}
+        <div className="mb-8 md:mb-12">
+          <span className="text-accent-teal font-mono text-sm tracking-widest uppercase">
+            Research Portfolio
+          </span>
+          <h1 className="font-display text-3xl md:text-4xl text-ink dark:text-paper mt-2">
+            Your Projects
+          </h1>
+        </div>
 
         <ErrorBoundary>
           <ProjectsContent />

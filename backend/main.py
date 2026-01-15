@@ -13,9 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import db, init_db, close_db
+from cache import init_llm_cache, get_llm_cache
 from routers import auth, chat, graph, import_, integrations, prisma, projects, teams
 from auth.supabase_client import supabase_client
-from middleware.rate_limiter import RateLimiterMiddleware
+from auth.middleware import AuthMiddleware
+from middleware.rate_limiter import RateLimiterMiddleware, init_rate_limit_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +47,22 @@ async def lifespan(app: FastAPI):
     logger.info("ScholaRAG_Graph Backend starting...")
     logger.info(f"   Database: {_sanitize_database_url(settings.database_url)}")
     logger.info(f"   Default LLM: {settings.default_llm_provider}/{settings.default_llm_model}")
-    
+
+    # Initialize LLM cache
+    init_llm_cache(
+        default_ttl=settings.llm_cache_ttl,
+        max_size=settings.llm_cache_max_size,
+        enabled=settings.llm_cache_enabled,
+    )
+    logger.info(f"   LLM Cache: {'enabled' if settings.llm_cache_enabled else 'disabled'} (TTL={settings.llm_cache_ttl}s)")
+
+    # Initialize rate limit store (Redis or in-memory)
+    init_rate_limit_store(
+        use_redis=settings.redis_rate_limit_enabled and bool(settings.redis_url),
+        redis_url=settings.redis_url if settings.redis_url else None,
+    )
+    logger.info(f"   Rate Limiter: {'Redis' if settings.redis_rate_limit_enabled and settings.redis_url else 'in-memory'}")
+
     # Initialize Supabase
     if settings.supabase_url and settings.supabase_anon_key:
         supabase_client.initialize(settings.supabase_url, settings.supabase_anon_key)
@@ -94,6 +111,10 @@ app.add_middleware(
 # Limits: /api/auth/* - 10/min, /api/chat/* - 30/min, /api/import/* - 5/min
 app.add_middleware(RateLimiterMiddleware, enabled=True)
 
+# Authentication middleware (enforces centralized auth policies)
+# See auth/policies.py for route-level policy configuration
+app.add_middleware(AuthMiddleware)
+
 # Include routers
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(graph.router, prefix="/api/graph", tags=["Graph"])
@@ -129,11 +150,15 @@ async def health_check():
     except Exception:
         pass
 
+    # Get LLM cache stats
+    cache_stats = get_llm_cache().get_stats()
+
     return {
         "status": "healthy",
         "database": db_status,
         "pgvector": pgvector_status,
         "llm_provider": settings.default_llm_provider,
+        "llm_cache": cache_stats,
     }
 
 

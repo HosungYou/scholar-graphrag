@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     require_auth: bool = True  # Set to False only for local development
     environment: Literal["development", "staging", "production"] = "development"
 
+    # Performance: LLM Caching
+    llm_cache_enabled: bool = True  # Enable LLM response caching
+    llm_cache_ttl: int = 3600  # Default cache TTL in seconds (1 hour)
+    llm_cache_max_size: int = 1000  # Maximum cache entries
+
+    # Performance: Redis (for rate limiting and caching in production)
+    redis_url: str = ""  # Redis connection URL (e.g., redis://localhost:6379)
+    redis_rate_limit_enabled: bool = False  # Use Redis for rate limiting
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -1,5 +1,8 @@
 /**
  * API client for ScholaRAG Graph backend
+ *
+ * Automatically includes Supabase access token in Authorization header
+ * for authenticated API requests.
  */
 
 import type {
@@ -14,6 +17,7 @@ import type {
   GapAnalysisResult,
   StructuralGap,
 } from '@/types';
+import { getSession } from './supabase';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -24,16 +28,38 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  /**
+   * Get authentication headers from Supabase session.
+   * Returns Authorization header with Bearer token if session exists.
+   */
+  private async getAuthHeaders(): Promise<HeadersInit> {
+    try {
+      const session = await getSession();
+      if (session?.access_token) {
+        return {
+          Authorization: `Bearer ${session.access_token}`,
+        };
+      }
+    } catch (error) {
+      console.warn('Failed to get auth session:', error);
+    }
+    return {};
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
+    // Get auth headers
+    const authHeaders = await this.getAuthHeaders();
+
     const response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
         ...options.headers,
       },
     });
@@ -178,9 +204,13 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/pdf${params.toString() ? '?' + params.toString() : ''}`;
 
+    // Get auth headers for file upload
+    const authHeaders = await this.getAuthHeaders();
+
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: authHeaders,
       // Don't set Content-Type header - browser will set it with boundary for multipart
     });
 
@@ -218,9 +248,13 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/pdf/multiple${params.toString() ? '?' + params.toString() : ''}`;
 
+    // Get auth headers for file upload
+    const authHeaders = await this.getAuthHeaders();
+
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: authHeaders,
     });
 
     if (!response.ok) {
@@ -248,14 +282,21 @@ class ApiClient {
   }> {
     const formData = new FormData();
     files.forEach((file) => {
-      formData.append('files', file);
+      // Use webkitRelativePath if available (folder selection), otherwise use file.name
+      const extendedFile = file as File & { webkitRelativePath?: string };
+      const fileName = extendedFile.webkitRelativePath || file.name;
+      formData.append('files', file, fileName);
     });
 
     const url = `${this.baseUrl}/api/import/zotero/validate`;
 
+    // Get auth headers for file upload
+    const authHeaders = await this.getAuthHeaders();
+
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: authHeaders,
     });
 
     if (!response.ok) {
@@ -286,7 +327,10 @@ class ApiClient {
   }> {
     const formData = new FormData();
     files.forEach((file) => {
-      formData.append('files', file);
+      // Use webkitRelativePath if available (folder selection), otherwise use file.name
+      const extendedFile = file as File & { webkitRelativePath?: string };
+      const fileName = extendedFile.webkitRelativePath || file.name;
+      formData.append('files', file, fileName);
     });
 
     // Build URL with query parameters
@@ -299,9 +343,13 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/zotero${params.toString() ? '?' + params.toString() : ''}`;
 
+    // Get auth headers for file upload
+    const authHeaders = await this.getAuthHeaders();
+
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: authHeaders,
     });
 
     if (!response.ok) {

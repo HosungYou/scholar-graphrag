@@ -1076,19 +1076,24 @@ async def validate_zotero_folder(
         pdf_count = 0
 
         # Save uploaded files to temp directory
+        logger.info(f"Received {len(files)} files for Zotero validation")
         for file in files:
+            logger.info(f"  - filename: '{file.filename}', content_type: {file.content_type}")
             content = await file.read()
 
-            if file.filename.endswith('.rdf'):
+            if file.filename.lower().endswith('.rdf'):
                 rdf_path = Path(temp_dir) / file.filename
+                # Create parent directories if path includes subdirectories
+                rdf_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(rdf_path, 'wb') as f:
                     f.write(content)
                 rdf_file = file.filename
-            elif file.filename.endswith('.pdf'):
+            elif file.filename.lower().endswith('.pdf'):
                 # Create subdirectory for each PDF
-                pdf_subdir = files_subdir / Path(file.filename).stem
-                pdf_subdir.mkdir(exist_ok=True)
-                with open(pdf_subdir / file.filename, 'wb') as f:
+                pdf_name = Path(file.filename).name  # Get just the filename, not path
+                pdf_subdir = files_subdir / Path(pdf_name).stem
+                pdf_subdir.mkdir(parents=True, exist_ok=True)
+                with open(pdf_subdir / pdf_name, 'wb') as f:
                     f.write(content)
                 pdf_count += 1
 

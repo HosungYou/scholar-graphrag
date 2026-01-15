@@ -21,6 +21,7 @@ import {
   X,
   Plus,
   Library,
+  ArrowRight,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -28,6 +29,18 @@ import { Header } from '@/components/layout';
 import { ThemeToggle, ErrorBoundary, ErrorDisplay } from '@/components/ui';
 import { ImportProgress } from '@/components/import/ImportProgress';
 import type { ImportValidationResult } from '@/types';
+
+/* ============================================================
+   ScholaRAG Graph - Import Page
+   VS Design Diverge: Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Step indicators (1→2→3) instead of tabs
+   - Solid backgrounds (no gradients)
+   - Line-based design
+   - Number indicators
+   - Minimal border-radius
+   ============================================================ */
 
 type ImportMethod = 'pdf' | 'scholarag' | 'zotero';
 
@@ -70,6 +83,13 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
+
+// Import method configuration
+const importMethods = [
+  { id: 'pdf' as const, label: 'PDF Upload', icon: FileText, recommended: true },
+  { id: 'zotero' as const, label: 'Zotero', icon: Library, recommended: false },
+  { id: 'scholarag' as const, label: 'ScholaRAG', icon: FolderOpen, recommended: false },
+];
 
 export default function ImportPage() {
   const [importMethod, setImportMethod] = useState<ImportMethod>('pdf');
@@ -195,7 +215,7 @@ export default function ImportPage() {
     if (zoteroFiles.length === 0) return;
     const rdfFiles = zoteroFiles.filter((f) => f.name.toLowerCase().endsWith('.rdf'));
     if (rdfFiles.length === 0) {
-      alert('RDF 파일이 필요합니다. Zotero에서 RDF 형식으로 내보내기 해주세요.');
+      alert('RDF file required. Please export from Zotero in RDF format.');
       return;
     }
     validateZoteroMutation.mutate(zoteroFiles);
@@ -226,17 +246,15 @@ export default function ImportPage() {
     setIsDragOver(false);
 
     if (importMethod === 'pdf') {
-      // Handle PDF file drop
       const files = Array.from(e.dataTransfer.files).filter(
         (file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
       );
       if (files.length > 0) {
         setSelectedFiles((prev) => [...prev, ...files]);
       } else {
-        alert('PDF 파일만 업로드할 수 있습니다.');
+        alert('Only PDF files are allowed.');
       }
     } else if (importMethod === 'zotero') {
-      // Handle Zotero RDF + PDF files
       const files = Array.from(e.dataTransfer.files).filter(
         (file) =>
           file.name.toLowerCase().endsWith('.rdf') ||
@@ -246,13 +264,12 @@ export default function ImportPage() {
         setZoteroFiles((prev) => [...prev, ...files]);
         setZoteroValidation(null);
       } else {
-        alert('RDF 또는 PDF 파일만 업로드할 수 있습니다.');
+        alert('Only RDF or PDF files are allowed.');
       }
     } else {
-      // Handle folder path (existing behavior)
       if (e.dataTransfer.items.length > 0) {
         alert(
-          '웹 브라우저 보안 정책으로 인해 드래그 앤 드롭으로는 폴더 경로를 가져올 수 없습니다.\n\nFinder에서 폴더를 우클릭 → "정보 가져오기" → 위치를 복사하거나,\n터미널에서 폴더로 이동 후 pwd 명령어로 경로를 복사해주세요.'
+          'Due to browser security, folder paths cannot be obtained via drag and drop.\n\nRight-click folder in Finder → "Get Info" → Copy path, or use pwd in terminal.'
         );
       }
     }
@@ -265,7 +282,6 @@ export default function ImportPage() {
     if (files.length > 0) {
       setSelectedFiles((prev) => [...prev, ...files]);
     }
-    // Reset input so the same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -283,7 +299,7 @@ export default function ImportPage() {
       }
     } catch (err) {
       console.error('Failed to read clipboard:', err);
-      alert('클립보드를 읽을 수 없습니다. 브라우저 권한을 확인해주세요.');
+      alert('Cannot read clipboard. Please check browser permissions.');
     }
   };
 
@@ -292,15 +308,16 @@ export default function ImportPage() {
     '~/Documents/ScholaRAG/projects',
   ];
 
+  // Progress view
   if (importJobId) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+      <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
         <Header
           breadcrumbs={[{ label: 'Import', href: '/import' }, { label: 'Progress' }]}
           rightContent={<ThemeToggle />}
         />
 
-        <main className="flex-1 max-w-2xl mx-auto px-4 py-8 w-full">
+        <main className="flex-1 max-w-2xl mx-auto px-6 py-12 w-full">
           <ErrorBoundary>
             <ImportProgress
               jobId={importJobId}
@@ -317,9 +334,9 @@ export default function ImportPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       <a href="#main-content" className="skip-link">
-        메인 콘텐츠로 건너뛰기
+        Skip to main content
       </a>
 
       <Header
@@ -327,813 +344,741 @@ export default function ImportPage() {
         rightContent={<ThemeToggle />}
       />
 
-      <main id="main-content" className="flex-1 max-w-3xl mx-auto px-4 py-6 sm:py-8 w-full">
+      <main id="main-content" className="flex-1 max-w-3xl mx-auto px-6 py-8 md:py-12 w-full">
         <ErrorBoundary>
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-8">
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-6">
-              <div className="p-3 bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/30 dark:to-purple-900/30 rounded-lg w-fit">
-                <Upload className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+          {/* Page Header */}
+          <div className="mb-8 md:mb-12">
+            <span className="text-accent-teal font-mono text-sm tracking-widest uppercase">
+              Data Ingestion
+            </span>
+            <h1 className="font-display text-3xl md:text-4xl text-ink dark:text-paper mt-2">
+              Import to Knowledge Graph
+            </h1>
+            <p className="text-muted mt-3">
+              Upload PDFs or import existing projects to build your knowledge graph.
+            </p>
+          </div>
+
+          {/* Import Method Selection - Step Style */}
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="font-mono text-2xl text-accent-teal/30">01</span>
+              <span className="text-sm text-muted uppercase tracking-wider">Select Method</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {importMethods.map((method) => {
+                const Icon = method.icon;
+                const isActive = importMethod === method.id;
+                return (
+                  <button
+                    key={method.id}
+                    onClick={() => setImportMethod(method.id)}
+                    className={`
+                      step-indicator relative p-4 border transition-all text-left
+                      ${isActive
+                        ? 'border-accent-teal bg-accent-teal/5'
+                        : 'border-ink/10 dark:border-paper/10 hover:border-ink/20 dark:hover:border-paper/20'
+                      }
+                    `}
+                  >
+                    <Icon className={`w-5 h-5 mb-2 ${isActive ? 'text-accent-teal' : 'text-muted'}`} />
+                    <div className={`font-medium text-sm ${isActive ? 'text-ink dark:text-paper' : 'text-muted'}`}>
+                      {method.label}
+                    </div>
+                    {method.recommended && (
+                      <span className="absolute top-2 right-2 text-[10px] font-mono text-accent-teal">
+                        REC
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* What will be created */}
+          <div className="mb-8 py-4 border-y border-ink/10 dark:border-paper/10">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="font-mono text-2xl text-accent-amber/30">02</span>
+              <span className="text-sm text-muted uppercase tracking-wider">Output Preview</span>
+            </div>
+            <div className="grid grid-cols-3 gap-6">
+              <div className="text-center">
+                <FileText className="w-6 h-6 text-accent-teal mx-auto mb-2" />
+                <p className="text-xs text-muted">Papers & Authors</p>
               </div>
-              <div>
-                <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
-                  Import to Knowledge Graph
-                </h2>
-                <p className="text-gray-600 dark:text-gray-300 text-sm sm:text-base">
-                  Upload PDFs or import a ScholaRAG project to build a knowledge graph.
+              <div className="text-center">
+                <BookOpen className="w-6 h-6 text-accent-amber mx-auto mb-2" />
+                <p className="text-xs text-muted">Concepts & Methods</p>
+              </div>
+              <div className="text-center">
+                <Database className="w-6 h-6 text-accent-red mx-auto mb-2" />
+                <p className="text-xs text-muted">Knowledge Graph</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Upload Section Header */}
+          <div className="flex items-center gap-2 mb-6">
+            <span className="font-mono text-2xl text-accent-red/30">03</span>
+            <span className="text-sm text-muted uppercase tracking-wider">Upload Files</span>
+          </div>
+
+          {/* PDF Upload Section */}
+          {importMethod === 'pdf' && (
+            <div className="space-y-6">
+              {/* Drop Zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`
+                  drop-zone border-2 border-dashed p-8 text-center cursor-pointer transition-all
+                  ${isDragOver
+                    ? 'border-accent-teal bg-accent-teal/5'
+                    : 'border-ink/20 dark:border-paper/20 hover:border-accent-teal/50'
+                  }
+                `}
+                role="button"
+                tabIndex={0}
+                aria-label="Upload PDF files"
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <File className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? 'text-accent-teal' : 'text-muted'}`} />
+                <p className={`font-display text-lg ${isDragOver ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
+                  Drop PDF files or click to select
+                </p>
+                <p className="text-xs text-muted mt-2 font-mono">
+                  Max 50MB per file / 200MB total
                 </p>
               </div>
-            </div>
 
-            {/* Import Method Tabs */}
-            <div className="flex border-b dark:border-gray-700 mb-6">
+              {/* Selected Files */}
+              {selectedFiles.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-muted">
+                      {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected
+                    </span>
+                    <button
+                      onClick={() => setSelectedFiles([])}
+                      className="text-xs text-accent-red hover:underline"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {selectedFiles.map((file, index) => (
+                      <div
+                        key={`${file.name}-${index}`}
+                        className="flex items-center justify-between p-3 border border-ink/10 dark:border-paper/10"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <FileText className="w-4 h-4 text-accent-red flex-shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm text-ink dark:text-paper truncate">{file.name}</p>
+                            <p className="text-xs text-muted font-mono">{formatFileSize(file.size)}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFile(index);
+                          }}
+                          className="p-1 text-muted hover:text-accent-red transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Project Options */}
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="projectName" className="block text-sm text-muted mb-2">
+                    Project Name <span className="text-xs">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="projectName"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    placeholder="Auto-extracted from PDF title"
+                    className="import-input w-full"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="researchQuestion" className="block text-sm text-muted mb-2">
+                    Research Question <span className="text-xs">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="researchQuestion"
+                    value={researchQuestion}
+                    onChange={(e) => setResearchQuestion(e.target.value)}
+                    placeholder="e.g., What are the effects of AI on learning?"
+                    className="import-input w-full"
+                  />
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={extractConcepts}
+                    onChange={(e) => setExtractConcepts(e.target.checked)}
+                    className="w-4 h-4 accent-accent-teal"
+                  />
+                  <span className="text-sm text-muted">
+                    AI-extract concepts, methods, and findings (recommended)
+                  </span>
+                </label>
+              </div>
+
+              {/* Error */}
+              {uploadPDFMutation.isError && (
+                <ErrorDisplay
+                  error={uploadPDFMutation.error as Error}
+                  title="Upload failed"
+                  message="An error occurred while uploading PDFs."
+                  onRetry={handleUploadPDF}
+                  compact
+                />
+              )}
+
+              {/* Upload Button */}
               <button
-                onClick={() => setImportMethod('pdf')}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 font-medium text-sm transition-colors ${
-                  importMethod === 'pdf'
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
+                onClick={handleUploadPDF}
+                disabled={selectedFiles.length === 0 || uploadPDFMutation.isPending}
+                className="btn btn--primary w-full justify-center py-4"
               >
-                <FileText className="w-4 h-4" />
-                PDF 업로드
-                <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
-                  추천
-                </span>
-              </button>
-              <button
-                onClick={() => setImportMethod('zotero')}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 font-medium text-sm transition-colors ${
-                  importMethod === 'zotero'
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
-              >
-                <Library className="w-4 h-4" />
-                Zotero
-              </button>
-              <button
-                onClick={() => setImportMethod('scholarag')}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 font-medium text-sm transition-colors ${
-                  importMethod === 'scholarag'
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
-              >
-                <FolderOpen className="w-4 h-4" />
-                ScholaRAG 프로젝트
+                {uploadPDFMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 mr-2" />
+                    Upload & Build Knowledge Graph
+                  </>
+                )}
               </button>
             </div>
+          )}
 
-            {/* What will be imported */}
-            <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                Import 과정에서 생성되는 것:
-              </p>
-              <div className="grid grid-cols-3 gap-2 sm:gap-4 text-center">
-                <div className="p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-600">
-                  <FileText className="w-5 sm:w-6 h-5 sm:h-6 text-blue-600 mx-auto mb-1" />
-                  <p className="text-xs text-gray-600 dark:text-gray-300">Papers & Authors</p>
-                </div>
-                <div className="p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-600">
-                  <BookOpen className="w-5 sm:w-6 h-5 sm:h-6 text-purple-600 mx-auto mb-1" />
-                  <p className="text-xs text-gray-600 dark:text-gray-300">Concepts & Methods</p>
-                </div>
-                <div className="p-2 sm:p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-600">
-                  <Database className="w-5 sm:w-6 h-5 sm:h-6 text-green-600 mx-auto mb-1" />
-                  <p className="text-xs text-gray-600 dark:text-gray-300">Knowledge Graph</p>
+          {/* Zotero Import Section */}
+          {importMethod === 'zotero' && (
+            <div className="space-y-6">
+              {/* Info Banner */}
+              <div className="p-4 border-l-2 border-accent-teal bg-accent-teal/5">
+                <p className="font-medium text-ink dark:text-paper mb-2">Export from Zotero</p>
+                <ol className="text-sm text-muted space-y-1 list-decimal list-inside">
+                  <li>Select collection or items in Zotero</li>
+                  <li>File → Export... (or right-click → Export)</li>
+                  <li>Format: <strong>Zotero RDF</strong></li>
+                  <li>Check <strong>&quot;Export Files&quot;</strong></li>
+                  <li>Save and upload the folder below</li>
+                </ol>
+              </div>
+
+              {/* Drop Zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`
+                  drop-zone border-2 border-dashed p-8 text-center transition-all
+                  ${isDragOver
+                    ? 'border-accent-teal bg-accent-teal/5'
+                    : 'border-ink/20 dark:border-paper/20'
+                  }
+                `}
+              >
+                <input
+                  ref={zoteroFileInputRef}
+                  type="file"
+                  accept=".rdf,.pdf,application/pdf"
+                  multiple
+                  onChange={handleZoteroFileSelect}
+                  className="hidden"
+                />
+                <input
+                  id="zoteroFolderInput"
+                  type="file"
+                  // @ts-expect-error webkitdirectory is not in standard types
+                  webkitdirectory=""
+                  onChange={handleZoteroFileSelect}
+                  className="hidden"
+                />
+                <Library className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? 'text-accent-teal' : 'text-muted'}`} />
+                <p className={`font-display text-lg ${isDragOver ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
+                  Drop Zotero export files
+                </p>
+                <p className="text-xs text-muted mt-2 font-mono">
+                  .rdf (required) + .pdf files (optional)
+                </p>
+                <div className="flex gap-3 mt-6 justify-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      zoteroFileInputRef.current?.click();
+                    }}
+                    className="btn btn--secondary text-sm"
+                  >
+                    Select Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      document.getElementById('zoteroFolderInput')?.click();
+                    }}
+                    className="btn btn--primary text-sm"
+                  >
+                    Select Folder
+                  </button>
                 </div>
               </div>
-            </div>
 
-            {/* PDF Upload Section */}
-            {importMethod === 'pdf' && (
-              <>
-                {/* Drag & Drop Zone for PDFs */}
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`
-                    border-2 border-dashed rounded-xl p-6 sm:p-8 mb-6 text-center transition-all cursor-pointer
-                    ${isDragOver
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                    }
-                  `}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="PDF 파일 업로드"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".pdf,application/pdf"
-                    multiple
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  <File
-                    className={`w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-3 sm:mb-4 ${
-                      isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'
-                    }`}
-                  />
-                  <p className={`text-base sm:text-lg font-medium ${
-                    isDragOver ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                    PDF 파일을 드래그하거나 클릭하여 선택
-                  </p>
-                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-2">
-                    최대 50MB 단일 파일 / 200MB 총 용량
-                  </p>
-                </div>
-
-                {/* Selected Files List */}
-                {selectedFiles.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        선택된 파일 ({selectedFiles.length})
-                      </p>
-                      <button
-                        onClick={() => setSelectedFiles([])}
-                        className="text-xs text-red-600 hover:text-red-700 dark:text-red-400"
+              {/* Selected Files */}
+              {zoteroFiles.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-muted">{zoteroFiles.length} files selected</span>
+                    <button
+                      onClick={() => {
+                        setZoteroFiles([]);
+                        setZoteroValidation(null);
+                      }}
+                      className="text-xs text-accent-red hover:underline"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {zoteroFiles.map((file, index) => (
+                      <div
+                        key={index}
+                        className={`flex items-center gap-3 p-3 border ${
+                          file.name.endsWith('.rdf')
+                            ? 'border-accent-amber bg-accent-amber/5'
+                            : 'border-ink/10 dark:border-paper/10'
+                        }`}
                       >
-                        전체 삭제
-                      </button>
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {selectedFiles.map((file, index) => (
-                        <div
-                          key={`${file.name}-${index}`}
-                          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <FileText className="w-5 h-5 text-red-500 flex-shrink-0" />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-                                {file.name}
-                              </p>
-                              <p className="text-xs text-gray-500 dark:text-gray-400">
-                                {formatFileSize(file.size)}
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeFile(index);
-                            }}
-                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                            aria-label={`${file.name} 제거`}
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
+                        {file.name.endsWith('.rdf') ? (
+                          <Database className="w-4 h-4 text-accent-amber flex-shrink-0" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-accent-teal flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-ink dark:text-paper truncate">{file.name}</p>
+                          <p className="text-xs text-muted font-mono">
+                            {formatFileSize(file.size)}
+                            {file.name.endsWith('.rdf') && ' - metadata'}
+                          </p>
                         </div>
-                      ))}
-                    </div>
+                        <button
+                          onClick={() => removeZoteroFile(index)}
+                          className="p-1 text-muted hover:text-accent-red"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                )}
-
-                {/* Project Options */}
-                <div className="mb-6 space-y-4">
-                  <div>
-                    <label
-                      htmlFor="projectName"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                    >
-                      프로젝트 이름 (선택)
-                    </label>
-                    <input
-                      type="text"
-                      id="projectName"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      placeholder="PDF 제목에서 자동 추출됩니다"
-                      className="w-full px-4 py-3 border dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="researchQuestion"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                    >
-                      연구 질문 (선택)
-                    </label>
-                    <input
-                      type="text"
-                      id="researchQuestion"
-                      value={researchQuestion}
-                      onChange={(e) => setResearchQuestion(e.target.value)}
-                      placeholder="예: What are the effects of AI on learning?"
-                      className="w-full px-4 py-3 border dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="extractConcepts"
-                      checked={extractConcepts}
-                      onChange={(e) => setExtractConcepts(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label
-                      htmlFor="extractConcepts"
-                      className="text-sm text-gray-700 dark:text-gray-300"
-                    >
-                      AI로 개념, 방법론, 발견 자동 추출 (권장)
-                    </label>
-                  </div>
-                </div>
-
-                {/* Upload Error */}
-                {uploadPDFMutation.isError && (
-                  <ErrorDisplay
-                    error={uploadPDFMutation.error as Error}
-                    title="업로드 실패"
-                    message="PDF 업로드 중 오류가 발생했습니다."
-                    onRetry={handleUploadPDF}
-                    compact
-                  />
-                )}
-
-                {/* Upload Button */}
-                <button
-                  onClick={handleUploadPDF}
-                  disabled={selectedFiles.length === 0 || uploadPDFMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-base sm:text-lg shadow-lg shadow-blue-500/25 touch-target"
-                >
-                  {uploadPDFMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      Upload & Build Knowledge Graph
-                    </>
+                  {!zoteroFiles.some((f) => f.name.endsWith('.rdf')) && (
+                    <p className="mt-2 text-sm text-accent-red">
+                      RDF file required
+                    </p>
                   )}
-                </button>
-              </>
-            )}
-
-            {/* Zotero Import Section */}
-            {importMethod === 'zotero' && (
-              <>
-                {/* Info Banner */}
-                <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <div className="flex items-start gap-3">
-                    <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                    <div className="text-sm">
-                      <p className="text-blue-700 dark:text-blue-300 font-medium mb-1">
-                        Zotero에서 내보내기 방법
-                      </p>
-                      <ol className="text-blue-600 dark:text-blue-400 space-y-1 list-decimal list-inside">
-                        <li>Zotero에서 컬렉션 또는 항목 선택</li>
-                        <li>파일 → 내보내기... (또는 우클릭 → 내보내기)</li>
-                        <li>형식: <strong>Zotero RDF</strong> 선택</li>
-                        <li><strong>&quot;파일 내보내기&quot;</strong> 체크박스 활성화</li>
-                        <li>저장 후 생성된 .rdf 파일과 PDFs를 업로드</li>
-                      </ol>
-                    </div>
-                  </div>
                 </div>
+              )}
 
-                {/* Drag & Drop Zone for Zotero files */}
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => zoteroFileInputRef.current?.click()}
-                  className={`
-                    border-2 border-dashed rounded-xl p-6 sm:p-8 mb-6 text-center transition-all cursor-pointer
-                    ${isDragOver
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                    }
-                  `}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Zotero 파일 업로드"
-                >
-                  <input
-                    ref={zoteroFileInputRef}
-                    type="file"
-                    accept=".rdf,.pdf,application/pdf"
-                    multiple
-                    onChange={handleZoteroFileSelect}
-                    className="hidden"
-                  />
-                  <Library
-                    className={`w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-3 sm:mb-4 ${
-                      isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'
-                    }`}
-                  />
-                  <p className={`text-base sm:text-lg font-medium ${
-                    isDragOver ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                    Zotero 내보내기 파일을 드래그하거나 클릭하여 업로드
-                  </p>
-                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-2">
-                    .rdf 파일 (필수) + .pdf 파일들 (선택)
+              {/* Validate Button */}
+              <button
+                onClick={handleZoteroValidate}
+                disabled={
+                  zoteroFiles.length === 0 ||
+                  !zoteroFiles.some((f) => f.name.endsWith('.rdf')) ||
+                  validateZoteroMutation.isPending
+                }
+                className="btn btn--secondary w-full justify-center"
+              >
+                {validateZoteroMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    Validating...
+                  </>
+                ) : (
+                  'Validate Files'
+                )}
+              </button>
+
+              {/* Validation Error */}
+              {validateZoteroMutation.isError && (
+                <div className="p-4 border-l-2 border-accent-red bg-accent-red/5">
+                  <p className="text-sm text-accent-red">
+                    Validation failed: {(validateZoteroMutation.error as Error).message}
                   </p>
                 </div>
+              )}
 
-                {/* Selected Files List */}
-                {zoteroFiles.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        선택된 파일 ({zoteroFiles.length})
-                      </p>
-                      <button
-                        onClick={() => {
-                          setZoteroFiles([]);
-                          setZoteroValidation(null);
-                        }}
-                        className="text-xs text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400"
-                      >
-                        모두 제거
-                      </button>
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {zoteroFiles.map((file, index) => (
-                        <div
-                          key={index}
-                          className={`flex items-center gap-3 p-3 rounded-lg border ${
-                            file.name.endsWith('.rdf')
-                              ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
-                              : 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600'
-                          }`}
-                        >
-                          {file.name.endsWith('.rdf') ? (
-                            <Database className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-                          ) : (
-                            <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-                              {file.name}
-                            </p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                              {formatFileSize(file.size)}
-                              {file.name.endsWith('.rdf') && ' - 메타데이터'}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => removeZoteroFile(index)}
-                            className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    {!zoteroFiles.some((f) => f.name.endsWith('.rdf')) && (
-                      <p className="mt-2 text-sm text-red-600 dark:text-red-400">
-                        ⚠️ RDF 파일이 필요합니다
-                      </p>
+              {/* Validation Results */}
+              {zoteroValidation && (
+                <div className={`p-4 border-l-2 ${
+                  zoteroValidation.valid
+                    ? 'border-accent-teal bg-accent-teal/5'
+                    : 'border-accent-red bg-accent-red/5'
+                }`}>
+                  <div className="flex items-center gap-2 mb-4">
+                    {zoteroValidation.valid ? (
+                      <>
+                        <CheckCircle className="w-5 h-5 text-accent-teal" />
+                        <span className="font-medium text-ink dark:text-paper">Validation passed</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-5 h-5 text-accent-red" />
+                        <span className="font-medium text-ink dark:text-paper">Validation failed</span>
+                      </>
                     )}
                   </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-muted uppercase tracking-wider">Items</p>
+                      <p className="font-mono text-2xl text-ink dark:text-paper">
+                        {zoteroValidation.items_count}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted uppercase tracking-wider">PDFs</p>
+                      <p className="font-mono text-2xl text-ink dark:text-paper">
+                        {zoteroValidation.pdfs_available}
+                      </p>
+                    </div>
+                  </div>
+
+                  {zoteroValidation.errors.length > 0 && (
+                    <div className="mt-4 text-sm text-accent-red">
+                      <p className="font-medium mb-1">Errors:</p>
+                      <ul className="list-disc list-inside">
+                        {zoteroValidation.errors.map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {zoteroValidation.warnings.length > 0 && (
+                    <div className="mt-4 text-sm text-accent-amber">
+                      <p className="font-medium mb-1">Warnings:</p>
+                      <ul className="list-disc list-inside">
+                        {zoteroValidation.warnings.map((warn, i) => (
+                          <li key={i}>{warn}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Project Options */}
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="zoteroProjectName" className="block text-sm text-muted mb-2">
+                    Project Name <span className="text-xs">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="zoteroProjectName"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    placeholder="Zotero Import YYYY-MM-DD"
+                    className="import-input w-full"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="zoteroResearchQuestion" className="block text-sm text-muted mb-2">
+                    Research Question <span className="text-xs">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="zoteroResearchQuestion"
+                    value={researchQuestion}
+                    onChange={(e) => setResearchQuestion(e.target.value)}
+                    placeholder="What do you want to research with these papers?"
+                    className="import-input w-full"
+                  />
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={extractConcepts}
+                    onChange={(e) => setExtractConcepts(e.target.checked)}
+                    className="w-4 h-4 accent-accent-teal"
+                  />
+                  <span className="text-sm text-muted">
+                    AI-extract concepts, methods, and findings (recommended)
+                  </span>
+                </label>
+              </div>
+
+              {/* Import Button */}
+              <button
+                onClick={handleImportZotero}
+                disabled={!zoteroValidation?.valid || importZoteroMutation.isPending}
+                className="btn btn--primary w-full justify-center py-4"
+              >
+                {importZoteroMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 mr-2" />
+                    Import & Build Knowledge Graph
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* ScholaRAG Import Section */}
+          {importMethod === 'scholarag' && (
+            <div className="space-y-6">
+              {/* Drop Zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => inputRef.current?.focus()}
+                className={`
+                  drop-zone border-2 border-dashed p-8 text-center cursor-pointer transition-all
+                  ${isDragOver
+                    ? 'border-accent-teal bg-accent-teal/5'
+                    : 'border-ink/20 dark:border-paper/20 hover:border-accent-teal/50'
+                  }
+                `}
+                role="button"
+                tabIndex={0}
+              >
+                <FolderSearch className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? 'text-accent-teal' : 'text-muted'}`} />
+                <p className={`font-display text-lg ${isDragOver ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
+                  Enter ScholaRAG project folder path
+                </p>
+                <p className="text-xs text-muted mt-2">
+                  Right-click folder in Finder → "Copy Path"
+                </p>
+              </div>
+
+              {/* Path Input */}
+              <div>
+                <label htmlFor="folderPath" className="block text-sm text-muted mb-2">
+                  Project Folder Path
+                </label>
+                <div className="flex gap-3">
+                  <div className="flex-1 relative">
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      id="folderPath"
+                      value={folderPath}
+                      onChange={(e) => handlePathChange(e.target.value)}
+                      placeholder="/path/to/ScholaRAG/projects/2025-01-01_ProjectName"
+                      className="import-input w-full pr-10 font-mono text-sm"
+                    />
+                    <button
+                      onClick={handlePaste}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-muted hover:text-accent-teal transition-colors"
+                      title="Paste from clipboard"
+                    >
+                      <ClipboardPaste className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleValidate}
+                    disabled={!folderPath.trim() || validateMutation.isPending}
+                    className="btn btn--secondary"
+                  >
+                    {validateMutation.isPending ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      'Validate'
+                    )}
+                  </button>
+                </div>
+
+                {/* Full path display */}
+                {folderPath && folderPath.length > 60 && (
+                  <div className="mt-2 p-2 bg-surface/30 text-xs font-mono text-muted break-all">
+                    {folderPath}
+                  </div>
                 )}
 
-                {/* Validate Button */}
-                <button
-                  onClick={handleZoteroValidate}
-                  disabled={
-                    zoteroFiles.length === 0 ||
-                    !zoteroFiles.some((f) => f.name.endsWith('.rdf')) ||
-                    validateZoteroMutation.isPending
-                  }
-                  className="w-full mb-4 px-4 py-3 bg-gray-800 dark:bg-gray-600 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-                >
-                  {validateZoteroMutation.isPending ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      검증 중...
-                    </span>
-                  ) : (
-                    '파일 검증'
-                  )}
-                </button>
-
-                {/* Validation Error */}
-                {validateZoteroMutation.isError && (
-                  <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                    <p className="text-red-700 dark:text-red-300 text-sm">
-                      검증 실패: {(validateZoteroMutation.error as Error).message}
+                {/* Path normalized notice */}
+                {pathNormalized?.wasNormalized && (
+                  <div className="mt-3 p-3 border-l-2 border-accent-teal bg-accent-teal/5">
+                    <p className="font-medium text-ink dark:text-paper text-sm">Path auto-corrected</p>
+                    <p className="text-xs text-muted mt-1">
+                      Adjusted to project root from subfolder.
                     </p>
                   </div>
                 )}
 
-                {/* Validation Results */}
-                {zoteroValidation && (
-                  <div
-                    className={`rounded-lg p-4 mb-6 ${
-                      zoteroValidation.valid
-                        ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
-                        : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-3">
-                      {zoteroValidation.valid ? (
-                        <>
-                          <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-                          <span className="font-medium text-green-700 dark:text-green-300">
-                            검증 성공
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-                          <span className="font-medium text-red-700 dark:text-red-300">
-                            검증 실패
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="p-3 bg-white dark:bg-gray-800 rounded-lg">
-                        <p className="text-gray-500 dark:text-gray-400 text-xs">논문 항목</p>
-                        <p className="text-xl font-semibold text-gray-900 dark:text-white">
-                          {zoteroValidation.items_count}
-                        </p>
-                      </div>
-                      <div className="p-3 bg-white dark:bg-gray-800 rounded-lg">
-                        <p className="text-gray-500 dark:text-gray-400 text-xs">PDF 파일</p>
-                        <p className="text-xl font-semibold text-gray-900 dark:text-white">
-                          {zoteroValidation.pdfs_available}
-                        </p>
-                      </div>
-                    </div>
-
-                    {zoteroValidation.errors.length > 0 && (
-                      <div className="mt-4 p-3 bg-red-100 dark:bg-red-900/30 rounded">
-                        <p className="font-medium text-red-700 dark:text-red-300 mb-1 text-sm">오류:</p>
-                        <ul className="list-disc list-inside text-red-600 dark:text-red-400 text-xs sm:text-sm">
-                          {zoteroValidation.errors.map((err, i) => (
-                            <li key={i}>{err}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {zoteroValidation.warnings.length > 0 && (
-                      <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded">
-                        <p className="font-medium text-yellow-700 dark:text-yellow-300 mb-1 text-sm">경고:</p>
-                        <ul className="list-disc list-inside text-yellow-600 dark:text-yellow-400 text-xs sm:text-sm">
-                          {zoteroValidation.warnings.map((warn, i) => (
-                            <li key={i}>{warn}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Project Options */}
-                <div className="mb-6 space-y-4">
-                  <div>
-                    <label
-                      htmlFor="zoteroProjectName"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                    >
-                      프로젝트 이름 (선택)
-                    </label>
-                    <input
-                      type="text"
-                      id="zoteroProjectName"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      placeholder="Zotero Import YYYY-MM-DD"
-                      className="w-full px-4 py-3 border dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="zoteroResearchQuestion"
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                    >
-                      연구 질문 (선택)
-                    </label>
-                    <input
-                      type="text"
-                      id="zoteroResearchQuestion"
-                      value={researchQuestion}
-                      onChange={(e) => setResearchQuestion(e.target.value)}
-                      placeholder="이 논문들로 무엇을 연구하고 싶나요?"
-                      className="w-full px-4 py-3 border dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                    />
-                  </div>
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="zoteroExtractConcepts"
-                      checked={extractConcepts}
-                      onChange={(e) => setExtractConcepts(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                    />
-                    <label
-                      htmlFor="zoteroExtractConcepts"
-                      className="ml-2 text-sm text-gray-700 dark:text-gray-300"
-                    >
-                      AI로 개념/방법론/결과 자동 추출 (권장)
-                    </label>
-                  </div>
-                </div>
-
-                {/* Import Button */}
-                <button
-                  onClick={handleImportZotero}
-                  disabled={!zoteroValidation?.valid || importZoteroMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-base sm:text-lg shadow-lg shadow-blue-500/25 touch-target"
-                >
-                  {importZoteroMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Importing...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      Import & Build Knowledge Graph
-                    </>
-                  )}
-                </button>
-              </>
-            )}
-
-            {/* ScholaRAG Import Section */}
-            {importMethod === 'scholarag' && (
-              <>
-                {/* Drag & Drop Zone for folder path */}
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => inputRef.current?.focus()}
-                  className={`
-                    border-2 border-dashed rounded-xl p-6 sm:p-8 mb-6 text-center transition-all cursor-pointer
-                    ${isDragOver
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                    }
-                  `}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="프로젝트 폴더 경로 입력"
-                >
-                  <FolderSearch
-                    className={`w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-3 sm:mb-4 ${
-                      isDragOver ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'
-                    }`}
-                  />
-                  <p className={`text-base sm:text-lg font-medium ${
-                    isDragOver ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                    ScholaRAG 프로젝트 폴더 경로를 입력하세요
-                  </p>
-                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-2">
-                    Finder에서 폴더를 우클릭 → "경로명 복사"로 복사한 후 아래에 붙여넣기
-                  </p>
-                </div>
-
-                {/* Folder Path Input */}
-                <div className="mb-6">
-                  <label
-                    htmlFor="folderPath"
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                  >
-                    프로젝트 폴더 경로
-                  </label>
-                  <div className="flex gap-2">
-                    <div className="flex-1 relative group">
-                      <input
-                        ref={inputRef}
-                        type="text"
-                        id="folderPath"
-                        value={folderPath}
-                        onChange={(e) => handlePathChange(e.target.value)}
-                        placeholder="/path/to/ScholaRAG/projects/2025-01-01_ProjectName"
-                        className="w-full px-3 sm:px-4 py-3 pr-12 border dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-xs sm:text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                        title={folderPath || '프로젝트 폴더 경로를 입력하세요'}
-                      />
-                      {folderPath && (
-                        <div className="absolute left-0 right-0 -bottom-1 translate-y-full z-10 hidden group-hover:block">
-                          <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-lg font-mono break-all max-w-full">
-                            {folderPath}
-                          </div>
-                        </div>
-                      )}
+                {/* Quick paths */}
+                <div className="mt-3">
+                  <p className="text-xs text-muted mb-2">Quick paths:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {commonPaths.map((path, i) => (
                       <button
-                        onClick={handlePaste}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors touch-target"
-                        title="클립보드에서 붙여넣기"
-                        aria-label="클립보드에서 붙여넣기"
+                        key={i}
+                        onClick={() => handlePathChange(path)}
+                        className="text-xs px-3 py-1.5 border border-ink/10 dark:border-paper/10 text-muted hover:border-accent-teal hover:text-accent-teal transition-colors font-mono"
                       >
-                        <ClipboardPaste className="w-5 h-5" />
+                        {path.length > 40 ? '...' + path.slice(-37) : path}
                       </button>
-                    </div>
-                    <button
-                      onClick={handleValidate}
-                      disabled={!folderPath.trim() || validateMutation.isPending}
-                      className="px-4 sm:px-6 py-3 bg-gray-800 dark:bg-gray-600 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium touch-target"
-                    >
-                      {validateMutation.isPending ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        '검증'
-                      )}
-                    </button>
-                  </div>
-
-                  {folderPath && folderPath.length > 60 && (
-                    <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-700/50 rounded border dark:border-gray-600 text-xs font-mono text-gray-600 dark:text-gray-300 break-all">
-                      <span className="text-gray-400">전체 경로: </span>
-                      {folderPath}
-                    </div>
-                  )}
-
-                  {pathNormalized?.wasNormalized && (
-                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <div className="flex items-start gap-2">
-                        <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                        <div className="text-sm">
-                          <p className="text-blue-700 dark:text-blue-300 font-medium">
-                            경로가 자동 수정되었습니다
-                          </p>
-                          <p className="text-blue-600 dark:text-blue-400 mt-1 text-xs sm:text-sm">
-                            하위 폴더 대신 프로젝트 루트 폴더로 경로를 수정했습니다.
-                          </p>
-                          <p className="text-xs text-blue-500 dark:text-blue-500 mt-1 font-mono break-all">
-                            원래 경로: {pathNormalized.originalPath}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-3">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">빠른 경로 선택:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {commonPaths.map((path, i) => (
-                        <button
-                          key={i}
-                          onClick={() => handlePathChange(path)}
-                          className="text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-mono touch-target"
-                        >
-                          {path.length > 40 ? '...' + path.slice(-37) : path}
-                        </button>
-                      ))}
-                    </div>
+                    ))}
                   </div>
                 </div>
+              </div>
 
-                {/* Validation Error */}
-                {validateMutation.isError && (
-                  <ErrorDisplay
-                    error={validateMutation.error as Error}
-                    title="검증 실패"
-                    message="폴더 경로를 확인할 수 없습니다. 경로가 올바른지 확인해주세요."
-                    onRetry={handleValidate}
-                    compact
-                  />
-                )}
+              {/* Validation Error */}
+              {validateMutation.isError && (
+                <ErrorDisplay
+                  error={validateMutation.error as Error}
+                  title="Validation failed"
+                  message="Could not validate folder path. Please check the path."
+                  onRetry={handleValidate}
+                  compact
+                />
+              )}
 
-                {/* Validation Results */}
-                {validation && (
-                  <div
-                    className={`rounded-lg p-4 mb-6 ${
-                      validation.valid
-                        ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
-                        : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-4">
-                      {validation.valid ? (
-                        <>
-                          <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400" />
-                          <span className="font-semibold text-green-700 dark:text-green-300">검증 성공</span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
-                          <span className="font-semibold text-red-700 dark:text-red-300">검증 실패</span>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 sm:gap-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        {validation.config_found ? (
-                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" />
-                        )}
-                        <span className="text-gray-700 dark:text-gray-300 text-xs sm:text-sm">config.yaml</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {validation.scholarag_metadata_found ? (
-                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
-                        )}
-                        <span className="text-gray-700 dark:text-gray-300 text-xs sm:text-sm">.scholarag</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {validation.papers_csv_found ? (
-                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0" />
-                        )}
-                        <span className="text-gray-700 dark:text-gray-300 text-xs sm:text-sm">
-                          Papers ({validation.papers_count})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {validation.pdfs_count > 0 ? (
-                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
-                        )}
-                        <span className="text-gray-700 dark:text-gray-300 text-xs sm:text-sm">
-                          PDFs ({validation.pdfs_count})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 col-span-2">
-                        {validation.chroma_db_found ? (
-                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
-                        )}
-                        <span className="text-gray-700 dark:text-gray-300 text-xs sm:text-sm">ChromaDB embeddings</span>
-                      </div>
-                    </div>
-
-                    {validation.errors.length > 0 && (
-                      <div className="mt-4 p-3 bg-red-100 dark:bg-red-900/30 rounded">
-                        <p className="font-medium text-red-700 dark:text-red-300 mb-1 text-sm">오류:</p>
-                        <ul className="list-disc list-inside text-red-600 dark:text-red-400 text-xs sm:text-sm">
-                          {validation.errors.map((err, i) => (
-                            <li key={i}>{err}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {validation.warnings.length > 0 && (
-                      <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded">
-                        <p className="font-medium text-yellow-700 dark:text-yellow-300 mb-1 text-sm">경고:</p>
-                        <ul className="list-disc list-inside text-yellow-600 dark:text-yellow-400 text-xs sm:text-sm">
-                          {validation.warnings.map((warn, i) => (
-                            <li key={i}>{warn}</li>
-                          ))}
-                        </ul>
-                      </div>
+              {/* Validation Results */}
+              {validation && (
+                <div className={`p-4 border-l-2 ${
+                  validation.valid
+                    ? 'border-accent-teal bg-accent-teal/5'
+                    : 'border-accent-red bg-accent-red/5'
+                }`}>
+                  <div className="flex items-center gap-2 mb-4">
+                    {validation.valid ? (
+                      <>
+                        <CheckCircle className="w-5 h-5 text-accent-teal" />
+                        <span className="font-medium text-ink dark:text-paper">Validation passed</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-5 h-5 text-accent-red" />
+                        <span className="font-medium text-ink dark:text-paper">Validation failed</span>
+                      </>
                     )}
                   </div>
-                )}
 
-                {/* Import Button */}
-                <button
-                  onClick={handleImportScholarAG}
-                  disabled={!validation?.valid || importScholarAGMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-base sm:text-lg shadow-lg shadow-blue-500/25 touch-target"
-                >
-                  {importScholarAGMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Starting Import...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      Import & Build Knowledge Graph
-                    </>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      {validation.config_found ? (
+                        <CheckCircle className="w-4 h-4 text-accent-teal" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-accent-red" />
+                      )}
+                      <span className="text-muted">config.yaml</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {validation.scholarag_metadata_found ? (
+                        <CheckCircle className="w-4 h-4 text-accent-teal" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-accent-amber" />
+                      )}
+                      <span className="text-muted">.scholarag</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {validation.papers_csv_found ? (
+                        <CheckCircle className="w-4 h-4 text-accent-teal" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-accent-red" />
+                      )}
+                      <span className="text-muted">Papers ({validation.papers_count})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {validation.pdfs_count > 0 ? (
+                        <CheckCircle className="w-4 h-4 text-accent-teal" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-accent-amber" />
+                      )}
+                      <span className="text-muted">PDFs ({validation.pdfs_count})</span>
+                    </div>
+                  </div>
+
+                  {validation.errors.length > 0 && (
+                    <div className="mt-4 text-sm text-accent-red">
+                      <p className="font-medium mb-1">Errors:</p>
+                      <ul className="list-disc list-inside">
+                        {validation.errors.map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
-                </button>
 
-                {/* Help Section */}
-                <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                  <h3 className="font-medium text-gray-700 dark:text-gray-300 mb-2">폴더 경로 찾는 방법</h3>
-                  <ol className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 space-y-2">
-                    <li>1. Finder에서 ScholaRAG 프로젝트 폴더로 이동</li>
-                    <li>
-                      2. 폴더를 우클릭 → <strong>"경로명 복사"</strong> 선택 (Option 키를 누르면 표시됨)
-                    </li>
-                    <li>3. 위 입력창에 붙여넣기 (Cmd+V)</li>
-                  </ol>
-                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-3">
-                    또는 터미널에서:{' '}
-                    <code className="bg-gray-200 dark:bg-gray-600 px-1 rounded">cd [폴더] && pwd</code>
-                  </p>
+                  {validation.warnings.length > 0 && (
+                    <div className="mt-4 text-sm text-accent-amber">
+                      <p className="font-medium mb-1">Warnings:</p>
+                      <ul className="list-disc list-inside">
+                        {validation.warnings.map((warn, i) => (
+                          <li key={i}>{warn}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
+              )}
+
+              {/* Import Button */}
+              <button
+                onClick={handleImportScholarAG}
+                disabled={!validation?.valid || importScholarAGMutation.isPending}
+                className="btn btn--primary w-full justify-center py-4"
+              >
+                {importScholarAGMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                    Starting Import...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 mr-2" />
+                    Import & Build Knowledge Graph
+                  </>
+                )}
+              </button>
+
+              {/* Help Section */}
+              <div className="p-4 border border-ink/10 dark:border-paper/10">
+                <h3 className="font-medium text-ink dark:text-paper mb-2">How to find folder path</h3>
+                <ol className="text-sm text-muted space-y-2">
+                  <li>1. Navigate to ScholaRAG project folder in Finder</li>
+                  <li>2. Right-click → Hold Option → <strong>&quot;Copy Path&quot;</strong></li>
+                  <li>3. Paste into the input above (Cmd+V)</li>
+                </ol>
+                <p className="text-xs text-muted mt-3 font-mono">
+                  Or in terminal: cd [folder] && pwd
+                </p>
+              </div>
+            </div>
+          )}
         </ErrorBoundary>
       </main>
     </div>

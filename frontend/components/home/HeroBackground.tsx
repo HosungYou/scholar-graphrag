@@ -1,0 +1,297 @@
+'use client';
+
+import { useEffect, useRef, useCallback } from 'react';
+
+/* ============================================================
+   HeroBackground - Dynamic Knowledge Graph Visualization
+   VS Design Diverge: Direction B (T-Score 0.4) "Editorial Research"
+
+   Represents ScholaRAG's core functionality:
+   - Floating polygonal nodes (Concept, Method, Finding, etc.)
+   - Dynamic connection lines forming between nodes
+   - Particles flowing along edges (data/knowledge transfer)
+   - Subtle mouse interaction
+
+   Design Principles:
+   - No generic gradient backgrounds
+   - Polygon shapes (not circles)
+   - Uses accent colors: teal, amber, red
+   - Subtle, professional animation (not flashy)
+   ============================================================ */
+
+interface Node {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  type: 'hexagon' | 'diamond' | 'pentagon' | 'square';
+  size: number;
+  color: string;
+  opacity: number;
+}
+
+interface Edge {
+  from: number;
+  to: number;
+  progress: number;
+  active: boolean;
+}
+
+const COLORS = {
+  teal: '#2EC4B6',
+  amber: '#F4A261',
+  red: '#E63946',
+  purple: '#9B5DE5',
+  cyan: '#00BBF9',
+};
+
+const NODE_TYPES: Node['type'][] = ['hexagon', 'diamond', 'pentagon', 'square'];
+
+export function HeroBackground() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>();
+  const nodesRef = useRef<Node[]>([]);
+  const edgesRef = useRef<Edge[]>([]);
+  const mouseRef = useRef({ x: 0, y: 0, active: false });
+
+  // Draw polygon shapes
+  const drawPolygon = useCallback(
+    (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: Node['type'], color: string, opacity: number) => {
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color + '15'; // 15% opacity fill
+      ctx.lineWidth = 1.5;
+
+      ctx.beginPath();
+
+      switch (type) {
+        case 'hexagon':
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const px = x + size * Math.cos(angle);
+            const py = y + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          break;
+
+        case 'diamond':
+          ctx.moveTo(x, y - size);
+          ctx.lineTo(x + size * 0.7, y);
+          ctx.lineTo(x, y + size);
+          ctx.lineTo(x - size * 0.7, y);
+          break;
+
+        case 'pentagon':
+          for (let i = 0; i < 5; i++) {
+            const angle = ((Math.PI * 2) / 5) * i - Math.PI / 2;
+            const px = x + size * Math.cos(angle);
+            const py = y + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          break;
+
+        case 'square':
+          const half = size * 0.7;
+          ctx.rect(x - half, y - half, half * 2, half * 2);
+          break;
+      }
+
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    },
+    []
+  );
+
+  // Initialize nodes
+  const initNodes = useCallback((width: number, height: number) => {
+    const nodeCount = Math.floor((width * height) / 40000); // Density based on canvas size
+    const colorKeys = Object.keys(COLORS) as (keyof typeof COLORS)[];
+
+    nodesRef.current = Array.from({ length: Math.max(15, Math.min(30, nodeCount)) }, (_, i) => ({
+      id: i,
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: (Math.random() - 0.5) * 0.3,
+      type: NODE_TYPES[Math.floor(Math.random() * NODE_TYPES.length)],
+      size: 8 + Math.random() * 12,
+      color: COLORS[colorKeys[Math.floor(Math.random() * colorKeys.length)]],
+      opacity: 0.3 + Math.random() * 0.4,
+    }));
+
+    // Initialize edges
+    edgesRef.current = [];
+    nodesRef.current.forEach((node, i) => {
+      // Connect to 1-2 nearby nodes
+      const connections = 1 + Math.floor(Math.random() * 2);
+      for (let c = 0; c < connections; c++) {
+        const targetIndex = (i + 1 + Math.floor(Math.random() * 3)) % nodesRef.current.length;
+        if (targetIndex !== i) {
+          edgesRef.current.push({
+            from: i,
+            to: targetIndex,
+            progress: Math.random(),
+            active: Math.random() > 0.5,
+          });
+        }
+      }
+    });
+  }, []);
+
+  // Animation loop
+  const animate = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const { width, height } = canvas;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+
+    // Update and draw edges
+    edgesRef.current.forEach((edge) => {
+      const fromNode = nodesRef.current[edge.from];
+      const toNode = nodesRef.current[edge.to];
+      if (!fromNode || !toNode) return;
+
+      const dx = toNode.x - fromNode.x;
+      const dy = toNode.y - fromNode.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Only draw edges within reasonable distance
+      if (dist < 300) {
+        const opacity = Math.max(0, 0.15 * (1 - dist / 300));
+
+        // Draw edge line
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        ctx.strokeStyle = fromNode.color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+
+        ctx.beginPath();
+        ctx.moveTo(fromNode.x, fromNode.y);
+        ctx.lineTo(toNode.x, toNode.y);
+        ctx.stroke();
+        ctx.restore();
+
+        // Draw flowing particle on active edges
+        if (edge.active) {
+          edge.progress += 0.003;
+          if (edge.progress > 1) edge.progress = 0;
+
+          const px = fromNode.x + dx * edge.progress;
+          const py = fromNode.y + dy * edge.progress;
+
+          ctx.save();
+          ctx.globalAlpha = opacity * 2;
+          ctx.fillStyle = fromNode.color;
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    });
+
+    // Update and draw nodes
+    nodesRef.current.forEach((node) => {
+      // Mouse interaction - gentle repulsion
+      if (mouseRef.current.active) {
+        const dx = node.x - mouseRef.current.x;
+        const dy = node.y - mouseRef.current.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 150 && dist > 0) {
+          const force = (150 - dist) / 150 * 0.02;
+          node.vx += (dx / dist) * force;
+          node.vy += (dy / dist) * force;
+        }
+      }
+
+      // Apply velocity
+      node.x += node.vx;
+      node.y += node.vy;
+
+      // Damping
+      node.vx *= 0.99;
+      node.vy *= 0.99;
+
+      // Boundary bounce
+      if (node.x < node.size || node.x > width - node.size) {
+        node.vx *= -1;
+        node.x = Math.max(node.size, Math.min(width - node.size, node.x));
+      }
+      if (node.y < node.size || node.y > height - node.size) {
+        node.vy *= -1;
+        node.y = Math.max(node.size, Math.min(height - node.size, node.y));
+      }
+
+      // Draw node
+      drawPolygon(ctx, node.x, node.y, node.size, node.type, node.color, node.opacity);
+    });
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, [drawPolygon]);
+
+  // Setup and cleanup
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleResize = () => {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+
+      const { width, height } = parent.getBoundingClientRect();
+      canvas.width = width;
+      canvas.height = height;
+      initNodes(width, height);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      mouseRef.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        active: true,
+      };
+    };
+
+    const handleMouseLeave = () => {
+      mouseRef.current.active = false;
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseleave', handleMouseLeave);
+
+    animationRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      canvas.removeEventListener('mousemove', handleMouseMove);
+      canvas.removeEventListener('mouseleave', handleMouseLeave);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [animate, initNodes]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-auto"
+      aria-hidden="true"
+    />
+  );
+}

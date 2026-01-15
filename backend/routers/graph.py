@@ -305,8 +305,9 @@ async def get_subgraph(
     depth: int = Query(1, le=3),
     max_nodes: int = Query(50, le=200),
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Get subgraph centered around a specific node using BFS traversal."""
+    """Get subgraph centered around a specific node using BFS traversal. Requires auth in production."""
     try:
         # Validate node exists
         center_node = await database.fetchrow(
@@ -469,8 +470,9 @@ async def get_similar_nodes(
     node_id: str,
     limit: int = Query(10, le=50),
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Get similar nodes using pgvector similarity search."""
+    """Get similar nodes using pgvector similarity search. Requires auth in production."""
     try:
         # Get the source node and its embedding
         source_node = await database.fetchrow(
@@ -544,8 +546,9 @@ async def get_research_gaps(
     project_id: UUID,
     min_papers: int = Query(3, description="Concepts with fewer papers are gaps"),
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Identify research gaps - concepts with few connected papers."""
+    """Identify research gaps - concepts with few connected papers. Requires auth in production."""
     try:
         # Find concepts with few paper connections
         rows = await database.fetch(
@@ -597,8 +600,9 @@ async def get_research_gaps(
 async def get_entity(
     entity_id: str,
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Get a single entity by ID."""
+    """Get a single entity by ID. Requires auth in production."""
     try:
         row = await database.fetchrow(
             """
@@ -672,8 +676,9 @@ class GapAnalysisResponse(BaseModel):
 async def get_gap_analysis(
     project_id: UUID,
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Get full gap analysis including clusters, gaps, and centrality metrics."""
+    """Get full gap analysis including clusters, gaps, and centrality metrics. Requires auth in production."""
     try:
         # Get clusters
         cluster_rows = await database.fetch(
@@ -792,8 +797,9 @@ async def get_gap_analysis(
 async def refresh_gap_analysis(
     project_id: UUID,
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Re-run gap detection on the project's concept graph."""
+    """Re-run gap detection on the project's concept graph. Requires auth in production."""
     try:
         from graph.gap_detector import GapDetector
 
@@ -932,8 +938,9 @@ async def refresh_gap_analysis(
 async def get_gap_detail(
     gap_id: UUID,
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Get detailed information about a specific structural gap."""
+    """Get detailed information about a specific structural gap. Requires auth in production."""
     try:
         row = await database.fetchrow(
             """
@@ -975,8 +982,9 @@ async def generate_gap_questions(
     gap_id: UUID,
     regenerate: bool = False,
     database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Generate or regenerate AI research questions for a gap."""
+    """Generate or regenerate AI research questions for a gap. Requires auth in production."""
     try:
         # Get gap
         row = await database.fetchrow(

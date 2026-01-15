@@ -24,9 +24,12 @@ from datetime import datetime
 
 from agents.orchestrator import AgentOrchestrator
 from llm.claude_provider import ClaudeProvider
+from llm.cached_provider import wrap_with_cache
+from graph.graph_store import GraphStore
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from database import db
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -239,7 +242,11 @@ async def _db_get_conversation(conversation_id: str) -> Optional[dict]:
 
 
 async def _db_get_conversations_by_project(project_id: str) -> List[dict]:
-    """Get all conversations for a project."""
+    """
+    Get all conversations for a project with messages.
+
+    Uses batch query to prevent N+1 problem.
+    """
     if not await _check_db_available():
         return [
             conv for conv in _conversations_db.values()
@@ -247,20 +254,43 @@ async def _db_get_conversations_by_project(project_id: str) -> List[dict]:
         ]
 
     try:
+        # Single query to get all conversations with their messages (prevents N+1)
         conv_rows = await db.fetch(
             """
-            SELECT id FROM conversations
-            WHERE project_id = $1::uuid
-            ORDER BY updated_at DESC
+            SELECT c.id, c.project_id, c.user_id, c.created_at, c.updated_at,
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'role', m.role,
+                               'content', m.content,
+                               'timestamp', m.created_at,
+                               'citations', COALESCE(m.citations, '[]'::jsonb),
+                               'highlighted_nodes', COALESCE(m.highlighted_nodes, '[]'::jsonb),
+                               'highlighted_edges', COALESCE(m.highlighted_edges, '[]'::jsonb),
+                               'suggested_follow_ups', COALESCE(m.suggested_follow_ups, '[]'::jsonb)
+                           ) ORDER BY m.created_at ASC
+                       ) FILTER (WHERE m.id IS NOT NULL),
+                       '[]'::json
+                   ) as messages
+            FROM conversations c
+            LEFT JOIN messages m ON c.id = m.conversation_id
+            WHERE c.project_id = $1::uuid
+            GROUP BY c.id, c.project_id, c.user_id, c.created_at, c.updated_at
+            ORDER BY c.updated_at DESC
             """,
             project_id,
         )
 
         result = []
         for row in conv_rows:
-            conv = await _db_get_conversation(row["id"])
-            if conv:
-                result.append(conv)
+            result.append({
+                "conversation_id": row["id"],
+                "project_id": str(row["project_id"]) if row["project_id"] else None,
+                "user_id": str(row["user_id"]) if row["user_id"] else None,
+                "messages": row["messages"] or [],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            })
 
         # Also include any in-memory conversations for this project
         for conv in _conversations_db.values():
@@ -387,19 +417,43 @@ _orchestrator: Optional[AgentOrchestrator] = None
 
 
 def get_orchestrator() -> AgentOrchestrator:
-    """Get or create the global orchestrator instance."""
+    """Get or create the global orchestrator instance with DB and GraphStore connections."""
     global _orchestrator
     if _orchestrator is None:
+        # Initialize LLM provider with caching
         llm_provider = None
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if api_key:
             try:
-                llm_provider = ClaudeProvider(api_key=api_key)
-                logger.info("Initialized Claude LLM provider")
+                base_provider = ClaudeProvider(api_key=api_key)
+                # Wrap with caching (enabled by default, can be disabled via settings)
+                cache_enabled = getattr(settings, 'llm_cache_enabled', True)
+                cache_ttl = getattr(settings, 'llm_cache_ttl', 3600)  # 1 hour default
+                llm_provider = wrap_with_cache(
+                    base_provider,
+                    enabled=cache_enabled,
+                    default_ttl=cache_ttl,
+                )
+                logger.info(f"Initialized Claude LLM provider (cache={'enabled' if cache_enabled else 'disabled'})")
             except Exception as e:
                 logger.warning(f"Failed to initialize Claude provider: {e}")
 
-        _orchestrator = AgentOrchestrator(llm_provider=llm_provider)
+        # Initialize GraphStore with DB connection
+        graph_store = None
+        try:
+            if db.is_connected:
+                graph_store = GraphStore(db_connection=db)
+                logger.info("Initialized GraphStore with DB connection")
+        except Exception as e:
+            logger.warning(f"Failed to initialize GraphStore: {e}")
+
+        # Create orchestrator with all dependencies
+        _orchestrator = AgentOrchestrator(
+            llm_provider=llm_provider,
+            graph_store=graph_store,
+            db_connection=db if db.is_connected else None,
+        )
+        logger.info("Initialized AgentOrchestrator with DB and GraphStore")
     return _orchestrator
 
 

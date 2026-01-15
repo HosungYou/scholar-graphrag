@@ -1,7 +1,20 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Sparkles, Copy, Check } from 'lucide-react';
+import { Send, Loader2, Sparkles, Copy, Check, ArrowRight } from 'lucide-react';
+import clsx from 'clsx';
+
+/* ============================================================
+   ScholaRAG Graph - Research Dialogue Chat Interface
+   VS Design Diverge: Direction B (T-Score 0.4)
+
+   Design Principles:
+   - No bubble backgrounds - use typography and spacing
+   - Left-aligned messages for both roles (conversational)
+   - Accent bar for assistant messages (2px teal)
+   - Inline superscript citations
+   - Bottom-border-only input field
+   ============================================================ */
 
 interface Message {
   id: string;
@@ -35,6 +48,7 @@ export function ChatInterface({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [hoveredCitation, setHoveredCitation] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -100,31 +114,50 @@ export function ChatInterface({
     }
   };
 
+  // Format timestamp
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  };
+
   // Suggested questions
   const suggestedQuestions = [
-    'What are the main research methods used?',
+    'What are the main research methods?',
     'Which concepts appear most frequently?',
     'What are the key findings?',
-    'Identify research gaps in this collection',
+    'Identify research gaps',
   ];
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="chat-container flex flex-col h-full bg-paper dark:bg-ink">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="chat-messages flex-1 overflow-y-auto px-6 py-8 space-y-8">
+        {/* Empty State */}
         {messages.length === 0 && (
-          <div className="text-center py-12">
-            <Sparkles className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              Ask about your research
+          <div className="text-center py-16">
+            <div
+              className="w-16 h-16 mx-auto mb-6 flex items-center justify-center"
+              style={{
+                backgroundColor: 'rgb(var(--color-accent-teal) / 0.1)',
+                borderRadius: '4px',
+              }}
+            >
+              <Sparkles className="w-8 h-8 text-accent-teal" />
+            </div>
+
+            <h3 className="font-display text-2xl text-ink dark:text-paper mb-3">
+              Explore Your Research
             </h3>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              I can help you explore your knowledge graph, find connections between papers,
-              and identify research trends and gaps.
+            <p className="text-muted max-w-md mx-auto mb-8 leading-relaxed">
+              Ask questions about your knowledge graph. I can help find connections,
+              identify trends, and reveal research gaps.
             </p>
 
-            {/* Suggested Questions */}
-            <div className="flex flex-wrap justify-center gap-2">
+            {/* Suggestion Tags */}
+            <div className="suggestion-tags flex flex-wrap justify-center gap-2">
               {suggestedQuestions.map((question, i) => (
                 <button
                   key={i}
@@ -132,63 +165,75 @@ export function ChatInterface({
                     setInput(question);
                     inputRef.current?.focus();
                   }}
-                  className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
+                  className="suggestion-tag group flex items-center gap-2"
                 >
-                  {question}
+                  <span>{question}</span>
+                  <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                 </button>
               ))}
             </div>
           </div>
         )}
 
+        {/* Messages */}
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={clsx(
+              'chat-message animate-fade-in',
+              message.role === 'user' ? 'chat-message--user' : 'chat-message--assistant'
+            )}
           >
-            <div
-              className={`max-w-[80%] rounded-lg p-4 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}
-            >
-              {/* Message Content */}
-              <div className="whitespace-pre-wrap">{message.content}</div>
+            {/* Message Content */}
+            <div className="chat-message__content">
+              {/* Parse content to inject citation superscripts */}
+              {message.content}
+            </div>
 
-              {/* Citations */}
-              {message.citations && message.citations.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-xs font-medium mb-2 opacity-70">References:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {message.citations.map((citation, i) => (
-                      <button
-                        key={i}
-                        onClick={() => onCitationClick?.(citation)}
-                        className="px-2 py-0.5 text-xs bg-white/20 hover:bg-white/30 rounded transition-colors"
-                      >
-                        [{i + 1}]
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Actions */}
-              {message.role === 'assistant' && (
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleCopy(message.id, message.content)}
-                    className="p-1 hover:bg-gray-200 rounded transition-colors"
-                    title="Copy to clipboard"
+            {/* Inline Citations */}
+            {message.citations && message.citations.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {message.citations.map((citation, i) => (
+                  <span
+                    key={i}
+                    className="citation-ref relative"
+                    onClick={() => onCitationClick?.(citation)}
+                    onMouseEnter={() => setHoveredCitation(i)}
+                    onMouseLeave={() => setHoveredCitation(null)}
                   >
-                    {copiedId === message.id ? (
-                      <Check className="w-4 h-4 text-green-600" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-gray-500" />
+                    {i + 1}
+
+                    {/* Citation Popover */}
+                    {hoveredCitation === i && (
+                      <div className="citation-popover absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap">
+                        <span className="text-xs font-mono truncate max-w-[200px] block">
+                          {citation}
+                        </span>
+                      </div>
                     )}
-                  </button>
-                </div>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Timestamp & Actions */}
+            <div className="flex items-center justify-between mt-3">
+              <span className="chat-message__time">
+                {formatTime(message.timestamp)}
+              </span>
+
+              {message.role === 'assistant' && (
+                <button
+                  onClick={() => handleCopy(message.id, message.content)}
+                  className="p-1.5 text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                  title="Copy to clipboard"
+                >
+                  {copiedId === message.id ? (
+                    <Check className="w-4 h-4 text-accent-teal" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
               )}
             </div>
           </div>
@@ -196,10 +241,10 @@ export function ChatInterface({
 
         {/* Loading indicator */}
         {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-lg p-4 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-              <span className="text-gray-500">Thinking...</span>
+          <div className="chat-message chat-message--assistant animate-fade-in">
+            <div className="flex items-center gap-3 text-muted">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="font-mono text-sm">Analyzing...</span>
             </div>
           </div>
         )}
@@ -208,8 +253,8 @@ export function ChatInterface({
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-4">
-        <div className="flex gap-2">
+      <div className="chat-input-area">
+        <div className="flex items-end gap-4">
           <textarea
             ref={inputRef}
             value={input}
@@ -217,19 +262,27 @@ export function ChatInterface({
             onKeyDown={handleKeyDown}
             placeholder="Ask about your research..."
             rows={1}
-            className="flex-1 px-4 py-2 border rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            style={{ minHeight: '42px', maxHeight: '120px' }}
+            className="chat-input flex-1 font-body"
+            style={{
+              minHeight: '44px',
+              maxHeight: '120px',
+            }}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className={clsx(
+              'btn btn--primary flex-shrink-0',
+              'disabled:opacity-40 disabled:cursor-not-allowed'
+            )}
+            style={{ marginBottom: '3px' }}
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-xs text-gray-500 mt-2 text-center">
-          Press Enter to send, Shift+Enter for new line
+
+        <p className="text-xs text-muted mt-3 text-center font-mono">
+          Enter to send · Shift+Enter for new line
         </p>
       </div>
     </div>

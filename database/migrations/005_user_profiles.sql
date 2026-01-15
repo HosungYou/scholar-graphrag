@@ -95,34 +95,92 @@ CREATE TRIGGER update_user_profiles_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- ================================================
--- RLS Policies (for Supabase - optional)
+-- RLS Policies (for Supabase)
 -- Enable Row Level Security on tables
 -- ================================================
 
--- Note: These policies work with Supabase RLS
--- Enable RLS
--- ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE project_collaborators ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on all user-related tables
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_collaborators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_activity_log ENABLE ROW LEVEL SECURITY;
+
+-- ================================================
+-- user_profiles policies
+-- ================================================
 
 -- Policy: Users can read their own profile
--- CREATE POLICY "Users can view own profile" ON user_profiles
---     FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users can view own profile" ON user_profiles
+    FOR SELECT USING (auth.uid() = id);
+
+-- Policy: Users can insert their own profile (on signup)
+CREATE POLICY "Users can create own profile" ON user_profiles
+    FOR INSERT WITH CHECK (auth.uid() = id);
 
 -- Policy: Users can update their own profile
--- CREATE POLICY "Users can update own profile" ON user_profiles
---     FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON user_profiles
+    FOR UPDATE USING (auth.uid() = id);
 
--- Policy: Users can view their own projects
--- CREATE POLICY "Users can view own projects" ON projects
---     FOR SELECT USING (owner_id = auth.uid() OR is_public = true);
+-- ================================================
+-- projects policies
+-- ================================================
+
+-- Policy: Users can view their own projects or public projects
+CREATE POLICY "Users can view own projects" ON projects
+    FOR SELECT USING (
+        owner_id = auth.uid()
+        OR is_public = true
+        OR visibility = 'public'
+    );
 
 -- Policy: Users can view projects they collaborate on
--- CREATE POLICY "Collaborators can view projects" ON projects
---     FOR SELECT USING (
---         EXISTS (
---             SELECT 1 FROM project_collaborators
---             WHERE project_id = projects.id
---             AND user_id = auth.uid()
---         )
---     );
+CREATE POLICY "Collaborators can view projects" ON projects
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM project_collaborators
+            WHERE project_id = projects.id
+            AND user_id = auth.uid()
+        )
+    );
+
+-- Policy: Users can create their own projects
+CREATE POLICY "Users can create projects" ON projects
+    FOR INSERT WITH CHECK (owner_id = auth.uid());
+
+-- Policy: Users can update their own projects
+CREATE POLICY "Users can update own projects" ON projects
+    FOR UPDATE USING (owner_id = auth.uid());
+
+-- Policy: Users can delete their own projects
+CREATE POLICY "Users can delete own projects" ON projects
+    FOR DELETE USING (owner_id = auth.uid());
+
+-- ================================================
+-- project_collaborators policies
+-- ================================================
+
+-- Policy: Project owners can manage collaborators
+CREATE POLICY "Project owners can manage collaborators" ON project_collaborators
+    FOR ALL USING (
+        EXISTS (
+            SELECT 1 FROM projects
+            WHERE projects.id = project_collaborators.project_id
+            AND projects.owner_id = auth.uid()
+        )
+    );
+
+-- Policy: Collaborators can view their own collaborations
+CREATE POLICY "Users can view own collaborations" ON project_collaborators
+    FOR SELECT USING (user_id = auth.uid());
+
+-- ================================================
+-- user_activity_log policies
+-- ================================================
+
+-- Policy: Users can only see their own activity
+CREATE POLICY "Users can view own activity" ON user_activity_log
+    FOR SELECT USING (user_id = auth.uid());
+
+-- Policy: System can insert activity logs (using service role)
+CREATE POLICY "System can log activity" ON user_activity_log
+    FOR INSERT WITH CHECK (true);  -- Backend uses service role key

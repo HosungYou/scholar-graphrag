@@ -157,10 +157,14 @@ async def list_projects(
                 current_user.id,
             )
 
+        # Get stats for all projects in a single batch query (prevents N+1)
+        project_ids = [str(row["id"]) for row in rows]
+        stats_batch = await _get_project_stats_batch(database, project_ids)
+
         projects = []
         for row in rows:
-            # Get stats for each project
-            stats = await _get_project_stats(database, str(row["id"]))
+            project_id = str(row["id"])
+            stats = stats_batch.get(project_id, ProjectStats())
             projects.append(
                 ProjectResponse(
                     id=row["id"],
@@ -461,38 +465,74 @@ async def get_project_stats_endpoint(
 
 
 async def _get_project_stats(database, project_id: str) -> ProjectStats:
-    """Calculate actual stats from database."""
+    """Calculate actual stats from database for a single project."""
+    stats_batch = await _get_project_stats_batch(database, [project_id])
+    return stats_batch.get(project_id, ProjectStats())
+
+
+async def _get_project_stats_batch(database, project_ids: List[str]) -> dict[str, ProjectStats]:
+    """
+    Calculate stats for multiple projects in a single batch query.
+
+    Prevents N+1 queries when listing projects.
+
+    Returns:
+        Dict mapping project_id to ProjectStats
+    """
+    if not project_ids:
+        return {}
+
     try:
-        # Count entities by type
+        # Single query to get entity counts for all projects
         entity_counts = await database.fetch(
             """
-            SELECT entity_type, COUNT(*) as count
+            SELECT project_id::text, entity_type, COUNT(*) as count
             FROM entities
-            WHERE project_id = $1
-            GROUP BY entity_type
+            WHERE project_id = ANY($1::uuid[])
+            GROUP BY project_id, entity_type
             """,
-            project_id,
+            project_ids,
         )
 
-        counts = {row["entity_type"]: row["count"] for row in entity_counts}
-
-        # Count relationships
-        rel_count = await database.fetchval(
-            "SELECT COUNT(*) FROM relationships WHERE project_id = $1",
-            project_id,
+        # Single query to get relationship counts for all projects
+        rel_counts = await database.fetch(
+            """
+            SELECT project_id::text, COUNT(*) as count
+            FROM relationships
+            WHERE project_id = ANY($1::uuid[])
+            GROUP BY project_id
+            """,
+            project_ids,
         )
 
-        total_nodes = sum(counts.values())
+        # Build counts lookup: {project_id: {entity_type: count}}
+        entity_lookup: dict[str, dict[str, int]] = {pid: {} for pid in project_ids}
+        for row in entity_counts:
+            pid = row["project_id"]
+            entity_lookup[pid][row["entity_type"]] = row["count"]
 
-        return ProjectStats(
-            total_nodes=total_nodes,
-            total_edges=rel_count or 0,
-            total_papers=counts.get("Paper", 0),
-            total_authors=counts.get("Author", 0),
-            total_concepts=counts.get("Concept", 0),
-            total_methods=counts.get("Method", 0),
-            total_findings=counts.get("Finding", 0),
-        )
+        # Build relationship lookup: {project_id: count}
+        rel_lookup = {row["project_id"]: row["count"] for row in rel_counts}
+
+        # Build result
+        result = {}
+        for pid in project_ids:
+            counts = entity_lookup.get(pid, {})
+            total_nodes = sum(counts.values())
+
+            result[pid] = ProjectStats(
+                total_nodes=total_nodes,
+                total_edges=rel_lookup.get(pid, 0),
+                total_papers=counts.get("Paper", 0),
+                total_authors=counts.get("Author", 0),
+                total_concepts=counts.get("Concept", 0),
+                total_methods=counts.get("Method", 0),
+                total_findings=counts.get("Finding", 0),
+            )
+
+        return result
+
     except Exception as e:
-        logger.warning(f"Failed to get stats for project {project_id}: {e}")
-        return ProjectStats()
+        logger.warning(f"Failed to get batch stats for projects: {e}")
+        # Return empty stats for all projects
+        return {pid: ProjectStats() for pid in project_ids}

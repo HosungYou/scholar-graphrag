@@ -1,3 +1,13 @@
 """Multi-provider LLM module for ScholaRAG_Graph."""
 
-__all__ = ["base", "claude_provider", "openai_provider", "gemini_provider"]
+from .base import BaseLLMProvider, LLMResponse
+from .claude_provider import ClaudeProvider
+from .cached_provider import CachedLLMProvider, wrap_with_cache
+
+__all__ = [
+    "BaseLLMProvider",
+    "LLMResponse",
+    "ClaudeProvider",
+    "CachedLLMProvider",
+    "wrap_with_cache",
+]

@@ -2,188 +2,647 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS Variables for theming */
+/* ============================================================
+   ScholaRAG Graph - "Editorial Research" Design System
+   VS Design Diverge: Direction B (T-Score 0.4)
+   ============================================================ */
+
+/* Design Tokens - Precision Research Palette */
 :root {
-  --color-background: 255 255 255;
-  --color-foreground: 17 24 39;
-  --color-muted: 107 114 128;
-  --color-border: 229 231 235;
-  --color-card: 255 255 255;
-  --color-accent: 59 130 246;
+  /* Primary Colors */
+  --color-ink: 13 13 13;           /* #0D0D0D - Near Black */
+  --color-paper: 250 250 250;      /* #FAFAFA - Off-White */
+  --color-surface: 26 26 46;       /* #1A1A2E - Deep Navy */
+
+  /* Accent Colors */
+  --color-accent-red: 230 57 70;   /* #E63946 - Research Red */
+  --color-accent-teal: 46 196 182; /* #2EC4B6 - Teal */
+  --color-accent-amber: 244 162 97;/* #F4A261 - Warm Orange */
+
+  /* Neutral Scale */
+  --color-muted: 107 114 128;      /* #6B7280 */
+  --color-border: 38 38 38;        /* #262626 */
+  --color-border-light: 229 229 229; /* #E5E5E5 */
+
+  /* Semantic Colors */
+  --color-success: 46 196 182;
+  --color-warning: 244 162 97;
+  --color-error: 230 57 70;
+
+  /* Typography Scale (1.25 ratio) */
+  --text-xs: 0.64rem;    /* 10px */
+  --text-sm: 0.8rem;     /* 13px */
+  --text-base: 1rem;     /* 16px */
+  --text-lg: 1.25rem;    /* 20px */
+  --text-xl: 1.563rem;   /* 25px */
+  --text-2xl: 1.953rem;  /* 31px */
+  --text-3xl: 2.441rem;  /* 39px */
+  --text-4xl: 3.052rem;  /* 49px */
+
+  /* Spacing Scale (Asymmetric) */
+  --space-micro: 2px;
+  --space-xs: 6px;
+  --space-sm: 12px;
+  --space-md: 20px;
+  --space-lg: 36px;
+  --space-xl: 64px;
+  --space-2xl: 100px;
+
+  /* Border Radius (Minimal) */
+  --radius-none: 0;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+
+  /* Shadows (Editorial - subtle) */
+  --shadow-sm: 0 1px 2px rgba(13, 13, 13, 0.04);
+  --shadow-md: 0 4px 12px rgba(13, 13, 13, 0.08);
+  --shadow-lg: 0 8px 24px rgba(13, 13, 13, 0.12);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Dark Mode - Editorial Night */
 .dark {
-  --color-background: 17 24 39;
-  --color-foreground: 243 244 246;
+  --color-ink: 250 250 250;
+  --color-paper: 13 13 13;
+  --color-surface: 26 26 46;
+  --color-border: 55 55 55;
+  --color-border-light: 38 38 38;
   --color-muted: 156 163 175;
-  --color-border: 55 65 81;
-  --color-card: 31 41 55;
-  --color-accent: 96 165 250;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
-/* Base layer with dark mode support */
+/* ============================================================
+   Base Layer - Editorial Typography Foundation
+   ============================================================ */
+
 @layer base {
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
-    @apply bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200;
+    @apply bg-paper text-ink transition-colors;
+    font-family: var(--font-inter), system-ui, sans-serif;
+    line-height: 1.6;
+  }
+
+  /* Editorial Headings - Serif Display */
+  h1, h2, h3 {
+    font-family: var(--font-instrument), Georgia, serif;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  h1 { font-size: var(--text-4xl); }
+  h2 { font-size: var(--text-3xl); }
+  h3 { font-size: var(--text-2xl); }
+
+  /* Body Text */
+  h4, h5, h6 {
+    font-family: var(--font-inter), system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  /* Data & Metrics - Monospace */
+  code, pre, .font-mono, [data-metric] {
+    font-family: var(--font-jetbrains), 'Fira Code', monospace;
+    font-feature-settings: "liga" 1, "calt" 1;
+  }
+
+  /* Selection */
+  ::selection {
+    background: rgb(var(--color-accent-teal) / 0.3);
   }
 }
 
-/* React Flow custom styles */
-.react-flow__node {
-  cursor: pointer;
+/* ============================================================
+   React Flow - Neural Constellation Theme
+   ============================================================ */
+
+/* Canvas Background */
+.react-flow {
+  --rf-background: rgb(var(--color-surface));
 }
 
+.react-flow__renderer {
+  background: linear-gradient(
+    180deg,
+    rgb(13 13 13) 0%,
+    rgb(26 26 46) 50%,
+    rgb(13 13 13) 100%
+  );
+}
+
+/* Subtle Radial Lines */
+.react-flow__background pattern {
+  opacity: 0.03;
+}
+
+/* Node Base Styles */
+.react-flow__node {
+  cursor: pointer;
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.react-flow__node:hover {
+  transform: scale(1.05);
+  filter: brightness(1.1);
+}
+
+/* Selected State - White Glow (not blue ring) */
 .react-flow__node.selected {
-  box-shadow: 0 0 0 2px #3B82F6;
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.4));
+}
+
+/* Edge Styles */
+.react-flow__edge-path {
+  stroke-linecap: round;
+  transition: stroke-width var(--transition-fast);
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #3B82F6;
-  stroke-width: 2;
+  stroke: rgb(var(--color-accent-teal));
+  stroke-width: 2.5;
 }
 
-/* Dark mode React Flow */
-.dark .react-flow__background {
-  background-color: rgb(17 24 39);
+/* Gap Bridge Edges - Dashed Animation */
+.react-flow__edge.gap-bridge .react-flow__edge-path {
+  stroke-dasharray: 8 4;
+  animation: dash-flow 1s linear infinite;
 }
 
-.dark .react-flow__controls button {
-  background-color: rgb(31 41 55);
-  color: rgb(243 244 246);
-  border-color: rgb(55 65 81);
-}
-
-.dark .react-flow__controls button:hover {
-  background-color: rgb(55 65 81);
-}
-
-.dark .react-flow__minimap {
-  background-color: rgb(31 41 55);
-}
-
-/* Custom node styles */
-.custom-node {
-  @apply rounded-lg shadow-md border-2 p-3 transition-all duration-200;
-}
-
-.custom-node:hover {
-  @apply shadow-lg scale-105;
-}
-
-.custom-node.paper {
-  @apply bg-blue-50 border-blue-400 dark:bg-blue-900/30 dark:border-blue-500;
-}
-
-.custom-node.author {
-  @apply bg-green-50 border-green-400 dark:bg-green-900/30 dark:border-green-500;
-}
-
-.custom-node.concept {
-  @apply bg-purple-50 border-purple-400 dark:bg-purple-900/30 dark:border-purple-500;
-}
-
-.custom-node.method {
-  @apply bg-amber-50 border-amber-400 dark:bg-amber-900/30 dark:border-amber-500;
-}
-
-.custom-node.finding {
-  @apply bg-red-50 border-red-400 dark:bg-red-900/30 dark:border-red-500;
-}
-
-/* Highlighted nodes */
-.custom-node.highlighted {
-  @apply ring-4 ring-yellow-400 ring-opacity-75;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -12;
   }
 }
 
-/* Shimmer animation for skeleton loading */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
+/* Controls Panel */
+.react-flow__controls {
+  @apply bg-surface/90 backdrop-blur-sm border border-white/10;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
 }
 
-.animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgb(229 231 235) 0%,
-    rgb(243 244 246) 50%,
-    rgb(229 231 235) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+.react-flow__controls button {
+  @apply bg-transparent text-white/80 border-0;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
 }
 
-.dark .animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgb(55 65 81) 0%,
-    rgb(75 85 99) 50%,
-    rgb(55 65 81) 100%
-  );
-  background-size: 200% 100%;
+.react-flow__controls button:hover {
+  @apply bg-white/10;
 }
 
-/* Chat styles */
+.react-flow__controls button svg {
+  fill: currentColor;
+}
+
+/* MiniMap */
+.react-flow__minimap {
+  @apply bg-surface/80 backdrop-blur-sm border border-white/10;
+  border-radius: var(--radius-md);
+}
+
+.react-flow__minimap-mask {
+  fill: rgb(var(--color-accent-teal) / 0.1);
+}
+
+/* ============================================================
+   Custom Node Styles - Polygonal Shapes
+   ============================================================ */
+
+/* Base Node Container */
+.scholar-node {
+  @apply relative flex items-center justify-center;
+  transition: all var(--transition-base);
+}
+
+.scholar-node__shape {
+  @apply absolute inset-0;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+.scholar-node__icon {
+  @apply relative z-10 text-white/90;
+}
+
+.scholar-node__label {
+  @apply absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap;
+  @apply text-xs text-white/70 font-medium;
+  font-family: var(--font-inter);
+}
+
+/* Highlighted State */
+.scholar-node.highlighted {
+  animation: node-pulse 2s ease-in-out infinite;
+}
+
+.scholar-node.highlighted .scholar-node__shape {
+  filter: drop-shadow(0 0 16px rgb(var(--color-accent-amber)));
+}
+
+@keyframes node-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+/* Gap Bridge Indicator */
+.scholar-node.gap-bridge::after {
+  content: '';
+  @apply absolute -top-2 -right-2 w-3 h-3 rounded-full;
+  background: rgb(var(--color-accent-amber));
+  animation: bridge-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes bridge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.2); }
+}
+
+/* ============================================================
+   Chat Interface - Research Dialogue
+   ============================================================ */
+
+.chat-container {
+  @apply flex flex-col h-full;
+}
+
+.chat-messages {
+  @apply flex-1 overflow-y-auto px-6 py-8;
+  scroll-behavior: smooth;
+}
+
+/* Message Base - No Bubbles, Line-Based */
 .chat-message {
-  @apply p-4 rounded-lg mb-4;
+  @apply relative mb-8 max-w-[85%];
+  padding-left: var(--space-md);
 }
 
-.chat-message.user {
-  @apply bg-blue-100 ml-12 dark:bg-blue-900/30;
+/* User Message */
+.chat-message--user {
+  @apply ml-auto text-right;
+  border-right: 2px solid rgb(var(--color-muted) / 0.3);
+  padding-left: 0;
+  padding-right: var(--space-md);
 }
 
-.chat-message.assistant {
-  @apply bg-gray-100 mr-12 dark:bg-gray-800;
+.chat-message--user .chat-message__content {
+  @apply text-ink;
 }
 
-/* Citation card */
-.citation-card {
-  @apply inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded cursor-pointer hover:bg-blue-200 transition-colors;
-  @apply dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50;
+/* Assistant Message */
+.chat-message--assistant {
+  border-left: 2px solid rgb(var(--color-accent-teal));
 }
 
-/* Scrollbar */
+.chat-message--assistant .chat-message__content {
+  @apply text-ink/90;
+}
+
+/* Message Content */
+.chat-message__content {
+  @apply text-base leading-relaxed;
+}
+
+.chat-message__content p {
+  @apply mb-4 last:mb-0;
+}
+
+/* Timestamp */
+.chat-message__time {
+  @apply text-xs text-muted mt-2;
+  font-family: var(--font-jetbrains);
+}
+
+/* Citation Superscript */
+.citation-ref {
+  @apply inline-flex items-center justify-center;
+  @apply w-5 h-5 text-xs font-mono;
+  @apply bg-accent-teal/20 text-accent-teal rounded-sm;
+  @apply cursor-pointer hover:bg-accent-teal/30 transition-colors;
+  vertical-align: super;
+  margin: 0 2px;
+}
+
+/* Citation Popover */
+.citation-popover {
+  @apply absolute z-50 p-4 max-w-sm;
+  @apply bg-paper border border-border-light;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.dark .citation-popover {
+  @apply bg-surface border-white/10;
+}
+
+/* Input Area */
+.chat-input-area {
+  @apply border-t border-border-light px-6 py-4;
+}
+
+.chat-input {
+  @apply w-full bg-transparent text-ink resize-none;
+  @apply border-0 border-b-2 border-muted/30;
+  @apply focus:border-accent-teal focus:outline-none;
+  @apply placeholder:text-muted/50;
+  min-height: 44px;
+  max-height: 120px;
+  transition: border-color var(--transition-fast);
+}
+
+/* Suggestion Tags */
+.suggestion-tags {
+  @apply flex flex-wrap gap-2 mt-4;
+}
+
+.suggestion-tag {
+  @apply px-3 py-1.5 text-sm;
+  @apply bg-transparent border border-border-light text-muted;
+  @apply hover:border-accent-teal hover:text-accent-teal;
+  @apply cursor-pointer transition-colors;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   Project Cards - Editorial List Style
+   ============================================================ */
+
+/* List View Row */
+.project-row {
+  @apply flex items-center gap-6 py-5;
+  @apply border-b border-border-light;
+  @apply hover:bg-ink/[0.02] transition-colors;
+}
+
+.dark .project-row {
+  @apply hover:bg-white/[0.02];
+}
+
+.project-row__number {
+  @apply text-2xl font-mono text-muted/40 w-12;
+}
+
+.project-row__content {
+  @apply flex-1 min-w-0;
+}
+
+.project-row__title {
+  @apply text-lg font-medium text-ink truncate;
+  font-family: var(--font-instrument);
+}
+
+.project-row__question {
+  @apply text-sm text-muted mt-1 line-clamp-1;
+}
+
+.project-row__metrics {
+  @apply flex items-center gap-6 text-sm font-mono text-muted;
+}
+
+.project-row__arrow {
+  @apply w-5 h-5 text-muted/30;
+  @apply group-hover:text-accent-teal group-hover:translate-x-1;
+  transition: all var(--transition-fast);
+}
+
+/* Card View (Alternative) */
+.project-card {
+  @apply relative p-6;
+  @apply border border-border-light;
+  @apply hover:border-accent-teal/50 transition-colors;
+  border-radius: var(--radius-md);
+}
+
+.project-card__badge {
+  @apply absolute top-4 right-4;
+  @apply w-2 h-2 rounded-full bg-accent-teal;
+}
+
+/* ============================================================
+   Import Flow - Step Indicator
+   ============================================================ */
+
+.step-indicator {
+  @apply flex items-center justify-between mb-12;
+}
+
+.step {
+  @apply flex items-center gap-3;
+}
+
+.step__number {
+  @apply w-10 h-10 flex items-center justify-center;
+  @apply text-lg font-mono;
+  @apply border-2 border-border-light text-muted;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-base);
+}
+
+.step--active .step__number {
+  @apply border-accent-teal text-accent-teal;
+}
+
+.step--completed .step__number {
+  @apply bg-accent-teal border-accent-teal text-white;
+}
+
+.step__label {
+  @apply text-sm font-medium text-muted;
+}
+
+.step--active .step__label {
+  @apply text-ink;
+}
+
+.step__line {
+  @apply flex-1 h-px bg-border-light mx-4;
+}
+
+.step--completed + .step__line {
+  @apply bg-accent-teal;
+}
+
+/* Upload Zone */
+.upload-zone {
+  @apply relative flex flex-col items-center justify-center;
+  @apply py-16 px-8;
+  @apply border border-dashed border-border-light;
+  @apply hover:border-accent-teal/50 transition-colors;
+  @apply cursor-pointer;
+  border-radius: var(--radius-md);
+}
+
+.upload-zone--dragging {
+  @apply border-accent-teal bg-accent-teal/5;
+}
+
+.upload-zone__icon {
+  @apply w-12 h-12 text-muted/40 mb-4;
+  transition: transform var(--transition-base);
+}
+
+.upload-zone--dragging .upload-zone__icon {
+  @apply text-accent-teal;
+  transform: translateY(-4px);
+}
+
+/* ============================================================
+   UI Components - Editorial Minimalism
+   ============================================================ */
+
+/* Button Base */
+.btn {
+  @apply inline-flex items-center justify-center gap-2;
+  @apply px-5 py-2.5 text-sm font-medium;
+  @apply transition-all;
+  border-radius: var(--radius-sm);
+}
+
+.btn:focus-visible {
+  @apply outline-2 outline-offset-2 outline-accent-teal;
+}
+
+/* Button Variants */
+.btn--primary {
+  @apply bg-ink text-paper;
+  @apply hover:bg-ink/90;
+}
+
+.dark .btn--primary {
+  @apply bg-paper text-ink;
+  @apply hover:bg-paper/90;
+}
+
+.btn--secondary {
+  @apply bg-transparent border border-border-light text-ink;
+  @apply hover:border-ink;
+}
+
+.btn--tertiary {
+  @apply bg-transparent text-muted underline-offset-4;
+  @apply hover:text-ink hover:underline;
+}
+
+.btn--danger {
+  @apply bg-accent-red text-white;
+  @apply hover:bg-accent-red/90;
+}
+
+/* Input Fields - Bottom Border Only */
+.input {
+  @apply w-full bg-transparent text-ink;
+  @apply border-0 border-b border-border-light;
+  @apply py-3 px-0;
+  @apply focus:border-accent-teal focus:outline-none;
+  @apply placeholder:text-muted/50;
+  transition: border-color var(--transition-fast);
+}
+
+.input--error {
+  @apply border-accent-red;
+}
+
+.input-label {
+  @apply block text-sm font-medium text-muted mb-2;
+}
+
+.input-error {
+  @apply text-xs text-accent-red mt-1;
+}
+
+/* ============================================================
+   Skeleton Loading - Subtle Shimmer
+   ============================================================ */
+
+.skeleton {
+  @apply bg-border-light rounded-sm;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+.dark .skeleton {
+  @apply bg-white/5;
+}
+
+@keyframes skeleton-shimmer {
+  0% { opacity: 0.5; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.5; }
+}
+
+.skeleton--text {
+  @apply h-4 w-full;
+}
+
+.skeleton--title {
+  @apply h-6 w-3/4;
+}
+
+.skeleton--avatar {
+  @apply h-10 w-10 rounded-full;
+}
+
+/* ============================================================
+   Scrollbar - Editorial Thin
+   ============================================================ */
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 rounded dark:bg-gray-800;
+  @apply bg-transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500;
+  @apply bg-muted/20 rounded-full;
+  @apply hover:bg-muted/40;
 }
 
-/* Focus styles for accessibility */
+.dark ::-webkit-scrollbar-thumb {
+  @apply bg-white/10;
+  @apply hover:bg-white/20;
+}
+
+/* ============================================================
+   Accessibility
+   ============================================================ */
+
 :focus-visible {
-  @apply outline-2 outline-offset-2 outline-blue-500;
+  @apply outline-2 outline-offset-2 outline-accent-teal;
 }
 
-/* Skip link for accessibility */
 .skip-link {
-  @apply absolute -top-10 left-4 bg-blue-600 text-white px-4 py-2 rounded z-50 transition-all;
+  @apply absolute -top-10 left-4 z-50;
+  @apply bg-ink text-paper px-4 py-2;
+  @apply transition-all;
+  border-radius: var(--radius-sm);
 }
 
 .skip-link:focus {
   @apply top-4;
 }
 
-/* Reduced motion support */
+/* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -195,8 +654,12 @@
   }
 }
 
-/* Mobile-specific utilities */
+/* ============================================================
+   Utility Classes
+   ============================================================ */
+
 @layer utilities {
+  /* Safe Areas */
   .safe-area-inset-bottom {
     padding-bottom: env(safe-area-inset-bottom);
   }
@@ -205,12 +668,12 @@
     padding-top: env(safe-area-inset-top);
   }
 
-  /* Touch-friendly tap targets */
+  /* Touch Targets */
   .touch-target {
     @apply min-h-[44px] min-w-[44px];
   }
 
-  /* Hide scrollbar but keep functionality */
+  /* Hide Scrollbar */
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -219,4 +682,52 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* Editorial Typography Utilities */
+  .font-display {
+    font-family: var(--font-instrument), Georgia, serif;
+  }
+
+  .font-body {
+    font-family: var(--font-inter), system-ui, sans-serif;
+  }
+
+  .font-data {
+    font-family: var(--font-jetbrains), 'Fira Code', monospace;
+  }
+
+  /* Line Clamp */
+  .line-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Text Colors */
+  .text-ink { color: rgb(var(--color-ink)); }
+  .text-paper { color: rgb(var(--color-paper)); }
+  .text-muted { color: rgb(var(--color-muted)); }
+  .text-accent-red { color: rgb(var(--color-accent-red)); }
+  .text-accent-teal { color: rgb(var(--color-accent-teal)); }
+  .text-accent-amber { color: rgb(var(--color-accent-amber)); }
+
+  /* Background Colors */
+  .bg-ink { background-color: rgb(var(--color-ink)); }
+  .bg-paper { background-color: rgb(var(--color-paper)); }
+  .bg-surface { background-color: rgb(var(--color-surface)); }
+  .bg-accent-red { background-color: rgb(var(--color-accent-red)); }
+  .bg-accent-teal { background-color: rgb(var(--color-accent-teal)); }
+  .bg-accent-amber { background-color: rgb(var(--color-accent-amber)); }
+
+  /* Border Colors */
+  .border-border { border-color: rgb(var(--color-border)); }
+  .border-border-light { border-color: rgb(var(--color-border-light)); }
 }

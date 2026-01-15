@@ -1,17 +1,19 @@
 """
 Rate Limiter Middleware
 
-In-memory rate limiting for API endpoints to prevent abuse:
+Multi-backend rate limiting for API endpoints to prevent abuse:
 - /api/auth/* - 10 requests per minute (brute-force prevention)
 - /api/chat/* - 30 requests per minute (DoS prevention)
 - /api/import/* - 5 requests per minute (heavy operation protection)
 
-This is an in-memory implementation. For production with multiple instances,
-consider using Redis-based rate limiting or slowapi with Redis backend.
+Supports:
+- In-memory storage (single instance, development)
+- Redis storage (multi-instance, production)
 """
 
 import time
 import logging
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Dict, Tuple, Optional
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -19,6 +21,218 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Rate Limit Store Backends
+# ============================================================================
+
+class RateLimitStore(ABC):
+    """Abstract base class for rate limit storage backends."""
+
+    @abstractmethod
+    async def is_rate_limited(
+        self,
+        client_key: str,
+        max_requests: int,
+        window_seconds: int
+    ) -> Tuple[bool, int]:
+        """
+        Check if client is rate limited and record request.
+
+        Returns:
+            (is_limited, remaining_requests)
+        """
+        pass
+
+    @abstractmethod
+    async def cleanup(self) -> None:
+        """Cleanup expired entries (if applicable)."""
+        pass
+
+
+class InMemoryRateLimitStore(RateLimitStore):
+    """
+    In-memory rate limit storage using sliding window.
+
+    Suitable for single-instance deployments.
+    """
+
+    def __init__(self):
+        self._request_counts: Dict[str, list] = defaultdict(list)
+        self._last_cleanup = time.time()
+        self._cleanup_interval = 300  # 5 minutes
+
+    async def is_rate_limited(
+        self,
+        client_key: str,
+        max_requests: int,
+        window_seconds: int
+    ) -> Tuple[bool, int]:
+        now = time.time()
+        window_start = now - window_seconds
+
+        # Filter out old entries
+        timestamps = self._request_counts[client_key]
+        valid_timestamps = [ts for ts in timestamps if ts > window_start]
+        self._request_counts[client_key] = valid_timestamps
+
+        current_count = len(valid_timestamps)
+        remaining = max(0, max_requests - current_count)
+
+        if current_count >= max_requests:
+            return True, remaining
+
+        # Record this request
+        self._request_counts[client_key].append(now)
+        return False, remaining - 1
+
+    async def cleanup(self) -> None:
+        now = time.time()
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+
+        self._last_cleanup = now
+        cutoff = now - 3600  # Remove entries older than 1 hour
+
+        keys_to_remove = []
+        for key, timestamps in self._request_counts.items():
+            valid = [ts for ts in timestamps if ts > cutoff]
+            if valid:
+                self._request_counts[key] = valid
+            else:
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del self._request_counts[key]
+
+        if keys_to_remove:
+            logger.debug(f"Rate limiter cleanup: removed {len(keys_to_remove)} stale entries")
+
+
+class RedisRateLimitStore(RateLimitStore):
+    """
+    Redis-based rate limit storage using sliding window log.
+
+    Suitable for multi-instance production deployments.
+    Requires: pip install redis
+    """
+
+    def __init__(self, redis_url: str, key_prefix: str = "ratelimit:"):
+        self._redis_url = redis_url
+        self._key_prefix = key_prefix
+        self._redis = None
+
+    async def _get_redis(self):
+        """Lazy initialize Redis connection."""
+        if self._redis is None:
+            try:
+                import redis.asyncio as redis
+                self._redis = redis.from_url(self._redis_url, decode_responses=True)
+                logger.info("Redis rate limiter connected")
+            except ImportError:
+                logger.error("redis package not installed. Run: pip install redis")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis: {e}")
+                raise
+        return self._redis
+
+    async def is_rate_limited(
+        self,
+        client_key: str,
+        max_requests: int,
+        window_seconds: int
+    ) -> Tuple[bool, int]:
+        """
+        Check rate limit using Redis sorted set (sliding window log).
+
+        Uses atomic MULTI/EXEC for consistency.
+        """
+        redis_client = await self._get_redis()
+        now = time.time()
+        window_start = now - window_seconds
+        redis_key = f"{self._key_prefix}{client_key}"
+
+        try:
+            # Use pipeline for atomicity
+            pipe = redis_client.pipeline()
+
+            # Remove old entries
+            pipe.zremrangebyscore(redis_key, "-inf", window_start)
+            # Count remaining entries
+            pipe.zcard(redis_key)
+            # Add new entry with current timestamp as both score and member
+            pipe.zadd(redis_key, {str(now): now})
+            # Set TTL on the key
+            pipe.expire(redis_key, window_seconds + 60)
+
+            results = await pipe.execute()
+
+            # results[1] is the count before adding new entry
+            current_count = results[1]
+            remaining = max(0, max_requests - current_count - 1)
+
+            if current_count >= max_requests:
+                # Exceeded limit - remove the entry we just added
+                await redis_client.zrem(redis_key, str(now))
+                return True, 0
+
+            return False, remaining
+
+        except Exception as e:
+            logger.error(f"Redis rate limit error: {e}")
+            # Fail open - don't rate limit if Redis is down
+            return False, max_requests
+
+    async def cleanup(self) -> None:
+        """Redis handles TTL automatically, no manual cleanup needed."""
+        pass
+
+
+# ============================================================================
+# Rate Limit Store Factory
+# ============================================================================
+
+_rate_limit_store: Optional[RateLimitStore] = None
+
+
+def init_rate_limit_store(
+    use_redis: bool = False,
+    redis_url: Optional[str] = None,
+) -> RateLimitStore:
+    """
+    Initialize the rate limit store.
+
+    Args:
+        use_redis: Whether to use Redis backend
+        redis_url: Redis connection URL (required if use_redis=True)
+
+    Returns:
+        Configured RateLimitStore instance
+    """
+    global _rate_limit_store
+
+    if use_redis and redis_url:
+        try:
+            _rate_limit_store = RedisRateLimitStore(redis_url)
+            logger.info("Using Redis rate limit store")
+        except Exception as e:
+            logger.warning(f"Redis rate limit store failed, falling back to in-memory: {e}")
+            _rate_limit_store = InMemoryRateLimitStore()
+    else:
+        _rate_limit_store = InMemoryRateLimitStore()
+        logger.info("Using in-memory rate limit store")
+
+    return _rate_limit_store
+
+
+def get_rate_limit_store() -> RateLimitStore:
+    """Get the current rate limit store instance."""
+    global _rate_limit_store
+    if _rate_limit_store is None:
+        _rate_limit_store = InMemoryRateLimitStore()
+    return _rate_limit_store
 
 
 class RateLimitConfig:
@@ -37,7 +251,11 @@ class RateLimitConfig:
 
 class RateLimiterMiddleware(BaseHTTPMiddleware):
     """
-    Rate limiting middleware using sliding window algorithm.
+    Rate limiting middleware using pluggable storage backends.
+
+    Supports:
+    - In-memory storage (default, single instance)
+    - Redis storage (multi-instance, production)
 
     Tracks requests per client IP and path prefix, returning 429 Too Many Requests
     when limits are exceeded.
@@ -46,11 +264,6 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, enabled: bool = True):
         super().__init__(app)
         self.enabled = enabled
-        # Structure: {client_key: [(timestamp, count), ...]}
-        self._request_counts: Dict[str, list] = defaultdict(list)
-        # Lock-free cleanup tracking
-        self._last_cleanup = time.time()
-        self._cleanup_interval = 300  # Clean up every 5 minutes
 
     def _get_client_key(self, request: Request, path_prefix: str) -> str:
         """
@@ -86,55 +299,6 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
                 return prefix
         return "default"
 
-    def _is_rate_limited(self, client_key: str, max_requests: int, window_seconds: int) -> Tuple[bool, int]:
-        """
-        Check if a client is rate limited using sliding window.
-
-        Returns (is_limited, remaining_requests) tuple.
-        """
-        now = time.time()
-        window_start = now - window_seconds
-
-        # Get timestamps within the window
-        timestamps = self._request_counts[client_key]
-
-        # Filter out old entries (outside the window)
-        valid_timestamps = [ts for ts in timestamps if ts > window_start]
-        self._request_counts[client_key] = valid_timestamps
-
-        current_count = len(valid_timestamps)
-        remaining = max(0, max_requests - current_count)
-
-        if current_count >= max_requests:
-            return True, remaining
-
-        # Record this request
-        self._request_counts[client_key].append(now)
-        return False, remaining - 1
-
-    def _cleanup_old_entries(self):
-        """Periodically clean up expired entries to prevent memory growth."""
-        now = time.time()
-        if now - self._last_cleanup < self._cleanup_interval:
-            return
-
-        self._last_cleanup = now
-        cutoff = now - 3600  # Remove entries older than 1 hour
-
-        keys_to_remove = []
-        for key, timestamps in self._request_counts.items():
-            valid = [ts for ts in timestamps if ts > cutoff]
-            if valid:
-                self._request_counts[key] = valid
-            else:
-                keys_to_remove.append(key)
-
-        for key in keys_to_remove:
-            del self._request_counts[key]
-
-        if keys_to_remove:
-            logger.debug(f"Rate limiter cleanup: removed {len(keys_to_remove)} stale entries")
-
     async def dispatch(self, request: Request, call_next):
         """Process the request with rate limiting."""
         if not self.enabled:
@@ -145,16 +309,21 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if path in ("/", "/health", "/docs", "/openapi.json", "/redoc"):
             return await call_next(request)
 
-        # Periodic cleanup
-        self._cleanup_old_entries()
+        # Get the rate limit store (in-memory or Redis)
+        store = get_rate_limit_store()
+
+        # Periodic cleanup (for in-memory store)
+        await store.cleanup()
 
         # Get rate limit for this path
         max_requests, window_seconds = self._get_rate_limit(path)
         path_prefix = self._get_path_prefix(path)
         client_key = self._get_client_key(request, path_prefix)
 
-        # Check rate limit
-        is_limited, remaining = self._is_rate_limited(client_key, max_requests, window_seconds)
+        # Check rate limit using the store
+        is_limited, remaining = await store.is_rate_limited(
+            client_key, max_requests, window_seconds
+        )
 
         if is_limited:
             logger.warning(f"Rate limit exceeded for {client_key} on {path}")

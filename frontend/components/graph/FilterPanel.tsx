@@ -1,8 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { Filter, ChevronDown, ChevronUp, X, RotateCcw } from 'lucide-react';
+import { Filter, ChevronDown, ChevronUp, X, RotateCcw, Hexagon, Diamond, Square, Pentagon, Octagon } from 'lucide-react';
 import type { EntityType } from '@/types';
+
+/* ============================================================
+   FilterPanel - VS Design Diverge Style
+   Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Line-based layout (no rounded corners)
+   - Monospace labels
+   - Left accent bar for active states
+   - Polygon icons for entity types
+   ============================================================ */
 
 interface FilterPanelProps {
   entityTypes: EntityType[];
@@ -16,19 +27,49 @@ interface FilterPanelProps {
   nodeCountsByType?: Record<EntityType, number>;
 }
 
-// Concept-centric entity type colors
-const entityTypeColors: Record<string, { bg: string; text: string; border: string; color: string }> = {
-  Concept: { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300', color: '#8B5CF6' },
-  Method: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300', color: '#F59E0B' },
-  Finding: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-300', color: '#10B981' },
-  Problem: { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300', color: '#EF4444' },
-  Dataset: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', color: '#3B82F6' },
-  Metric: { bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300', color: '#EC4899' },
-  Innovation: { bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300', color: '#14B8A6' },
-  Limitation: { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300', color: '#F97316' },
+// Concept-centric entity type config with polygon shapes
+const entityTypeConfig: Record<string, { color: string; icon: React.ReactNode }> = {
+  Concept: {
+    color: '#2EC4B6', // accent-teal
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Method: {
+    color: '#F4A261', // accent-amber
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Finding: {
+    color: '#E63946', // accent-red
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Problem: {
+    color: '#9B5DE5',
+    icon: <Octagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Dataset: {
+    color: '#00BBF9',
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Metric: {
+    color: '#EC4899',
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Innovation: {
+    color: '#14B8A6',
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Limitation: {
+    color: '#F97316',
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
   // Legacy types (hidden in UI but kept for compatibility)
-  Paper: { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', color: '#64748B' },
-  Author: { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300', color: '#22C55E' },
+  Paper: {
+    color: '#64748B',
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Author: {
+    color: '#22C55E',
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
 };
 
 export function FilterPanel({
@@ -63,56 +104,60 @@ export function FilterPanel({
   const hasActiveFilters = selectedTypes.length < entityTypes.length || yearRange !== null;
 
   return (
-    <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg border w-72 z-10">
+    <div className="absolute top-4 right-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 w-64 z-10">
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center justify-between p-3 hover:bg-surface/5 transition-colors border-b border-ink/10 dark:border-paper/10"
       >
         <div className="flex items-center gap-2">
-          <Filter className={`w-4 h-4 ${hasActiveFilters ? 'text-blue-600' : 'text-gray-500'}`} />
-          <span className="font-medium text-gray-900">Filters</span>
+          <Filter className={`w-4 h-4 ${hasActiveFilters ? 'text-accent-teal' : 'text-muted'}`} />
+          <span className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper">
+            Filters
+          </span>
           {hasActiveFilters && (
-            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
-              Active
+            <span className="px-1.5 py-0.5 bg-accent-teal/10 text-accent-teal text-xs font-mono">
+              ON
             </span>
           )}
         </div>
         {isExpanded ? (
-          <ChevronUp className="w-4 h-4 text-gray-500" />
+          <ChevronUp className="w-4 h-4 text-muted" />
         ) : (
-          <ChevronDown className="w-4 h-4 text-gray-500" />
+          <ChevronDown className="w-4 h-4 text-muted" />
         )}
       </button>
 
       {/* Content */}
       {isExpanded && (
-        <div className="p-3 border-t space-y-4">
+        <div className="p-3 space-y-4">
           {/* Entity Types */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700">Node Types</span>
-              <div className="flex gap-2">
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                Node Types
+              </span>
+              <div className="flex gap-3">
                 <button
                   onClick={selectAll}
-                  className="text-xs text-blue-600 hover:text-blue-800"
+                  className="font-mono text-xs text-accent-teal hover:text-accent-teal/80 transition-colors"
                 >
                   All
                 </button>
                 <button
                   onClick={clearAll}
-                  className="text-xs text-gray-500 hover:text-gray-700"
+                  className="font-mono text-xs text-muted hover:text-ink dark:hover:text-paper transition-colors"
                 >
                   None
                 </button>
               </div>
             </div>
+
             <div className="space-y-1">
               {entityTypes.map((type) => {
-                const colors = entityTypeColors[type] || {
-                  bg: 'bg-gray-100',
-                  text: 'text-gray-700',
-                  border: 'border-gray-300',
+                const config = entityTypeConfig[type] || {
+                  color: '#64748B',
+                  icon: <Square className="w-3 h-3" />,
                 };
                 const isSelected = selectedTypes.includes(type);
                 const count = nodeCountsByType?.[type] || 0;
@@ -121,26 +166,34 @@ export function FilterPanel({
                   <button
                     key={type}
                     onClick={() => toggleType(type)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all ${
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-all relative ${
                       isSelected
-                        ? `${colors.bg} ${colors.text} border ${colors.border}`
-                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-transparent'
+                        ? 'bg-surface/5'
+                        : 'hover:bg-surface/5'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    {/* Left accent bar for selected */}
+                    {isSelected && (
                       <div
-                        className={`w-2 h-2 rounded-full ${
-                          isSelected ? '' : 'bg-gray-300'
-                        }`}
-                        style={{
-                          backgroundColor: isSelected ? colors.color : undefined,
-                        }}
+                        className="absolute left-0 top-0 bottom-0 w-0.5"
+                        style={{ backgroundColor: config.color }}
                       />
-                      <span>{type}</span>
-                    </div>
+                    )}
+
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-400">{count}</span>
-                      {isSelected && <X className="w-3 h-3" />}
+                      <span style={{ color: isSelected ? config.color : 'var(--color-muted)' }}>
+                        {config.icon}
+                      </span>
+                      <span className={`${isSelected ? 'text-ink dark:text-paper' : 'text-muted'}`}>
+                        {type}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-muted">{count}</span>
+                      {isSelected && (
+                        <X className="w-3 h-3 text-muted hover:text-accent-red transition-colors" />
+                      )}
                     </div>
                   </button>
                 );
@@ -150,8 +203,8 @@ export function FilterPanel({
 
           {/* Year Range */}
           {onYearRangeChange && yearRange && (
-            <div>
-              <span className="text-sm font-medium text-gray-700 block mb-2">
+            <div className="pt-3 border-t border-ink/10 dark:border-paper/10">
+              <span className="font-mono text-xs uppercase tracking-wider text-muted block mb-3">
                 Year Range
               </span>
               <div className="flex items-center gap-2">
@@ -163,9 +216,9 @@ export function FilterPanel({
                   onChange={(e) =>
                     onYearRangeChange([parseInt(e.target.value), yearRange[1]])
                   }
-                  className="w-20 px-2 py-1 border rounded text-sm"
+                  className="w-20 px-2 py-1.5 bg-transparent border-b border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-sm font-mono text-ink dark:text-paper"
                 />
-                <span className="text-gray-500">—</span>
+                <span className="text-muted">—</span>
                 <input
                   type="number"
                   min={yearRange[0]}
@@ -174,7 +227,7 @@ export function FilterPanel({
                   onChange={(e) =>
                     onYearRangeChange([yearRange[0], parseInt(e.target.value)])
                   }
-                  className="w-20 px-2 py-1 border rounded text-sm"
+                  className="w-20 px-2 py-1.5 bg-transparent border-b border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-sm font-mono text-ink dark:text-paper"
                 />
               </div>
             </div>
@@ -182,15 +235,15 @@ export function FilterPanel({
 
           {/* Active Filters Summary */}
           {hasActiveFilters && (
-            <div className="pt-3 border-t">
+            <div className="pt-3 border-t border-ink/10 dark:border-paper/10">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-500">
-                  Showing {selectedTypes.length} of {entityTypes.length} types
+                <p className="font-mono text-xs text-muted">
+                  {selectedTypes.length}/{entityTypes.length} types
                 </p>
                 {onReset && (
                   <button
                     onClick={onReset}
-                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                    className="flex items-center gap-1 font-mono text-xs text-accent-red hover:text-accent-red/80 transition-colors"
                   >
                     <RotateCcw className="w-3 h-3" />
                     Reset
