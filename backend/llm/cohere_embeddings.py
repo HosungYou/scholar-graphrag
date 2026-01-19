@@ -32,11 +32,12 @@ class CohereEmbeddingProvider:
 
     @property
     def client(self):
-        """Lazy load the Cohere client."""
+        """Lazy load the Cohere V2 client (required for output_dimension support)."""
         if self._client is None:
             try:
                 import cohere
-                self._client = cohere.AsyncClient(api_key=self.api_key)
+                # Use AsyncClientV2 for embed-v4.0 output_dimension support
+                self._client = cohere.AsyncClientV2(api_key=self.api_key)
             except ImportError:
                 raise ImportError("cohere package required: pip install cohere")
         return self._client
@@ -75,22 +76,22 @@ class CohereEmbeddingProvider:
                 # Clean texts (Cohere doesn't like empty strings)
                 cleaned_batch = [t.strip() if t.strip() else "empty" for t in batch]
 
-                # Build embed kwargs - embed-v4.0 supports output_dimensions
+                # Build embed kwargs for V2 API - embed-v4.0 supports output_dimension
                 embed_kwargs = {
                     "texts": cleaned_batch,
                     "model": model_to_use,
                     "input_type": input_type,
-                    "truncate": "END",  # Truncate long texts from end
+                    "embedding_types": ["float"],  # Required for V2 API
                 }
 
-                # Only add output_dimension for v4 models that support it
-                # Note: parameter is singular "output_dimension", not plural
+                # Add output_dimension for v4 models (V2 API feature)
                 if "v4" in model_to_use:
                     embed_kwargs["output_dimension"] = self.dimension
 
                 response = await self.client.embed(**embed_kwargs)
 
-                all_embeddings.extend(response.embeddings)
+                # V2 API returns embeddings via response.embeddings.float
+                all_embeddings.extend(response.embeddings.float)
 
                 # Small delay between batches to avoid rate limits
                 if i + batch_size < len(texts):
