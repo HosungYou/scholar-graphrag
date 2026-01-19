@@ -36,6 +36,18 @@ class ConceptCluster:
 
 
 @dataclass
+class PotentialEdge:
+    """Represents a potential (ghost) edge between two concepts across clusters."""
+
+    source_id: str
+    target_id: str
+    similarity: float
+    gap_id: str
+    source_name: str = ""
+    target_name: str = ""
+
+
+@dataclass
 class StructuralGap:
     """Represents a structural gap between two concept clusters."""
 
@@ -47,6 +59,7 @@ class StructuralGap:
     concept_b_ids: list[str] = field(default_factory=list)
     bridge_concepts: list[str] = field(default_factory=list)  # Concepts that could bridge
     suggested_research_questions: list[str] = field(default_factory=list)
+    potential_edges: list[PotentialEdge] = field(default_factory=list)  # Ghost edges for visualization
     status: str = "detected"  # detected, explored, bridged, dismissed
 
 
@@ -124,8 +137,26 @@ class GapDetector:
             logger.warning("Too few concepts with embeddings for clustering")
             return []
 
+        # Validate all embeddings have the same dimension
+        expected_dim = len(concepts_with_embeddings[0]["embedding"])
+        valid_concepts = [
+            c for c in concepts_with_embeddings
+            if len(c["embedding"]) == expected_dim
+        ]
+
+        if len(valid_concepts) < 3:
+            logger.warning(f"Too few concepts with valid {expected_dim}-dim embeddings for clustering")
+            return []
+
+        if len(valid_concepts) != len(concepts_with_embeddings):
+            logger.warning(
+                f"Filtered out {len(concepts_with_embeddings) - len(valid_concepts)} concepts "
+                f"with mismatched embedding dimensions"
+            )
+            concepts_with_embeddings = valid_concepts
+
         # Stack embeddings into matrix
-        embeddings = np.array([c["embedding"] for c in concepts_with_embeddings])
+        embeddings = np.array([c["embedding"] for c in concepts_with_embeddings], dtype=np.float32)
 
         # Determine optimal number of clusters
         if n_clusters is None:
@@ -464,6 +495,82 @@ class GapDetector:
         bridge_scores.sort(key=lambda x: x[1], reverse=True)
         return [cid for cid, _ in bridge_scores[:5]]
 
+    def compute_potential_edges(
+        self,
+        gap: StructuralGap,
+        concepts: list[dict],
+        top_n: int = 5,
+        min_similarity: float = 0.3,
+    ) -> list[PotentialEdge]:
+        """
+        Compute potential (ghost) edges between two clusters in a gap.
+
+        These represent semantically similar concept pairs that could be
+        connected but aren't - visualized as dashed lines in InfraNodus style.
+
+        Args:
+            gap: The structural gap to analyze
+            concepts: List of concept dicts with 'id', 'name', 'embedding'
+            top_n: Maximum number of potential edges to return
+            min_similarity: Minimum cosine similarity threshold
+
+        Returns:
+            List of PotentialEdge objects sorted by similarity (highest first)
+        """
+        # Build concept lookup
+        concept_by_id = {c["id"]: c for c in concepts}
+
+        # Get concepts from each cluster
+        cluster_a_concepts = [
+            concept_by_id[cid] for cid in gap.concept_a_ids
+            if cid in concept_by_id and concept_by_id[cid].get("embedding")
+        ]
+        cluster_b_concepts = [
+            concept_by_id[cid] for cid in gap.concept_b_ids
+            if cid in concept_by_id and concept_by_id[cid].get("embedding")
+        ]
+
+        if not cluster_a_concepts or not cluster_b_concepts:
+            return []
+
+        # Calculate pairwise similarities between clusters
+        similarity_pairs = []
+
+        for concept_a in cluster_a_concepts:
+            emb_a = np.array(concept_a["embedding"]).reshape(1, -1)
+
+            for concept_b in cluster_b_concepts:
+                emb_b = np.array(concept_b["embedding"]).reshape(1, -1)
+                similarity = cosine_similarity(emb_a, emb_b)[0][0]
+
+                if similarity >= min_similarity:
+                    similarity_pairs.append((
+                        concept_a["id"],
+                        concept_b["id"],
+                        concept_a["name"],
+                        concept_b["name"],
+                        float(similarity),
+                    ))
+
+        # Sort by similarity (highest first) and take top N
+        similarity_pairs.sort(key=lambda x: x[4], reverse=True)
+        top_pairs = similarity_pairs[:top_n]
+
+        # Create PotentialEdge objects
+        potential_edges = [
+            PotentialEdge(
+                source_id=source_id,
+                target_id=target_id,
+                similarity=sim,
+                gap_id=gap.id,
+                source_name=source_name,
+                target_name=target_name,
+            )
+            for source_id, target_id, source_name, target_name, sim in top_pairs
+        ]
+
+        return potential_edges
+
     async def generate_research_questions(
         self,
         gap: StructuralGap,
@@ -556,6 +663,9 @@ Return ONLY the research questions, one per line, without numbering or bullets.
 
         for gap in gaps[:5]:  # Top 5 gaps only
             gap.bridge_concepts = self.find_bridge_candidates(gap, concepts, centrality)
+
+            # Compute potential edges (ghost edges) for visualization
+            gap.potential_edges = self.compute_potential_edges(gap, concepts, top_n=5)
 
             # Get concept names for LLM
             a_names = [concept_by_id[cid]["name"] for cid in gap.concept_a_ids if cid in concept_by_id]
