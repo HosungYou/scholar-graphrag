@@ -15,7 +15,7 @@ import {
   Hexagon,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { KnowledgeGraph } from '@/components/graph/KnowledgeGraph';
+import { KnowledgeGraph3D } from '@/components/graph/KnowledgeGraph3D';
 import { NodeDetails } from '@/components/graph/NodeDetails';
 import { FilterPanel } from '@/components/graph/FilterPanel';
 import { SearchBar } from '@/components/graph/SearchBar';
@@ -538,11 +538,9 @@ export default function ProjectDetailPage() {
               mobileView === 'graph' ? 'max-md:flex max-md:w-full' : ''
             }`}
           >
-            <KnowledgeGraph
+            <KnowledgeGraph3D
               projectId={projectId}
               onNodeClick={handleNodeClick}
-              highlightedNodes={highlightedNodes}
-              highlightedEdges={highlightedEdges}
             />
 
             {/* Filter Panel */}
