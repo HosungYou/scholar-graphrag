@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   Loader2,
   Hexagon,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { KnowledgeGraph3D } from '@/components/graph/KnowledgeGraph3D';
@@ -25,6 +27,7 @@ import {
   ErrorDisplay,
   ErrorBoundary,
   ChatMessageSkeleton,
+  ResizeHandle,
 } from '@/components/ui';
 import type { GraphEntity, EntityType, SearchResult, Citation } from '@/types';
 
@@ -52,6 +55,39 @@ export default function ProjectDetailPage() {
   const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
   const [chatInput, setChatInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+
+  // Chat panel resize and collapse state
+  const [chatPanelWidth, setChatPanelWidth] = useState(480);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const mainContainerRef = useRef<HTMLDivElement>(null);
+
+  // Load saved panel width from localStorage
+  useEffect(() => {
+    const savedWidth = localStorage.getItem('scholarag-chat-panel-width');
+    const savedCollapsed = localStorage.getItem('scholarag-chat-panel-collapsed');
+    if (savedWidth) {
+      setChatPanelWidth(parseInt(savedWidth, 10));
+    }
+    if (savedCollapsed) {
+      setIsChatCollapsed(savedCollapsed === 'true');
+    }
+  }, []);
+
+  // Save panel width to localStorage
+  const handlePanelResize = useCallback((width: number) => {
+    setChatPanelWidth(width);
+    localStorage.setItem('scholarag-chat-panel-width', String(width));
+  }, []);
+
+  // Toggle chat panel collapse
+  const toggleChatPanel = useCallback(() => {
+    setIsChatCollapsed(prev => {
+      const newValue = !prev;
+      localStorage.setItem('scholarag-chat-panel-collapsed', String(newValue));
+      return newValue;
+    });
+  }, []);
+
   const [messages, setMessages] = useState<Array<{
     role: 'user' | 'assistant';
     content: string;
@@ -373,13 +409,28 @@ export default function ProjectDetailPage() {
         </header>
 
         {/* Main Content */}
-        <div className="flex-1 flex overflow-hidden">
+        <div ref={mainContainerRef} className="flex-1 flex overflow-hidden">
+          {/* Chat Panel Toggle Button (when collapsed) */}
+          {isChatCollapsed && viewMode === 'split' && (
+            <button
+              onClick={toggleChatPanel}
+              className="flex-shrink-0 w-10 flex flex-col items-center justify-center gap-2 bg-paper dark:bg-ink border-r border-ink/10 dark:border-paper/10 hover:bg-accent-teal/10 transition-colors"
+              aria-label="Open chat panel"
+            >
+              <PanelLeft className="w-5 h-5 text-muted" />
+              <span className="text-[10px] font-mono text-muted uppercase tracking-wider [writing-mode:vertical-lr] rotate-180">
+                Chat
+              </span>
+            </button>
+          )}
+
           {/* Chat Panel - Editorial Research Style */}
           <div
-            className={`flex flex-col bg-paper dark:bg-ink border-r border-ink/10 dark:border-paper/10 transition-all ${
+            style={viewMode === 'split' && !isChatCollapsed ? { width: `${chatPanelWidth}px` } : undefined}
+            className={`flex flex-col bg-paper dark:bg-ink border-r border-ink/10 dark:border-paper/10 transition-all flex-shrink-0 ${
               // Desktop visibility
               viewMode === 'chat' ? 'w-full' :
-              viewMode === 'split' ? 'w-1/2' :
+              viewMode === 'split' ? (isChatCollapsed ? 'hidden' : '') :
               'hidden'
             } ${
               // Mobile visibility override
@@ -388,6 +439,21 @@ export default function ProjectDetailPage() {
               mobileView === 'chat' ? 'max-md:flex max-md:w-full' : ''
             }`}
           >
+            {/* Panel Header with Collapse Button */}
+            {viewMode === 'split' && (
+              <div className="flex items-center justify-between px-4 py-2 border-b border-ink/10 dark:border-paper/10 flex-shrink-0">
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Research Chat
+                </span>
+                <button
+                  onClick={toggleChatPanel}
+                  className="p-1.5 text-muted hover:text-accent-teal hover:bg-accent-teal/10 transition-colors rounded"
+                  aria-label="Collapse chat panel"
+                >
+                  <PanelLeftClose className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {/* Messages */}
             <div
               ref={chatContainerRef}
@@ -530,12 +596,23 @@ export default function ProjectDetailPage() {
             </form>
           </div>
 
+          {/* Resize Handle (only in split mode, when chat is visible) */}
+          {viewMode === 'split' && !isChatCollapsed && (
+            <ResizeHandle
+              onResize={handlePanelResize}
+              currentWidth={chatPanelWidth}
+              minWidth={320}
+              maxWidth={800}
+              containerRef={mainContainerRef}
+            />
+          )}
+
           {/* Graph Panel */}
           <div
-            className={`relative transition-all ${
+            className={`relative transition-all flex-1 ${
               // Desktop visibility
               viewMode === 'explore' ? 'w-full' :
-              viewMode === 'split' ? 'w-1/2' :
+              viewMode === 'split' ? '' :
               'hidden'
             } ${
               // Mobile visibility override
