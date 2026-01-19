@@ -1067,19 +1067,28 @@ async def refresh_gap_analysis(
         )
 
         # Store clusters
+        # Build concept id -> name mapping for lookup
+        concept_name_map = {c["id"]: c["name"] for c in concepts}
+
         for cluster in analysis.get("clusters", []):
+            # Get concept names from the mapping
+            cluster_concept_names = [
+                concept_name_map.get(cid, "")
+                for cid in cluster.concept_ids
+            ]
+
             await database.execute(
                 """
                 INSERT INTO concept_clusters (project_id, cluster_id, concepts, concept_names, size, density, label)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 str(project_id),
-                cluster.cluster_id,
-                cluster.concepts,
-                cluster.concept_names,
-                cluster.size,
-                cluster.density,
-                cluster.label,
+                cluster.id,  # ConceptCluster uses 'id' not 'cluster_id'
+                cluster.concept_ids,  # ConceptCluster uses 'concept_ids' not 'concepts'
+                cluster_concept_names,  # Derived from concept_ids
+                len(cluster.concept_ids),  # Computed size
+                0.0,  # Default density (can be calculated if needed)
+                cluster.name or f"Cluster {cluster.id + 1}",  # Use 'name' or generate label
             )
 
         # Store gaps
