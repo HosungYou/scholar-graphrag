@@ -10,6 +10,7 @@ import { StatusBar } from './StatusBar';
 import { NodeDetails } from './NodeDetails';
 import { InsightHUD } from './InsightHUD';
 import { MainTopicsPanel } from './MainTopicsPanel';
+import { TopicViewMode } from './TopicViewMode';
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import type { GraphEntity, EntityType, StructuralGap } from '@/types';
@@ -17,6 +18,7 @@ import {
   Hexagon,
   Box,
   Grid3X3,
+  Grid2X2,
   Sparkles,
   Info,
   RotateCcw,
@@ -66,6 +68,8 @@ export function KnowledgeGraph3D({
     clearHighlights,
     selectedGap,
     setSelectedGap,
+    viewMode,
+    setViewMode,
   } = useGraphStore();
 
   // 3D-specific store
@@ -259,21 +263,40 @@ export function KnowledgeGraph3D({
 
   return (
     <div className="relative w-full h-full">
-      {/* 3D Graph */}
-      <Graph3D
-        ref={graph3DRef}
-        nodes={displayData.nodes}
-        edges={displayData.edges}
-        clusters={clusters}
-        centralityMetrics={centralityMetrics}
-        highlightedNodes={highlightedNodes}
-        highlightedEdges={highlightedEdges}
-        selectedGap={selectedGap}
-        onNodeClick={handleNodeClick}
-        onBackgroundClick={handleBackgroundClick}
-        showParticles={view3D.showParticles}
-        particleSpeed={view3D.particleSpeed}
-      />
+      {/* Graph View (3D or Topic) */}
+      {viewMode === '3d' ? (
+        <Graph3D
+          ref={graph3DRef}
+          nodes={displayData.nodes}
+          edges={displayData.edges}
+          clusters={clusters}
+          centralityMetrics={centralityMetrics}
+          highlightedNodes={highlightedNodes}
+          highlightedEdges={highlightedEdges}
+          selectedGap={selectedGap}
+          onNodeClick={handleNodeClick}
+          onBackgroundClick={handleBackgroundClick}
+          showParticles={view3D.showParticles}
+          particleSpeed={view3D.particleSpeed}
+        />
+      ) : (
+        <TopicViewMode
+          clusters={clusters}
+          gaps={gaps}
+          edges={displayData.edges}
+          onClusterClick={handleFocusCluster}
+          onClusterHover={(clusterId) => {
+            if (clusterId !== null) {
+              const cluster = clusters.find((c) => c.cluster_id === clusterId);
+              if (cluster) {
+                setHighlightedNodes(cluster.concepts);
+              }
+            } else {
+              clearHighlights();
+            }
+          }}
+        />
+      )}
 
       {/* Top Controls */}
       <div className="absolute top-4 right-4 flex gap-2">
@@ -391,6 +414,25 @@ export function KnowledgeGraph3D({
           >
             <PieChart className="w-4 h-4" />
           </button>
+
+          <div className="w-px bg-ink/10 dark:bg-paper/10" />
+
+          {/* View Mode Toggle */}
+          <button
+            onClick={() => setViewMode(viewMode === '3d' ? 'topic' : '3d')}
+            className={`p-2 transition-colors ${
+              viewMode === 'topic'
+                ? 'bg-accent-purple/10 text-accent-purple'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={viewMode === '3d' ? 'Switch to Topic View' : 'Switch to 3D View'}
+          >
+            {viewMode === '3d' ? (
+              <Grid2X2 className="w-4 h-4" />
+            ) : (
+              <Box className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
 
@@ -463,16 +505,30 @@ export function KnowledgeGraph3D({
         />
       )}
 
-      {/* 3D Mode Badge */}
+      {/* View Mode Badge */}
       <div className="absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <Box className="w-4 h-4 text-accent-teal" />
-          <span className="font-mono text-xs uppercase tracking-wider text-muted">
-            3D Mode
-          </span>
-          <span className="text-xs text-muted">
-            • {displayData.nodes.length} nodes
-          </span>
+          {viewMode === '3d' ? (
+            <>
+              <Box className="w-4 h-4 text-accent-teal" />
+              <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                3D Mode
+              </span>
+              <span className="text-xs text-muted">
+                • {displayData.nodes.length} nodes
+              </span>
+            </>
+          ) : (
+            <>
+              <Grid2X2 className="w-4 h-4 text-accent-purple" />
+              <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                Topic View
+              </span>
+              <span className="text-xs text-muted">
+                • {clusters.length} clusters
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

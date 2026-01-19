@@ -283,3 +283,36 @@ export interface ConceptCentricProperties {
   confidence?: number;
   [key: string]: unknown;
 }
+
+// Topic View Mode Types (InfraNodus-style 2D Block Visualization)
+export type ViewMode = '3d' | 'topic';
+
+export interface TopicNode {
+  id: string;
+  clusterId: number;
+  label: string;
+  size: number;           // Number of concepts in cluster
+  color: string;          // Cluster color
+  x?: number;             // Position (set by D3)
+  y?: number;
+  fx?: number | null;     // Fixed position
+  fy?: number | null;
+  conceptIds: string[];   // IDs of concepts in this cluster
+  conceptNames: string[]; // Names of concepts
+  density: number;        // Cluster density
+}
+
+export interface TopicLink {
+  id: string;
+  source: string | TopicNode;
+  target: string | TopicNode;
+  type: 'connection' | 'gap';  // Regular connection or structural gap
+  weight: number;              // Connection strength or gap strength
+  gapId?: string;              // If type is 'gap', reference to StructuralGap
+  connectionCount?: number;    // Number of edges between clusters
+}
+
+export interface TopicViewData {
+  nodes: TopicNode[];
+  links: TopicLink[];
+}

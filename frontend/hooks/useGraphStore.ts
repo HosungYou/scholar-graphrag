@@ -9,6 +9,7 @@ import type {
   CentralityMetrics,
   GapAnalysisResult,
   PotentialEdge,
+  ViewMode,
 } from '@/types';
 
 interface FilterState {
@@ -38,6 +39,9 @@ interface GraphStore {
   showGhostEdges: boolean;
   potentialEdges: PotentialEdge[];
 
+  // View Mode State (3D vs Topic View)
+  viewMode: ViewMode;
+
   // Actions
   fetchGraphData: (projectId: string) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
@@ -58,6 +62,9 @@ interface GraphStore {
   toggleGhostEdges: () => void;
   setShowGhostEdges: (show: boolean) => void;
   getPotentialEdgesForGap: (gap: StructuralGap) => PotentialEdge[];
+
+  // View Mode Actions
+  setViewMode: (mode: ViewMode) => void;
 }
 
 // Default filters (Hybrid Mode: Paper/Author + Concept-Centric)
@@ -91,6 +98,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   // Ghost Edge State
   showGhostEdges: false,
   potentialEdges: [],
+
+  // View Mode State
+  viewMode: '3d' as ViewMode,
 
   // Actions
   fetchGraphData: async (projectId: string) => {
@@ -249,5 +259,10 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   getPotentialEdgesForGap: (gap) => {
     return gap.potential_edges || [];
+  },
+
+  // View Mode Actions
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
   },
 }));
