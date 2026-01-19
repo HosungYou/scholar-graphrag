@@ -454,9 +454,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
-        // Zoom controls
-        enableZoomInteraction={true}
-        enableNavigationControls={true}
         // Performance optimizations
         warmupTicks={50}
         onEngineStop={() => console.log('Force simulation stabilized')}
