@@ -102,10 +102,10 @@
 
 ---
 
-### Phase 6: Graph 시각화 ✅ 거의 완료
+### Phase 6: Graph 시각화 ✅ 완료
 
 ```
-[███████████████████████░░] 90%
+[█████████████████████████] 100%
 ```
 
 | 항목 | 상태 | 비고 |
@@ -116,8 +116,36 @@
 | 줌/패닝 | ✅ | MiniMap 포함 |
 | 필터링 | ✅ | 타입/연도 |
 | 검색 | ✅ | 엔티티 검색 |
-| 하이라이팅 | ⚠️ | 챗봇 연동 필요 |
-| Force-Directed 레이아웃 | ❌ | 향후 구현 |
+| 하이라이팅 | ✅ | InfraNodus Enhancement |
+| 3D 시각화 | ✅ | react-force-graph-3d |
+| Force-Directed 레이아웃 | ✅ | 3D 시뮬레이션 |
+
+---
+
+### Phase 6.5: InfraNodus-Style Enhancement ✅ 완료
+
+```
+[█████████████████████████] 100%
+```
+
+> **Release**: v0.2.0
+> **Commits**: Phase 1-6 완료 (2026-01-19)
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| Ghost Edge 시각화 | ✅ | 점선 엣지, PotentialEdge |
+| Edge 색상 매칭 | ✅ | 클러스터 기반 색상 |
+| Insight HUD | ✅ | Modularity, Diversity, Density |
+| Main Topics 패널 | ✅ | 클러스터 비율 표시 |
+| Topic View 모드 | ✅ | D3.js 2D 블록 뷰 |
+| Bloom/Glow 효과 | ✅ | Three.js 이미시브 렌더링 |
+
+**주요 커밋:**
+- `feat(graph): Add Ghost Edge visualization`
+- `feat(graph): Implement cluster-based edge coloring`
+- `feat(ui): Create InsightHUD and MainTopicsPanel`
+- `feat(graph): Add Topic View Mode`
+- `feat(graph): Add bloom/glow effect`
 
 ---
 
@@ -278,6 +306,12 @@ class GraphStore:
 
 | 날짜 | 항목 | 상태 |
 |------|------|------|
+| 2026-01-19 | **InfraNodus Phase 6**: Bloom/Glow 효과 | ✅ |
+| 2026-01-19 | InfraNodus Phase 5: Topic View 모드 | ✅ |
+| 2026-01-18 | InfraNodus Phase 4: Main Topics 패널 | ✅ |
+| 2026-01-18 | InfraNodus Phase 3: Insight HUD | ✅ |
+| 2026-01-18 | InfraNodus Phase 2: Edge 색상 매칭 | ✅ |
+| 2026-01-18 | InfraNodus Phase 1: Ghost Edge 시각화 | ✅ |
 | 2025-01 | 프로젝트 구조 생성 | ✅ |
 | 2025-01 | Backend 라우터 구현 | ✅ |
 | 2025-01 | Multi-Agent 시스템 구현 | ✅ |
