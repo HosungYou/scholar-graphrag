@@ -9,6 +9,7 @@ import type {
   Project,
   GraphData,
   GraphEntity,
+  GraphEdge,
   ChatResponse,
   ImportValidationResult,
   ImportJob,

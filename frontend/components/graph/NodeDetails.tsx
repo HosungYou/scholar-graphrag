@@ -46,6 +46,26 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#10B981', // Emerald - matches PolygonNode
     icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
   },
+  Problem: {
+    color: '#EF4444', // Red
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Dataset: {
+    color: '#3B82F6', // Blue
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Metric: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Innovation: {
+    color: '#14B8A6', // Teal
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Limitation: {
+    color: '#F97316', // Orange
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
 };
 
 export function NodeDetails({

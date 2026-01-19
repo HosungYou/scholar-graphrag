@@ -44,6 +44,26 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#10B981', // Emerald
     icon: <Trophy className="w-3 h-3" strokeWidth={2} />
   },
+  Problem: {
+    color: '#EF4444', // Red
+    icon: <Octagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Dataset: {
+    color: '#3B82F6', // Blue
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Metric: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Innovation: {
+    color: '#14B8A6', // Teal
+    icon: <Lightbulb className="w-3 h-3" strokeWidth={2} />
+  },
+  Limitation: {
+    color: '#F97316', // Orange
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
 };
 
 export function SearchBar({
