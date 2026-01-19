@@ -103,6 +103,10 @@ export interface Graph3DProps {
   // Ghost Edge props (InfraNodus-style)
   showGhostEdges?: boolean;
   potentialEdges?: PotentialEdge[];
+  // Bloom/Glow effect props
+  bloomEnabled?: boolean;
+  bloomIntensity?: number;
+  glowSize?: number;
 }
 
 export interface Graph3DRef {
@@ -128,6 +132,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   particleSpeed = 0.005,
   showGhostEdges = false,
   potentialEdges = [],
+  bloomEnabled = false,
+  bloomIntensity = 0.5,
+  glowSize = 1.3,
 }, ref) => {
   const fgRef = useRef<any>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -256,42 +263,70 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return { nodes: forceNodes, links: forceLinks };
   }, [nodes, edges, clusterColorMap, centralityMap, highlightedNodeSet, highlightedEdgeSet, showGhostEdges, potentialEdges]);
 
-  // Custom node rendering with glow effect
+  // Custom node rendering with glow effect and bloom support
   const nodeThreeObject = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode;
     const group = new THREE.Group();
+    const nodeSize = node.val || 5;
+
+    // Calculate emissive intensity based on bloom settings
+    let emissiveIntensity = node.isHighlighted ? 0.6 : 0.2;
+    if (bloomEnabled) {
+      // Boost emissive intensity when bloom is enabled
+      emissiveIntensity = node.isHighlighted
+        ? 0.4 + bloomIntensity * 0.6
+        : 0.15 + bloomIntensity * 0.45;
+    }
 
     // Main sphere
-    const geometry = new THREE.SphereGeometry(node.val || 5, 16, 16);
+    const geometry = new THREE.SphereGeometry(nodeSize, 16, 16);
     const material = new THREE.MeshPhongMaterial({
       color: node.color || '#888888',
       emissive: node.color || '#888888',
-      emissiveIntensity: node.isHighlighted ? 0.6 : 0.2,
+      emissiveIntensity,
       transparent: true,
       opacity: node.isHighlighted || hoveredNode === node.id ? 1 : 0.85,
+      shininess: bloomEnabled ? 50 : 30,
     });
     const sphere = new THREE.Mesh(geometry, material);
     group.add(sphere);
 
-    // Outer glow for bridge nodes
-    if (node.isBridge) {
-      const glowGeometry = new THREE.SphereGeometry((node.val || 5) * 1.4, 16, 16);
+    // Bloom outer glow sphere (always show when bloom is enabled)
+    if (bloomEnabled) {
+      const glowGeometry = new THREE.SphereGeometry(nodeSize * glowSize, 16, 16);
+      const glowOpacity = 0.08 + bloomIntensity * 0.12;
       const glowMaterial = new THREE.MeshBasicMaterial({
-        color: '#FFD700',
+        color: node.color || '#888888',
         transparent: true,
-        opacity: 0.2,
+        opacity: glowOpacity,
       });
       const glow = new THREE.Mesh(glowGeometry, glowMaterial);
       group.add(glow);
     }
 
+    // Bridge nodes: additional gold glow
+    if (node.isBridge) {
+      const bridgeGlowSize = bloomEnabled ? nodeSize * glowSize * 1.2 : nodeSize * 1.4;
+      const bridgeOpacity = bloomEnabled ? 0.15 + bloomIntensity * 0.15 : 0.2;
+      const bridgeGlowGeometry = new THREE.SphereGeometry(bridgeGlowSize, 16, 16);
+      const bridgeGlowMaterial = new THREE.MeshBasicMaterial({
+        color: '#FFD700',
+        transparent: true,
+        opacity: bridgeOpacity,
+      });
+      const bridgeGlow = new THREE.Mesh(bridgeGlowGeometry, bridgeGlowMaterial);
+      group.add(bridgeGlow);
+    }
+
     // Highlight ring for selected nodes
     if (node.isHighlighted) {
-      const ringGeometry = new THREE.RingGeometry((node.val || 5) * 1.3, (node.val || 5) * 1.5, 32);
+      const ringSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.3;
+      const ringGeometry = new THREE.RingGeometry(ringSize, ringSize + nodeSize * 0.2, 32);
+      const ringOpacity = bloomEnabled ? 0.4 + bloomIntensity * 0.3 : 0.6;
       const ringMaterial = new THREE.MeshBasicMaterial({
         color: '#FFD700',
         transparent: true,
-        opacity: 0.6,
+        opacity: ringOpacity,
         side: THREE.DoubleSide,
       });
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
@@ -300,7 +335,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     return group;
-  }, [hoveredNode]);
+  }, [hoveredNode, bloomEnabled, bloomIntensity, glowSize]);
 
   // Link width based on weight
   const linkWidth = useCallback((linkData: unknown) => {

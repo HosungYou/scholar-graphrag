@@ -28,6 +28,8 @@ import {
   Scissors,
   BarChart3,
   PieChart,
+  Sun,
+  SunDim,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -79,6 +81,7 @@ export function KnowledgeGraph3D({
     fetchCentrality,
     getVisiblePercentage,
     toggleParticles,
+    toggleBloom,
   } = useGraph3DStore();
 
   // Fetch data on mount
@@ -278,6 +281,9 @@ export function KnowledgeGraph3D({
           onBackgroundClick={handleBackgroundClick}
           showParticles={view3D.showParticles}
           particleSpeed={view3D.particleSpeed}
+          bloomEnabled={view3D.bloom.enabled}
+          bloomIntensity={view3D.bloom.intensity}
+          glowSize={view3D.bloom.glowSize}
         />
       ) : (
         <TopicViewMode
@@ -323,6 +329,23 @@ export function KnowledgeGraph3D({
               <Zap className="w-4 h-4" />
             ) : (
               <ZapOff className="w-4 h-4" />
+            )}
+          </button>
+
+          {/* Bloom/Glow Toggle */}
+          <button
+            onClick={toggleBloom}
+            className={`p-2 transition-colors ${
+              view3D.bloom.enabled
+                ? 'bg-yellow-500/10 text-yellow-500'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={view3D.bloom.enabled ? 'Disable glow effect' : 'Enable glow effect'}
+          >
+            {view3D.bloom.enabled ? (
+              <Sun className="w-4 h-4" />
+            ) : (
+              <SunDim className="w-4 h-4" />
             )}
           </button>
 

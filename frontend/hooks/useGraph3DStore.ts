@@ -33,6 +33,15 @@ export interface SlicingConfig {
 }
 
 /**
+ * Bloom/Glow configuration
+ */
+export interface BloomConfig {
+  enabled: boolean;
+  intensity: number;      // 0.0 - 1.0
+  glowSize: number;       // Outer glow sphere multiplier (1.0 - 2.0)
+}
+
+/**
  * 3D View state
  */
 export interface View3DState {
@@ -42,6 +51,7 @@ export interface View3DState {
   backgroundColor: string;
   lodEnabled: boolean;
   currentZoom: number;
+  bloom: BloomConfig;
 }
 
 interface Graph3DStore {
@@ -69,6 +79,9 @@ interface Graph3DStore {
   setBackgroundColor: (color: string) => void;
   toggleLOD: () => void;
   setCurrentZoom: (zoom: number) => void;
+  toggleBloom: () => void;
+  setBloomIntensity: (intensity: number) => void;
+  setGlowSize: (size: number) => void;
 
   // Slicing Actions
   setSliceCount: (count: number) => void;
@@ -96,6 +109,11 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
     backgroundColor: '#0d1117',
     lodEnabled: true,
     currentZoom: 1.0,
+    bloom: {
+      enabled: false,
+      intensity: 0.5,
+      glowSize: 1.3,
+    },
   },
   lodConfig: DEFAULT_LOD_CONFIG,
 
@@ -150,6 +168,34 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
   setCurrentZoom: (zoom) => {
     set(state => ({
       view3D: { ...state.view3D, currentZoom: zoom },
+    }));
+  },
+
+  // Bloom Actions
+  toggleBloom: () => {
+    set(state => ({
+      view3D: {
+        ...state.view3D,
+        bloom: { ...state.view3D.bloom, enabled: !state.view3D.bloom.enabled },
+      },
+    }));
+  },
+
+  setBloomIntensity: (intensity) => {
+    set(state => ({
+      view3D: {
+        ...state.view3D,
+        bloom: { ...state.view3D.bloom, intensity: Math.max(0, Math.min(1, intensity)) },
+      },
+    }));
+  },
+
+  setGlowSize: (size) => {
+    set(state => ({
+      view3D: {
+        ...state.view3D,
+        bloom: { ...state.view3D.bloom, glowSize: Math.max(1, Math.min(2, size)) },
+      },
     }));
   },
 
