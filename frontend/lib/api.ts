@@ -20,7 +20,14 @@ import type {
 } from '@/types';
 import { getSession } from './supabase';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// In production (Vercel), use relative URL to leverage Vercel's rewrite rules
+// This avoids CORS issues by proxying through Vercel
+// In development, use localhost:8000
+const API_URL = process.env.NEXT_PUBLIC_API_URL || (
+  typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? '' // Production: use relative URLs (Vercel proxy)
+    : 'http://localhost:8000' // Development: direct to local backend
+);
 
 class ApiClient {
   private baseUrl: string;
