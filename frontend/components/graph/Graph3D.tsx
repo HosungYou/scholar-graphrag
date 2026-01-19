@@ -157,6 +157,67 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return map;
   }, [centralityMetrics]);
 
+  // Calculate top 20% centrality threshold for label display
+  const labelCentralityThreshold = useMemo(() => {
+    if (centralityMetrics.length === 0) {
+      // No centrality data - show labels for all nodes
+      return 0;
+    }
+    const sortedCentralities = [...centralityMetrics]
+      .map(m => m.betweenness_centrality)
+      .sort((a, b) => b - a);
+    const top20Index = Math.floor(sortedCentralities.length * 0.2);
+    return sortedCentralities[top20Index] || 0;
+  }, [centralityMetrics]);
+
+  // Helper function: Create text sprite for node labels
+  const createTextSprite = useCallback((text: string, color: string, fontSize: number = 14) => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+
+    // Set canvas size for high resolution
+    const scale = 2;
+    canvas.width = 256 * scale;
+    canvas.height = 64 * scale;
+    context.scale(scale, scale);
+
+    // Text styling
+    context.font = `bold ${fontSize}px Arial, sans-serif`;
+    context.fillStyle = color;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+
+    // Background for readability
+    const textWidth = context.measureText(text).width;
+    const padding = 8;
+    const bgX = (canvas.width / scale - textWidth) / 2 - padding;
+    const bgWidth = textWidth + padding * 2;
+
+    context.fillStyle = 'rgba(13, 17, 23, 0.85)';
+    context.roundRect(bgX, 12, bgWidth, 40, 4);
+    context.fill();
+
+    // Draw text
+    context.fillStyle = color;
+    context.fillText(text, canvas.width / scale / 2, canvas.height / scale / 2);
+
+    // Create sprite
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const spriteMaterial = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+    });
+
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(40, 10, 1);
+
+    return sprite;
+  }, []);
+
   // Build highlighted sets for O(1) lookup
   const highlightedNodeSet = useMemo(() => new Set(highlightedNodes), [highlightedNodes]);
   const highlightedEdgeSet = useMemo(() => new Set(highlightedEdges), [highlightedEdges]);
@@ -334,8 +395,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       group.add(ring);
     }
 
+    // Add persistent text label for top 20% centrality nodes
+    const nodeCentrality = node.centrality || 0;
+    const shouldShowLabel = nodeCentrality >= labelCentralityThreshold && node.name;
+
+    if (shouldShowLabel) {
+      // Truncate long names
+      const displayName = node.name.length > 20
+        ? node.name.substring(0, 17) + '...'
+        : node.name;
+
+      const labelColor = node.isHighlighted ? '#FFD700' : '#FFFFFF';
+      const labelSprite = createTextSprite(displayName, labelColor, 14);
+
+      if (labelSprite) {
+        // Position label above the node
+        labelSprite.position.set(0, nodeSize + 8, 0);
+        group.add(labelSprite);
+      }
+    }
+
     return group;
-  }, [hoveredNode, bloomEnabled, bloomIntensity, glowSize]);
+  }, [hoveredNode, bloomEnabled, bloomIntensity, glowSize, labelCentralityThreshold, createTextSprite]);
 
   // Link width based on weight
   const linkWidth = useCallback((linkData: unknown) => {
@@ -625,10 +706,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
         onBackgroundClick={handleBackgroundClick}
-        // Force simulation parameters
+        // Force simulation parameters (optimized for fast stabilization)
         cooldownTicks={100}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.3}
+        d3AlphaDecay={0.05}
+        d3VelocityDecay={0.7}
         // Performance optimizations
         warmupTicks={50}
         onEngineStop={() => console.log('Force simulation stabilized')}
