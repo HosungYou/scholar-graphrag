@@ -18,7 +18,7 @@ import {
   Check,
   Hexagon,
 } from 'lucide-react';
-import type { StructuralGap, ConceptCluster } from '@/types';
+import type { StructuralGap, ConceptCluster, GraphEntity } from '@/types';
 
 /* ============================================================
    GapPanel - VS Design Diverge Style
@@ -43,6 +43,7 @@ interface GapPanelProps {
   projectId: string;
   gaps: StructuralGap[];
   clusters: ConceptCluster[];
+  nodes?: GraphEntity[];  // For mapping bridge candidate UUIDs to names
   onGapSelect: (gap: StructuralGap) => void;
   onHighlightNodes: (nodeIds: string[]) => void;
   onClearHighlights: () => void;
@@ -57,6 +58,7 @@ export function GapPanel({
   projectId,
   gaps,
   clusters,
+  nodes = [],
   onGapSelect,
   onHighlightNodes,
   onClearHighlights,
@@ -89,6 +91,12 @@ export function GapPanel({
   const getClusterColor = useCallback((clusterId: number) => {
     return clusterColors[clusterId % clusterColors.length];
   }, []);
+
+  // Get node name from UUID (for bridge candidates)
+  const getNodeName = useCallback((nodeId: string): string => {
+    const node = nodes.find(n => n.id === nodeId);
+    return node?.name || nodeId.slice(0, 8) + '...';  // Fallback to truncated UUID
+  }, [nodes]);
 
   // Handle gap click
   const handleGapClick = useCallback((gap: StructuralGap) => {
@@ -314,8 +322,9 @@ export function GapPanel({
                                 <span
                                   key={idx}
                                   className="font-mono text-xs px-2 py-1 bg-accent-amber/10 text-accent-amber border border-accent-amber/30"
+                                  title={candidate}  // Show full UUID on hover
                                 >
-                                  {candidate}
+                                  {getNodeName(candidate)}
                                 </span>
                               ))}
                             </div>

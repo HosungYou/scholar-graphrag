@@ -128,7 +128,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   onNodeClick,
   onNodeHover,
   onBackgroundClick,
-  showParticles = true,
+  showParticles = false,  // Disabled by default - particles have no academic meaning in knowledge graphs
   particleSpeed = 0.005,
   showGhostEdges = false,
   potentialEdges = [],

@@ -405,6 +405,7 @@ function KnowledgeGraphInner({
           projectId={projectId}
           gaps={gaps}
           clusters={clusters}
+          nodes={getFilteredData()?.nodes || []}
           onGapSelect={handleGapSelect}
           onHighlightNodes={handleGapHighlight}
           onClearHighlights={handleClearGapHighlights}

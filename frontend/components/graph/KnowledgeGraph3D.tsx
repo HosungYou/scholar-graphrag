@@ -465,6 +465,7 @@ export function KnowledgeGraph3D({
           projectId={projectId}
           gaps={gaps}
           clusters={clusters}
+          nodes={displayData.nodes}
           onGapSelect={handleGapSelect}
           onHighlightNodes={handleGapHighlight}
           onClearHighlights={handleClearGapHighlights}
