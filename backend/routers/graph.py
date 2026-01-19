@@ -1574,3 +1574,82 @@ async def recompute_clusters(
     except Exception as e:
         logger.error(f"Failed to recompute clusters: {e}")
         raise HTTPException(status_code=500, detail="Failed to recompute clusters")
+
+
+@router.post("/rebuild/{project_id}")
+async def rebuild_embeddings_and_relationships(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Rebuild embeddings and relationships for an existing project.
+
+    This is useful when:
+    - The original import failed to create embeddings (missing API key)
+    - You want to regenerate relationships with different parameters
+    - Embeddings need to be updated after entity changes
+
+    Requires authentication in production.
+    """
+    try:
+        # Verify project access
+        await verify_project_access(database, project_id, current_user, "edit")
+
+        graph_store = GraphStore(database)
+
+        # Step 1: Create embeddings for entities without them
+        logger.info(f"Creating embeddings for project {project_id}")
+        embeddings_created = await graph_store.create_embeddings(str(project_id))
+        logger.info(f"Created {embeddings_created} embeddings")
+
+        if embeddings_created == 0:
+            # Check if it's because no entities need embeddings or API key issue
+            entity_count = await database.fetchval(
+                "SELECT COUNT(*) FROM entities WHERE project_id = $1",
+                project_id,
+            )
+            entities_with_embeddings = await database.fetchval(
+                "SELECT COUNT(*) FROM entities WHERE project_id = $1 AND embedding IS NOT NULL",
+                project_id,
+            )
+
+            if entity_count == 0:
+                return {
+                    "status": "warning",
+                    "message": "No entities found in project",
+                    "embeddings_created": 0,
+                    "relationships_created": 0,
+                }
+            elif entities_with_embeddings == entity_count:
+                logger.info("All entities already have embeddings")
+            else:
+                # Some entities exist but no embeddings created - likely API key issue
+                return {
+                    "status": "warning",
+                    "message": "No embeddings created. Check COHERE_API_KEY configuration.",
+                    "entities_count": entity_count,
+                    "embeddings_created": 0,
+                    "relationships_created": 0,
+                }
+
+        # Step 2: Build relationships
+        logger.info(f"Building relationships for project {project_id}")
+        relationships_created = await graph_store.build_concept_relationships(str(project_id))
+        logger.info(f"Created {relationships_created} relationships")
+
+        return {
+            "status": "success",
+            "message": f"Rebuilt {embeddings_created} embeddings and {relationships_created} relationships",
+            "embeddings_created": embeddings_created,
+            "relationships_created": relationships_created,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to rebuild embeddings/relationships: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to rebuild: {str(e)}"
+        )
