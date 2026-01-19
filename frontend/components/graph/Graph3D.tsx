@@ -198,8 +198,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, [nodes, edges, clusterColorMap, centralityMap, highlightedNodeSet, highlightedEdgeSet]);
 
   // Custom node rendering with glow effect
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nodeThreeObject = useCallback((nodeData: any) => {
+  const nodeThreeObject = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode;
     const group = new THREE.Group();
 
@@ -245,16 +244,14 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, [hoveredNode]);
 
   // Link width based on weight
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const linkWidth = useCallback((linkData: any) => {
+  const linkWidth = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
     const baseWidth = Math.max(0.3, (link.weight || 1) * 0.5);
     return link.isHighlighted ? baseWidth * 2 : baseWidth;
   }, []);
 
   // Link color
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const linkColor = useCallback((linkData: any) => {
+  const linkColor = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
     if (link.isHighlighted) {
       return 'rgba(255, 215, 0, 0.8)'; // Gold
@@ -263,8 +260,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, []);
 
   // Node click handler
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleNodeClick = useCallback((nodeData: any) => {
+  const handleNodeClick = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode;
     if (onNodeClick) {
       const originalNode = nodes.find(n => n.id === node.id);
@@ -285,8 +281,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, [nodes, onNodeClick]);
 
   // Node hover handler
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleNodeHover = useCallback((nodeData: any) => {
+  const handleNodeHover = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode | null;
     setHoveredNode(node?.id || null);
     if (onNodeHover) {
