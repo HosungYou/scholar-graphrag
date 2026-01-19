@@ -309,8 +309,35 @@ Production debugging session: 2026-01-19
 
 ---
 
-## Next Steps
+## Additional Feature: Resizable Chat Panel
 
-- Fix LLM chat panel width (Phase 7 - UI Polish)
-- Add resizable panel with drag handle
-- Add collapsible panel toggle button
+**Commit**: `79d4b88`
+
+Added in follow-up to improve user experience:
+
+### Features Added
+
+1. **Resizable Chat Panel**
+   - Drag handle between chat and graph panels
+   - Min width: 320px, Max width: 800px (or 70% of container)
+   - Width persisted in localStorage
+
+2. **Collapsible Chat Panel**
+   - Collapse button in panel header
+   - Vertical "Chat" label shown when collapsed
+   - Click to expand panel
+   - Collapse state persisted in localStorage
+
+### Files Added/Modified
+
+| File | Description |
+|------|-------------|
+| `frontend/components/ui/ResizeHandle.tsx` | NEW - Draggable resize handle component |
+| `frontend/components/ui/index.ts` | Export ResizeHandle |
+| `frontend/app/projects/[id]/page.tsx` | Panel state, toggle button, resize integration |
+
+### Usage
+
+- **Resize**: Drag the grip handle between panels
+- **Collapse**: Click the panel close icon in header
+- **Expand**: Click the collapsed "Chat" tab on left edge
