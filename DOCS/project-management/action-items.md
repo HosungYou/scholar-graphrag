@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-20 (Security Fixes from Code Review)
+> **마지막 업데이트**: 2026-01-20 (BUG-013: semantic_chunker Any import fix)
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 10 | 10 | 0 | 0 |
+| 🔴 High | 11 | 11 | 0 | 0 |
 | 🟡 Medium | 11 | 9 | 0 | 2 |
 | 🟢 Low | 5 | 3 | 0 | 2 |
-| **Total** | **26** | **22** | **0** | **4** |
+| **Total** | **27** | **23** | **0** | **4** |
 
 ---
 
@@ -82,6 +82,39 @@
 ---
 
 ## 📝 Completed Items Archive
+
+### BUG-013: semantic_chunker `Any` 타입 임포트 누락
+- **Source**: Production Error Log 2026-01-20
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Priority**: 🔴 High (Production 500 Error)
+- **Files**:
+  - `backend/importers/semantic_chunker.py:15` - typing import
+  - `backend/importers/semantic_chunker.py:461` - `Dict[str, Any]` 반환 타입
+- **Description**: `/api/import/zotero/validate` 엔드포인트 호출 시 500 Internal Server Error 발생
+- **Error Message**:
+  ```
+  NameError: name 'Any' is not defined
+  File "/app/importers/semantic_chunker.py", line 461, in SemanticChunker
+  ```
+- **Root Cause**: `typing` 모듈에서 `Any`가 임포트되지 않았으나 `Dict[str, Any]` 타입 힌트에서 사용됨
+- **Fix**:
+  ```python
+  # Before
+  from typing import List, Optional, Dict, Tuple
+  # After
+  from typing import List, Optional, Dict, Tuple, Any
+  ```
+- **Acceptance Criteria**:
+  - [x] `Any` 타입 임포트 추가
+  - [x] `/api/import/zotero/validate` 정상 작동 확인
+- **Created**: 2026-01-20
+- **Completed**: 2026-01-20
+- **Commit**: `d2dd6d6`
+- **Verified By**: Claude Code
+- **Lesson Learned**: 타입 힌트 추가 시 해당 타입이 임포트되었는지 확인 필요
+
+---
 
 ### SEC-007: CORS 보안 강화
 - **Source**: Code Review (Codex) 2026-01-20
