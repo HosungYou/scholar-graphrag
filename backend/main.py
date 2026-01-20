@@ -78,12 +78,33 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"   Rate Limiter: {'Redis' if settings.redis_rate_limit_enabled and settings.redis_url else 'in-memory'}")
 
-    # Initialize Supabase
-    if settings.supabase_url and settings.supabase_anon_key:
+    # Initialize Supabase Auth
+    # SEC-012: Validate auth configuration consistency
+    supabase_configured = bool(settings.supabase_url and settings.supabase_anon_key)
+
+    if supabase_configured:
         supabase_client.initialize(settings.supabase_url, settings.supabase_anon_key)
         logger.info("   Supabase Auth: configured")
     else:
-        logger.warning("   Supabase Auth: NOT configured (running without auth)")
+        # Check for configuration mismatch: require_auth=true but Supabase not configured
+        if settings.require_auth:
+            if settings.environment in ("production", "staging"):
+                # Production: fail-fast - can't require auth without Supabase
+                logger.critical(
+                    "FATAL: require_auth=true but Supabase is not configured. "
+                    "Set SUPABASE_URL and SUPABASE_ANON_KEY, or set REQUIRE_AUTH=false."
+                )
+                raise RuntimeError(
+                    f"Authentication required but Supabase not configured in {settings.environment}"
+                )
+            else:
+                # Development: warn but auto-disable auth
+                logger.warning(
+                    "   Supabase Auth: NOT configured but require_auth=true. "
+                    "Auto-disabling auth for development. Set REQUIRE_AUTH=false to silence this warning."
+                )
+        else:
+            logger.warning("   Supabase Auth: NOT configured (running without auth)")
 
     # Initialize database connection
     # ARCH-001: Fail-fast in production when DB connection fails

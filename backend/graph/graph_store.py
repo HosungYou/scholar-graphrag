@@ -620,25 +620,44 @@ class GraphStore:
                 input_type="search_document",
             )
 
-            # Update entities with embeddings
-            updated_count = 0
-            for i, (entity_id, embedding) in enumerate(zip(entity_ids, embeddings)):
-                try:
-                    # Convert embedding list to string format for pgvector
-                    # asyncpg requires string format: '[0.1, 0.2, ...]'
-                    embedding_str = "[" + ",".join(map(str, embedding)) + "]"
-                    await self.db.execute(
-                        """
-                        UPDATE entities
-                        SET embedding = $1::vector, updated_at = NOW()
-                        WHERE id = $2
-                        """,
-                        embedding_str,
-                        entity_id,
-                    )
-                    updated_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to update embedding for entity {entity_id}: {e}")
+            # PERF-008: Batch update entities with embeddings using executemany
+            # Prepare batch data: (embedding_str, entity_id) tuples
+            batch_data = []
+            for entity_id, embedding in zip(entity_ids, embeddings):
+                # Convert embedding list to string format for pgvector
+                # asyncpg requires string format: '[0.1, 0.2, ...]'
+                embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+                batch_data.append((embedding_str, entity_id))
+
+            try:
+                # Batch update using executemany for better performance
+                await self.db.executemany(
+                    """
+                    UPDATE entities
+                    SET embedding = $1::vector, updated_at = NOW()
+                    WHERE id = $2
+                    """,
+                    batch_data,
+                )
+                updated_count = len(batch_data)
+            except Exception as e:
+                logger.error(f"Batch embedding update failed: {e}")
+                # Fallback to individual updates on batch failure
+                updated_count = 0
+                for embedding_str, entity_id in batch_data:
+                    try:
+                        await self.db.execute(
+                            """
+                            UPDATE entities
+                            SET embedding = $1::vector, updated_at = NOW()
+                            WHERE id = $2
+                            """,
+                            embedding_str,
+                            entity_id,
+                        )
+                        updated_count += 1
+                    except Exception as inner_e:
+                        logger.error(f"Failed to update embedding for entity {entity_id}: {inner_e}")
 
             logger.info(f"Successfully created embeddings for {updated_count}/{len(rows)} entities")
             return updated_count
@@ -1307,18 +1326,35 @@ class GraphStore:
                         texts, input_type="search_document"
                     )
                 
-                # Update each chunk with its embedding
-                for chunk_id, embedding in zip(ids, embeddings):
-                    await self.db.execute(
+                # PERF-008: Batch update chunks with embeddings using executemany
+                batch_data = [(emb, cid) for cid, emb in zip(ids, embeddings)]
+                try:
+                    await self.db.executemany(
                         """
                         UPDATE semantic_chunks
                         SET embedding = $1::vector
                         WHERE id = $2
                         """,
-                        embedding,
-                        chunk_id,
+                        batch_data,
                     )
-                    embeddings_created += 1
+                    embeddings_created += len(batch_data)
+                except Exception as batch_e:
+                    logger.warning(f"Batch chunk embedding update failed: {batch_e}, falling back to individual")
+                    # Fallback to individual updates
+                    for embedding, chunk_id in batch_data:
+                        try:
+                            await self.db.execute(
+                                """
+                                UPDATE semantic_chunks
+                                SET embedding = $1::vector
+                                WHERE id = $2
+                                """,
+                                embedding,
+                                chunk_id,
+                            )
+                            embeddings_created += 1
+                        except Exception as inner_e:
+                            logger.error(f"Failed to update embedding for chunk {chunk_id}: {inner_e}")
                     
             except Exception as e:
                 logger.error(f"Failed to create chunk embeddings: {e}")
