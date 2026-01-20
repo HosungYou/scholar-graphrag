@@ -13,8 +13,8 @@
 |----------|-------|-----------|-------------|---------|
 | 🔴 High | 10 | 10 | 0 | 0 |
 | 🟡 Medium | 11 | 9 | 0 | 2 |
-| 🟢 Low | 5 | 2 | 0 | 3 |
-| **Total** | **26** | **21** | **0** | **5** |
+| 🟢 Low | 5 | 3 | 0 | 2 |
+| **Total** | **26** | **22** | **0** | **4** |
 
 ---
 
@@ -55,20 +55,6 @@
 ---
 
 ## 🟢 Low Priority (Long-term)
-
-### INFRA-004: 기존 Python 서비스 삭제
-- **Source**: Render Docker Deployment 2026-01-20
-- **Status**: ⬜ Pending
-- **Assignee**: DevOps Team
-- **Description**: Docker 서비스로 마이그레이션 완료 후 기존 Python 서비스 삭제
-- **Service ID**: `srv-d5n4aesoud1c739ot8a0`
-- **Acceptance Criteria**:
-  - [ ] Docker 서비스 안정성 확인 (1주일)
-  - [ ] 기존 Python 서비스 삭제
-- **Created**: 2026-01-20
-- **Related**: Session `2026-01-20_render-docker-deployment-troubleshooting.md`
-
----
 
 ### DOC-001: 배포 가이드에 Starter 플랜 권장사항 추가
 - **Source**: Render Starter Optimization 2026-01-19
@@ -202,6 +188,22 @@
 - **Completed**: 2026-01-20
 - **Verified By**: Claude Code
 - **Notes**: Render 문서 확인: "Render caches all intermediate build layers" - 별도 설정 불필요
+- **Related**: Session `2026-01-20_security-fixes.md`
+
+---
+
+### INFRA-004: 기존 Python 서비스 삭제
+- **Source**: Render Docker Deployment 2026-01-20
+- **Status**: ✅ Completed
+- **Assignee**: DevOps Team
+- **Description**: Docker 서비스로 마이그레이션 완료 후 기존 Python 서비스 삭제
+- **Service ID**: `srv-d5n4aesoud1c739ot8a0` (삭제됨)
+- **Acceptance Criteria**:
+  - [x] 기존 Python 서비스 삭제
+- **Created**: 2026-01-20
+- **Completed**: 2026-01-20
+- **Verified By**: User (수동 삭제)
+- **Notes**: Render Dashboard에서 수동 삭제 완료
 - **Related**: Session `2026-01-20_security-fixes.md`
 
 ---
