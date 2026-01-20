@@ -48,17 +48,21 @@ class Database:
 
     async def connect(
         self,
-        min_size: int = 5,
-        max_size: int = 20,
-        command_timeout: float = 60.0,
+        min_size: int = 2,
+        max_size: int = 5,
+        command_timeout: float = 30.0,
     ) -> None:
         """
         Create connection pool.
 
         Args:
-            min_size: Minimum pool connections
-            max_size: Maximum pool connections
+            min_size: Minimum pool connections (reduced for free tier DB limits)
+            max_size: Maximum pool connections (reduced for free tier DB limits)
             command_timeout: Default query timeout in seconds
+
+        Note:
+            Free tier databases (Supabase, Render) have ~20 connection limits.
+            Keep pool small to avoid exhausting connections.
         """
         if self._pool is not None:
             logger.warning("Database already connected")
@@ -70,6 +74,8 @@ class Database:
                 min_size=min_size,
                 max_size=max_size,
                 command_timeout=command_timeout,
+                # Connection health settings for free tier stability
+                max_inactive_connection_lifetime=300.0,  # Close idle connections after 5 min
             )
             logger.info(f"Database connected (pool: {min_size}-{max_size})")
         except Exception as e:

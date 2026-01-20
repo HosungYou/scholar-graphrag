@@ -20,14 +20,24 @@ import type {
 } from '@/types';
 import { getSession } from './supabase';
 
-// In production (Vercel), use relative URL to leverage Vercel's rewrite rules
-// This avoids CORS issues by proxying through Vercel
-// In development, use localhost:8000
+// API URL Configuration:
+// 1. Use NEXT_PUBLIC_API_URL if explicitly set (recommended for production)
+// 2. In production without env var: hardcode Render backend URL (avoids empty URL issues)
+// 3. In development: use localhost:8000
 const API_URL = process.env.NEXT_PUBLIC_API_URL || (
   typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-    ? '' // Production: use relative URLs (Vercel proxy)
+    ? 'https://scholarag-graph-api.onrender.com' // Production: direct to Render backend
     : 'http://localhost:8000' // Development: direct to local backend
 );
+
+// Debug logging for API configuration (only in browser)
+if (typeof window !== 'undefined') {
+  console.log('[API] Configuration:', {
+    baseUrl: API_URL,
+    hasEnvVar: !!process.env.NEXT_PUBLIC_API_URL,
+    hostname: window.location.hostname,
+  });
+}
 
 class ApiClient {
   private baseUrl: string;
@@ -54,30 +64,73 @@ class ApiClient {
     return {};
   }
 
+  /**
+   * Make API request with automatic retry for transient errors (503).
+   *
+   * Render Starter plan has zero downtime (no cold starts), but may have
+   * transient 503 errors due to DB connection pool exhaustion.
+   * Fast retry with short delays handles these gracefully.
+   */
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    retries: number = 3
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
     // Get auth headers
     const authHeaders = await this.getAuthHeaders();
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-        ...options.headers,
-      },
-    });
+    let lastError: Error | null = null;
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `API Error: ${response.status}`);
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders,
+            ...options.headers,
+          },
+        });
+
+        // Retry on 503 (Service Unavailable) - transient DB connection issues
+        if (response.status === 503 && attempt < retries) {
+          console.warn(`[API] 503 on ${endpoint}, retrying (${attempt}/${retries})...`);
+          await this.delay(500 * attempt); // Fast backoff: 500ms, 1s, 1.5s
+          continue;
+        }
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.detail || `API Error: ${response.status}`);
+        }
+
+        return response.json();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Retry on network errors or 503 (DB connection issues)
+        if (attempt < retries && (
+          lastError.message.includes('fetch') ||
+          lastError.message.includes('network') ||
+          lastError.message.includes('503') ||
+          lastError.message.includes('Database temporarily')
+        )) {
+          console.warn(`[API] Error on ${endpoint}, retrying (${attempt}/${retries}):`, lastError.message);
+          await this.delay(500 * attempt);
+          continue;
+        }
+
+        throw lastError;
+      }
     }
 
-    return response.json();
+    throw lastError || new Error('Request failed after retries');
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // Projects

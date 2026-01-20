@@ -10,9 +10,18 @@ import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Validate configuration
+// Validate configuration with detailed error messages
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase credentials not configured. Auth features will be disabled.');
+  console.error('❌ Supabase credentials not configured!');
+  console.error('   Missing environment variables:');
+  if (!supabaseUrl) console.error('   - NEXT_PUBLIC_SUPABASE_URL');
+  if (!supabaseAnonKey) console.error('   - NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  console.error('');
+  console.error('   To fix this:');
+  console.error('   1. For local development: Create frontend/.env.local with these values');
+  console.error('   2. For Vercel: Add environment variables in Project Settings → Environment Variables');
+  console.error('');
+  console.warn('   Auth features will be disabled until credentials are configured.');
 }
 
 // Create Supabase client

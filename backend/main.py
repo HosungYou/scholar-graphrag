@@ -8,7 +8,7 @@ knowledge graphs built from ScholaRAG literature review data.
 import logging
 import re
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
@@ -45,8 +45,23 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("ScholaRAG_Graph Backend starting...")
+    logger.info(f"   Environment: {settings.environment}")
     logger.info(f"   Database: {_sanitize_database_url(settings.database_url)}")
-    logger.info(f"   Default LLM: {settings.default_llm_provider}/{settings.default_llm_model}")
+
+    # Validate required settings
+    missing_settings = settings.validate_required_settings()
+    if missing_settings:
+        for missing in missing_settings:
+            logger.warning(f"   ⚠️ Missing: {missing}")
+        if settings.environment == "production":
+            logger.critical("   ❌ Cannot start in production with missing required settings!")
+            raise RuntimeError(f"Missing required settings: {', '.join(missing_settings)}")
+
+    # Get available LLM provider (may differ from default if key missing)
+    available_provider = settings.get_available_llm_provider()
+    if available_provider != settings.default_llm_provider:
+        logger.warning(f"   ⚠️ DEFAULT_LLM_PROVIDER={settings.default_llm_provider} but using {available_provider} (key available)")
+    logger.info(f"   LLM Provider: {available_provider}/{settings.default_llm_model}")
 
     # Initialize LLM cache
     init_llm_cache(
@@ -145,28 +160,55 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check."""
+    """
+    Detailed health check.
+
+    Returns 503 Service Unavailable if database is not connected.
+    This helps load balancers and monitoring systems detect unhealthy instances.
+    """
     db_status = "disconnected"
     pgvector_status = "unavailable"
+    db_error = None
 
     try:
         if await db.health_check():
             db_status = "connected"
         if await db.check_pgvector():
             pgvector_status = "available"
-    except Exception:
-        pass
+    except Exception as e:
+        db_error = str(e)
+        logger.error(f"Health check failed - Database error: {e}")
+
+    # Check LLM configuration
+    available_provider = settings.get_available_llm_provider()
+    llm_configured = bool(getattr(settings, f"{available_provider}_api_key", None))
 
     # Get LLM cache stats
     cache_stats = get_llm_cache().get_stats()
 
-    return {
-        "status": "healthy",
+    # Determine overall health status
+    is_healthy = db_status == "connected"
+    status = "healthy" if is_healthy else "unhealthy"
+
+    response_data = {
+        "status": status,
         "database": db_status,
         "pgvector": pgvector_status,
-        "llm_provider": settings.default_llm_provider,
+        "llm_provider": available_provider,
+        "llm_configured": llm_configured,
         "llm_cache": cache_stats,
+        "environment": settings.environment,
     }
+
+    # Return 503 if database is not connected
+    if not is_healthy:
+        response_data["error"] = db_error or "Database connection failed"
+        raise HTTPException(
+            status_code=503,
+            detail=response_data,
+        )
+
+    return response_data
 
 
 if __name__ == "__main__":

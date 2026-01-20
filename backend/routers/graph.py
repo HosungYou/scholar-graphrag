@@ -1427,9 +1427,14 @@ async def get_centrality(
             "top_bridges": top_bridges_with_names,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to compute centrality: {e}")
-        raise HTTPException(status_code=500, detail="Failed to compute centrality metrics")
+        logger.error(f"Failed to compute centrality metrics: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compute centrality metrics: {type(e).__name__}: {str(e)}"
+        )
 
 
 class GraphMetricsResponse(BaseModel):

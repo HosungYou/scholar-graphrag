@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1024  # Cohere v3 dimension
 
     # CORS - comma-separated list of allowed origins
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,https://scholarag-graph.vercel.app"
+    # Note: Vercel preview URLs are also allowed via regex in main.py
+    cors_origins: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,https://scholarag-graph.vercel.app,https://schola-rag-graph-hvippndzu-hosung-yous-projects.vercel.app"
     frontend_url: str = "http://localhost:3000"
 
     # Server
@@ -83,6 +84,62 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins into list."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def validate_required_settings(self) -> List[str]:
+        """
+        Validate required settings for production.
+        Returns list of missing/invalid setting names.
+        """
+        missing = []
+
+        # Database is always required
+        if not self.database_url or self.database_url == "postgresql://localhost:5432/scholarag_graph":
+            if self.environment == "production":
+                missing.append("DATABASE_URL")
+
+        # At least one LLM API key required
+        if not any([
+            self.anthropic_api_key,
+            self.openai_api_key,
+            self.google_api_key,
+            self.groq_api_key,
+        ]):
+            missing.append("LLM_API_KEY (ANTHROPIC/OPENAI/GOOGLE/GROQ 중 하나 필요)")
+
+        # Validate LLM provider matches available key
+        provider_key_map = {
+            "anthropic": self.anthropic_api_key,
+            "openai": self.openai_api_key,
+            "google": self.google_api_key,
+            "groq": self.groq_api_key,
+        }
+        if self.default_llm_provider and not provider_key_map.get(self.default_llm_provider):
+            missing.append(f"{self.default_llm_provider.upper()}_API_KEY (DEFAULT_LLM_PROVIDER={self.default_llm_provider}이지만 해당 API 키 없음)")
+
+        return missing
+
+    def get_available_llm_provider(self) -> str:
+        """
+        Get an available LLM provider based on configured API keys.
+        Returns the default provider if its key exists, otherwise falls back.
+        """
+        provider_key_map = {
+            "anthropic": self.anthropic_api_key,
+            "openai": self.openai_api_key,
+            "google": self.google_api_key,
+            "groq": self.groq_api_key,
+        }
+
+        # Check if default provider has key
+        if provider_key_map.get(self.default_llm_provider):
+            return self.default_llm_provider
+
+        # Fallback to any available provider
+        for provider, key in provider_key_map.items():
+            if key:
+                return provider
+
+        return self.default_llm_provider  # Return default even if no key (will fail at runtime)
 
 
 @lru_cache()

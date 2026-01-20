@@ -173,9 +173,12 @@ export function GapPanel({
       ) : (
         <>
           {/* Header */}
-          <button
+          <div
             onClick={() => setIsExpanded(!isExpanded)}
-            className="w-full flex items-center justify-between p-3 hover:bg-surface/5 transition-colors border-b border-ink/10 dark:border-paper/10 relative"
+            className="w-full flex items-center justify-between p-3 hover:bg-surface/5 transition-colors border-b border-ink/10 dark:border-paper/10 relative cursor-pointer"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === 'Enter' && setIsExpanded(!isExpanded)}
           >
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 flex items-center justify-center bg-accent-amber/10">
@@ -212,7 +215,7 @@ export function GapPanel({
                 <ChevronDown className="w-3 h-3 text-muted" />
               )}
             </div>
-          </button>
+          </div>
 
       {/* Content */}
       {isExpanded && (
