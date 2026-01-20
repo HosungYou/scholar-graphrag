@@ -18,10 +18,17 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy and install Python dependencies
+# Use requirements-base.txt for lightweight image (~200MB less without PyTorch)
+# Set ENABLE_SPECTER2=true to include SPECTER2 embeddings (adds ~700MB)
 WORKDIR /build
-COPY backend/requirements.txt .
+ARG ENABLE_SPECTER2=false
+COPY backend/requirements-base.txt .
+COPY backend/requirements-specter.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements-base.txt && \
+    if [ "$ENABLE_SPECTER2" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-specter.txt; \
+    fi
 
 # ===== Stage 2: Runtime =====
 FROM python:3.11-slim as runtime

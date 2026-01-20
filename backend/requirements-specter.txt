@@ -1,0 +1,3 @@
+# SPECTER2 Support (Optional - adds ~700MB to image)
+# Only include when ENABLE_SPECTER2=true
+sentence-transformers>=2.3.0,<4.0.0

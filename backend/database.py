@@ -82,8 +82,8 @@ class Database:
             )
             logger.info(f"Database connected (pool: {min_size}-{max_size})")
         except Exception as e:
-            # Don't log DSN or connection details in error
-            logger.error("Failed to connect to database (check DATABASE_URL configuration)")
+            # Log exception type and message for debugging (DSN is not logged)
+            logger.error(f"Failed to connect to database: {type(e).__name__}: {e}")
             raise RuntimeError("Database connection failed") from e
 
     async def disconnect(self) -> None:
