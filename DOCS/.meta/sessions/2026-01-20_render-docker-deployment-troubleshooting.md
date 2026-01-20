@@ -380,6 +380,72 @@ CORS error: scholarag-graph-api.onrender.com (deleted service)
 
 ---
 
+### Issue #7: Vercel Preview URL CORS 에러
+
+#### Symptom
+```
+CORS error: schola-rag-graph-hjzeqohk-hosung-yous-projects.vercel.app
+No 'Access-Control-Allow-Origin' header present
+```
+
+#### Root Cause Analysis
+1. Vercel Preview 배포는 동적 URL 생성 (`{project}-{hash}-{team}.vercel.app`)
+2. 정적 CORS origin 목록에 포함될 수 없음
+3. 기존 `allow_origin_regex`가 보안상 제거되어 있었음
+
+#### Resolution
+`main.py`에 프로젝트/팀 스코프 regex 패턴 추가:
+```python
+_vercel_preview_regex = r"^https://schola-rag-graph-[a-z0-9]+-hosung-yous-projects\.vercel\.app$"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=_vercel_preview_regex,
+    ...
+)
+```
+
+#### Commit
+- **Hash**: `ac11672`
+- **Message**: `fix(cors): add regex pattern for Vercel Preview URLs`
+
+#### Security Considerations
+- 광범위한 `*.vercel.app` 대신 **프로젝트/팀 스코프 패턴** 사용
+- `schola-rag-graph-*-hosung-yous-projects.vercel.app`만 허용
+- 무작위 Vercel 앱은 차단됨
+
+---
+
+### Issue #8: Rate Limiter 429 응답에 CORS 헤더 누락
+
+#### Symptom
+```
+429 Too Many Requests
+CORS error: No 'Access-Control-Allow-Origin' header present
+```
+
+Import 진행 중 status 폴링이 rate limit(5/min)에 걸리면:
+1. Rate limiter가 429 응답 직접 반환
+2. CORS middleware가 우회됨
+3. 브라우저에서 CORS 에러로 표시됨
+
+#### Root Cause Analysis
+`rate_limiter.py`에서 `JSONResponse`를 직접 반환하면 CORS middleware를 거치지 않음:
+```python
+# Line 330-342 (before)
+return JSONResponse(
+    status_code=429,
+    content={...},
+    headers={...},  # CORS 헤더 없음!
+)
+```
+
+#### Resolution
+1. **Rate limiter 429 응답에 CORS 헤더 추가**
+2. **`/api/import/status/*` 폴링 엔드포인트 rate limit 완화** (60/min)
+
+---
+
 ## Recommendations
 
 ### Immediate

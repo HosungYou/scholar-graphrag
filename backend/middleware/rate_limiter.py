@@ -4,13 +4,17 @@ Rate Limiter Middleware
 Multi-backend rate limiting for API endpoints to prevent abuse:
 - /api/auth/* - 10 requests per minute (brute-force prevention)
 - /api/chat/* - 30 requests per minute (DoS prevention)
+- /api/import/status/* - 60 requests per minute (polling allowed)
 - /api/import/* - 5 requests per minute (heavy operation protection)
 
 Supports:
 - In-memory storage (single instance, development)
 - Redis storage (multi-instance, production)
+
+Note: 429 responses include CORS headers to prevent browser CORS errors.
 """
 
+import re
 import time
 import logging
 from abc import ABC, abstractmethod
@@ -21,6 +25,37 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# CORS Configuration for Rate Limit Responses
+# ============================================================================
+
+# Allowed origins for CORS (must match main.py configuration)
+_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
+    "http://127.0.0.1:3000",
+    "https://schola-rag-graph.vercel.app",
+    "https://scholarag-graph.vercel.app",
+]
+
+# Vercel Preview URL regex pattern (project/team scoped)
+_VERCEL_PREVIEW_REGEX = re.compile(
+    r"^https://schola-rag-graph-[a-z0-9]+-hosung-yous-projects\.vercel\.app$"
+)
+
+
+def _is_allowed_origin(origin: Optional[str]) -> bool:
+    """Check if the origin is allowed for CORS."""
+    if not origin:
+        return False
+    if origin in _ALLOWED_ORIGINS:
+        return True
+    if _VERCEL_PREVIEW_REGEX.match(origin):
+        return True
+    return False
 
 
 # ============================================================================
@@ -239,10 +274,12 @@ class RateLimitConfig:
     """Rate limit configuration for different endpoint patterns."""
 
     # Format: (max_requests, window_seconds)
+    # NOTE: Order matters! More specific patterns should come first.
     LIMITS: Dict[str, Tuple[int, int]] = {
-        "/api/auth": (10, 60),      # 10 requests per minute
-        "/api/chat": (30, 60),      # 30 requests per minute
-        "/api/import": (5, 60),     # 5 requests per minute
+        "/api/import/status": (60, 60),  # 60 requests per minute (polling)
+        "/api/auth": (10, 60),           # 10 requests per minute
+        "/api/chat": (30, 60),           # 30 requests per minute
+        "/api/import": (10, 60),         # 10 requests per minute (increased from 5)
     }
 
     # Default limit for unmatched endpoints
@@ -327,18 +364,31 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
         if is_limited:
             logger.warning(f"Rate limit exceeded for {client_key} on {path}")
+
+            # Build response headers
+            headers = {
+                "Retry-After": str(window_seconds),
+                "X-RateLimit-Limit": str(max_requests),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(time.time()) + window_seconds),
+            }
+
+            # Add CORS headers to 429 response to prevent browser CORS errors
+            # Without these, the browser shows CORS error instead of 429
+            origin = request.headers.get("origin")
+            if _is_allowed_origin(origin):
+                headers["Access-Control-Allow-Origin"] = origin
+                headers["Access-Control-Allow-Credentials"] = "true"
+                headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+                headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Requested-With"
+
             return JSONResponse(
                 status_code=429,
                 content={
                     "detail": "Too many requests. Please try again later.",
                     "retry_after_seconds": window_seconds,
                 },
-                headers={
-                    "Retry-After": str(window_seconds),
-                    "X-RateLimit-Limit": str(max_requests),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(int(time.time()) + window_seconds),
-                },
+                headers=headers,
             )
 
         # Process request and add rate limit headers

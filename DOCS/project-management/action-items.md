@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-20 (BUG-013: semantic_chunker Any import fix)
+> **마지막 업데이트**: 2026-01-20 (BUG-014: Rate Limiter 429 CORS 헤더 누락)
 > **관리자**: Claude Code
 
 ---
@@ -82,6 +82,30 @@
 ---
 
 ## 📝 Completed Items Archive
+
+### BUG-014: Rate Limiter 429 응답에 CORS 헤더 누락
+- **Source**: Production Error 2026-01-20
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Priority**: 🔴 High (Production CORS Error)
+- **Files**:
+  - `backend/middleware/rate_limiter.py:330-342` - 429 응답 생성 로직
+- **Description**: Import 진행 중 status 폴링이 rate limit(5/min)에 걸리면 429 응답이 CORS 헤더 없이 반환되어 브라우저에서 CORS 에러로 표시됨
+- **Error Message**:
+  ```
+  429 Too Many Requests
+  CORS error: No 'Access-Control-Allow-Origin' header present
+  ```
+- **Root Cause**: `JSONResponse`를 직접 반환하면 CORS middleware를 우회함
+- **Resolution**:
+  1. Rate limiter 429 응답에 CORS 헤더 추가
+  2. `/api/import/status/*` 폴링 limit 완화 (60/min)
+  3. `/api/import/*` limit 증가 (5 → 10/min)
+- **Commit**: `TBD`
+- **Completed**: 2026-01-20
+- **Related**: Session `2026-01-20_render-docker-deployment-troubleshooting.md`
+
+---
 
 ### BUG-013: semantic_chunker `Any` 타입 임포트 누락
 - **Source**: Production Error Log 2026-01-20
