@@ -24,9 +24,10 @@ import { getSession } from './supabase';
 // 1. Use NEXT_PUBLIC_API_URL if explicitly set (recommended for production)
 // 2. In production without env var: hardcode Render backend URL (avoids empty URL issues)
 // 3. In development: use localhost:8000
+// NOTE: Updated 2026-01-20 - Docker service (scholarag-graph-docker) replaced Python service
 const API_URL = process.env.NEXT_PUBLIC_API_URL || (
   typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-    ? 'https://scholarag-graph-api.onrender.com' // Production: direct to Render backend
+    ? 'https://scholarag-graph-docker.onrender.com' // Production: Render Docker backend
     : 'http://localhost:8000' // Development: direct to local backend
 );
 

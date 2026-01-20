@@ -1,35 +1,27 @@
-# Render Blueprint for ScholaRAG_Graph
-# https://render.com/docs/blueprint-spec
+# ============================================================
+# ⚠️ DEPRECATED - DO NOT USE
+# ============================================================
+# This render.yaml is DEPRECATED as of 2026-01-20 (INFRA-004)
+#
+# The Python service (scholarag-graph-api) has been replaced by
+# Docker service (scholarag-graph-docker) managed via Render Dashboard.
+#
+# Current Production Architecture:
+# - Backend: scholarag-graph-docker (Docker, Render Dashboard)
+# - Frontend: schola-rag-graph.vercel.app (Vercel)
+# - Database: Supabase PostgreSQL + pgvector
+#
+# See CLAUDE.md for current deployment instructions.
+# ============================================================
 
-services:
-  # FastAPI Backend
-  - type: web
-    name: scholarag-graph-api
-    runtime: python
-    region: oregon
-    plan: starter
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
-      - key: ANTHROPIC_API_KEY
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: scholarag-graph-db
-          property: connectionString
-      - key: CORS_ORIGINS
-        value: "https://scholarag-graph.vercel.app,http://localhost:3000"
-    healthCheckPath: /health
-    autoDeploy: true
+# LEGACY CONFIG BELOW (kept for reference only)
+# services:
+#   - type: web
+#     name: scholarag-graph-api  # DELETED 2026-01-20
+#     runtime: python
+#     ...
 
-databases:
-  # PostgreSQL with pgvector
-  - name: scholarag-graph-db
-    region: oregon
-    plan: starter
-    postgresMajorVersion: 16
-    ipAllowList: []
+# Current Docker service is managed via Render Dashboard:
+# - Service ID: srv-d5nen956ubrc73aqko8g
+# - URL: https://scholarag-graph-docker.onrender.com
+# - Docker build from Dockerfile in repo root
