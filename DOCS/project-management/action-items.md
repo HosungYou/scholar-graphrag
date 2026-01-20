@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-20 (InfraNodus Integration Phase 1-5)
+> **마지막 업데이트**: 2026-01-20 (Codex Review)
 > **관리자**: Claude Code
 
 ---
@@ -11,14 +11,33 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 12 | 12 | 0 | 0 |
-| 🟡 Medium | 14 | 13 | 0 | 1 |
-| 🟢 Low | 6 | 5 | 0 | 1 |
-| **Total** | **32** | **30** | **0** | **2** |
+| 🔴 High | 15 | 14 | 0 | 1 |
+| 🟡 Medium | 17 | 13 | 0 | 4 |
+| 🟢 Low | 8 | 5 | 0 | 3 |
+| **Total** | **40** | **32** | **0** | **8** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### ARCH-001: DB 연결 실패 시 일관된 동작 구현
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/main.py:88-101` - DB 초기화 로직
+  - `backend/routers/teams.py`
+  - `backend/routers/projects.py`
+  - `backend/routers/graph.py`
+- **Description**: DB 초기화 실패 시 앱이 계속 실행되지만 대부분의 엔드포인트가 500 에러 발생. chat 라우터만 메모리 fallback이 있고 나머지는 없음
+- **Risk**: Cascading 500 에러, 불일치한 동작
+- **Acceptance Criteria**:
+  - [ ] 프로덕션에서 DB 실패 시 fail-fast 또는 일관된 503 응답
+  - [ ] 모든 DB 의존 라우터에 일관된 fallback 또는 에러 처리
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report
+
+---
 
 ### TEST-001: InfraNodus DB Migrations 실행
 - **Source**: InfraNodus Integration 2026-01-20
@@ -39,6 +58,54 @@
 ---
 
 ## 🟡 Medium Priority (Short-term)
+
+### ARCH-002: GraphStore God Object 리팩토링
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/graph/graph_store.py` - 1000+ 라인의 대형 클래스
+- **Description**: GraphStore가 persistence, graph algorithms, embeddings, import helpers, chunk storage를 모두 담당하여 결합도가 높고 테스트/확장이 어려움
+- **Acceptance Criteria**:
+  - [ ] Persistence DAO 분리
+  - [ ] Embedding pipeline 분리
+  - [ ] Graph analytics 분리
+  - [ ] Chunk storage 분리
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report
+
+---
+
+### PERF-008: 임베딩 업데이트 배치 처리
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/graph/graph_store.py` - 임베딩 업데이트 로직
+- **Description**: 임베딩 업데이트가 row별 개별 쿼리로 실행되어 대량 처리 시 성능 저하
+- **Acceptance Criteria**:
+  - [ ] `executemany` 또는 `UNNEST` 사용한 배치 업데이트 구현
+  - [ ] 대량 처리 시 성능 테스트
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report, PERF-006 (연관)
+
+---
+
+### SEC-012: Auth 설정 불일치 처리
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/config.py`
+  - `backend/auth/dependencies.py`
+- **Description**: Supabase가 설정되지 않았지만 `require_auth=true`인 경우 503/401 에러 발생
+- **Acceptance Criteria**:
+  - [ ] dev 모드에서 auth 자동 비활성화 또는 명확한 경고
+  - [ ] prod에서 auth 필수인데 미설정 시 startup 실패
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report
+
+---
 
 ### TEST-002: InfraNodus 새 API 엔드포인트 테스트
 - **Source**: InfraNodus Integration 2026-01-20
@@ -123,6 +190,36 @@
 
 ## 🟢 Low Priority (Long-term)
 
+### TEST-004: Frontend 테스트 추가
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/` - 현재 프론트엔드 테스트 없음
+- **Description**: 프론트엔드 컴포넌트 테스트 및 E2E smoke 테스트 부재
+- **Acceptance Criteria**:
+  - [ ] 핵심 컴포넌트 unit 테스트 추가
+  - [ ] Auth flow E2E 테스트
+  - [ ] CI에 테스트 연동
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report
+
+---
+
+### FUNC-005: Per-Project/User API 할당량
+- **Source**: Codex Review 2026-01-20
+- **Status**: ⬜ Pending
+- **Assignee**: Backend Team
+- **Description**: 외부 통합(Semantic Scholar, OpenAlex 등)에 대한 프로젝트/사용자별 할당량 없음
+- **Risk**: 과도한 API 사용으로 비용 증가
+- **Acceptance Criteria**:
+  - [ ] 프로젝트별 또는 사용자별 일일 API 호출 제한
+  - [ ] 초과 시 경고 또는 차단
+- **Created**: 2026-01-20
+- **Related**: Codex Review Report
+
+---
+
 ### TEST-003: InfraNodus E2E 테스트
 - **Source**: InfraNodus Integration 2026-01-20
 - **Status**: ✅ Completed
@@ -165,6 +262,58 @@
 ---
 
 ## 📝 Completed Items Archive
+
+### SEC-011: Rate Limiter X-Forwarded-For Spoofing 취약점
+- **Source**: Codex Review 2026-01-20
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Priority**: 🔴 High (Security Vulnerability)
+- **Files**:
+  - `backend/middleware/rate_limiter.py:305-356` - trusted proxy 로직 추가
+  - `backend/config.py:81-87` - `trusted_proxy_mode` 설정 추가
+- **Description**: Rate limiter가 `X-Forwarded-For` 헤더를 무조건 신뢰하여 IP 스푸핑으로 rate limit 우회 가능
+- **Risk**: DoS 공격, Rate limit 우회
+- **Resolution**:
+  1. `trusted_proxy_mode` 설정 추가 (`auto`, `always`, `never`)
+  2. `auto` 모드: 프로덕션에서만 X-Forwarded-For 신뢰 (Render LB 뒤)
+  3. 개발 환경에서는 직접 연결 IP 사용하여 스푸핑 방지
+  4. 디버그 로깅으로 IP 소스 추적 가능
+- **Acceptance Criteria**:
+  - [x] Trusted proxy 설정 추가
+  - [x] 프록시 뒤에 있을 때만 `X-Forwarded-For` 사용
+  - [x] 환경별 자동 감지 (`auto` 모드)
+- **Created**: 2026-01-20
+- **Completed**: 2026-01-20
+- **Verified By**: Claude Code
+- **Related**: Codex Review Report, Session `2026-01-20_mixed-content-cors-fix.md`
+
+---
+
+### BUG-015: Mixed Content & CORS Error (Vercel Preview)
+- **Source**: Production Error 2026-01-20
+- **Status**: ✅ Completed
+- **Assignee**: Frontend Team
+- **Priority**: 🔴 High (Production CORS Error)
+- **Files**:
+  - `frontend/lib/api.ts` - HTTPS 강제 로직 추가
+- **Description**: Vercel Preview 배포에서 Mixed Content 에러와 CORS 에러 발생
+- **Error Messages**:
+  ```
+  Mixed Content: The page at 'https://...' was loaded over HTTPS, but requested
+  an insecure resource 'http://scholarag-graph-docker.onrender.com/api/projects/'
+
+  CORS error: Access to fetch blocked - No 'Access-Control-Allow-Origin' header
+  Origin: https://schola-rag-graph-1fugffud8-hosung-yous-projects.vercel.app
+  ```
+- **Root Cause**: `NEXT_PUBLIC_API_URL` 환경변수가 HTTP로 설정되어 HTTPS 페이지에서 HTTP 요청 차단됨
+- **Resolution**:
+  1. `enforceHttps()` 함수 추가하여 HTTPS 페이지에서 자동으로 HTTP → HTTPS 변환
+  2. 디버그 로깅 개선으로 HTTPS 강제 여부 표시
+- **Commit**: `22217b5`
+- **Completed**: 2026-01-20
+- **Related**: Session `2026-01-20_mixed-content-cors-fix.md`
+
+---
 
 ### BUG-014: Rate Limiter 429 응답에 CORS 헤더 누락
 - **Source**: Production Error 2026-01-20

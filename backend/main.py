@@ -86,6 +86,7 @@ async def lifespan(app: FastAPI):
         logger.warning("   Supabase Auth: NOT configured (running without auth)")
 
     # Initialize database connection
+    # ARCH-001: Fail-fast in production when DB connection fails
     try:
         await init_db()
         logger.info("   Database connected successfully")
@@ -97,7 +98,20 @@ async def lifespan(app: FastAPI):
             logger.warning("   pgvector extension: NOT available")
     except Exception as e:
         logger.error(f"   Database connection failed: {e}")
-        logger.warning("   Running in memory-only mode")
+
+        # In production/staging: fail-fast - don't start the app without DB
+        # Most endpoints require DB and will return 500 errors anyway
+        if settings.environment in ("production", "staging"):
+            logger.critical(
+                "FATAL: Database connection required in production. "
+                "Cannot start application without database."
+            )
+            raise RuntimeError(
+                f"Database connection failed in {settings.environment} environment"
+            ) from e
+
+        # In development: allow memory-only mode for testing
+        logger.warning("   Running in memory-only mode (development only)")
 
     yield
 

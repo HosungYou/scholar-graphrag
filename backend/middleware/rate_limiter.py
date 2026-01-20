@@ -302,19 +302,56 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.enabled = enabled
 
+    def _should_trust_proxy(self) -> bool:
+        """
+        Determine whether to trust X-Forwarded-For header based on configuration.
+
+        Returns True only when running behind a trusted proxy (e.g., Render LB).
+        This prevents IP spoofing attacks where attackers bypass rate limits
+        by setting fake X-Forwarded-For headers.
+        """
+        from config import get_settings
+        settings = get_settings()
+
+        if settings.trusted_proxy_mode == "always":
+            return True
+        elif settings.trusted_proxy_mode == "never":
+            return False
+        else:  # "auto" - trust only in production behind Render LB
+            return settings.environment == "production"
+
     def _get_client_key(self, request: Request, path_prefix: str) -> str:
         """
         Generate a unique key for rate limiting based on client IP and path prefix.
 
-        Uses X-Forwarded-For header if behind a proxy, otherwise uses client.host.
+        Security: Only trusts X-Forwarded-For when behind a trusted proxy.
+        In development or when directly exposed, uses the direct connection IP
+        to prevent rate limit bypass via header spoofing.
+
+        See: SEC-011 - Rate Limiter X-Forwarded-For Spoofing vulnerability fix
         """
-        # Get client IP, considering proxy headers
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            # Take the first IP (client IP) from the chain
-            client_ip = forwarded.split(",")[0].strip()
+        # Get direct connection IP first (always available and trustworthy)
+        direct_ip = request.client.host if request.client else "unknown"
+
+        # Only use X-Forwarded-For if we trust the proxy
+        if self._should_trust_proxy():
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                # Take the first IP (original client IP) from the chain
+                # Format: "client, proxy1, proxy2, ..."
+                client_ip = forwarded.split(",")[0].strip()
+                logger.debug(f"Trusted proxy mode: using X-Forwarded-For IP {client_ip}")
+            else:
+                client_ip = direct_ip
         else:
-            client_ip = request.client.host if request.client else "unknown"
+            # Don't trust X-Forwarded-For - use direct connection IP
+            client_ip = direct_ip
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                logger.debug(
+                    f"Untrusted proxy mode: ignoring X-Forwarded-For '{forwarded}', "
+                    f"using direct IP {client_ip}"
+                )
 
         return f"{client_ip}:{path_prefix}"
 

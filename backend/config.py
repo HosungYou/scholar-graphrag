@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # Can be overridden with RATE_LIMIT_ENABLED environment variable
     rate_limit_enabled: bool = True  # Enable API rate limiting
 
+    # Security: Trusted Proxy Configuration
+    # Controls whether to trust X-Forwarded-For header for client IP detection
+    # - "auto": Trust in production (behind Render LB), don't trust in development
+    # - "always": Always trust X-Forwarded-For (use if behind known proxy)
+    # - "never": Never trust, always use direct connection IP
+    # WARNING: Setting "always" when not behind a trusted proxy allows IP spoofing!
+    trusted_proxy_mode: Literal["auto", "always", "never"] = "auto"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

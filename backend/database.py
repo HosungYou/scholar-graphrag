@@ -181,6 +181,32 @@ async def get_db() -> Database:
     return db
 
 
+async def require_db() -> Database:
+    """
+    FastAPI dependency that requires database to be connected.
+
+    Returns 503 Service Unavailable if database is not available.
+    Use this for endpoints that cannot function without a database.
+
+    See: ARCH-001 - Consistent behavior when DB connection fails
+
+    Usage:
+        @app.get("/items")
+        async def get_items(db: Database = Depends(require_db)):
+            return await db.fetch("SELECT * FROM items")
+    """
+    from fastapi import HTTPException
+
+    if not db.is_connected:
+        logger.warning("Database not connected - returning 503")
+        raise HTTPException(
+            status_code=503,
+            detail="Service temporarily unavailable: database connection not established",
+            headers={"Retry-After": "30"}
+        )
+    return db
+
+
 async def init_db() -> None:
     """Initialize database connection (call on startup)."""
     await db.connect()
