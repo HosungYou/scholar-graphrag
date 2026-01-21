@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     groq_api_key: str = ""  # FREE! Get key at https://console.groq.com
     cohere_api_key: str = ""  # FREE! For embeddings - https://dashboard.cohere.com/api-keys
 
+    # BUG-032 Fix: Groq Rate Limiting Configuration
+    groq_requests_per_second: float = 2.0  # Max requests per second to Groq API
+    groq_max_retries: int = 3  # Max retry attempts for Groq API errors
+    groq_timeout: float = 60.0  # Timeout in seconds for Groq API calls
+
     # Default LLM Configuration
     default_llm_provider: Literal["anthropic", "openai", "google", "groq"] = "anthropic"
     default_llm_model: str = "claude-3-5-haiku-20241022"

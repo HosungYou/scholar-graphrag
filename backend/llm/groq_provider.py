@@ -5,14 +5,71 @@ Supports Llama 3.3, Llama 3.1, and Mixtral models.
 FREE TIER: 14,400 requests/day, 300+ tokens/sec (fastest!)
 
 Get API key: https://console.groq.com
+
+BUG-032 Fix: Added rate limiting and retry configuration to prevent 429 errors.
 """
 
+import asyncio
 import logging
+import time
 from typing import Optional, AsyncIterator
 
 from .base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+# BUG-032 Fix: Rate limiter for Groq API
+class AsyncRateLimiter:
+    """
+    Token bucket rate limiter for Groq API.
+
+    Prevents 429 (Too Many Requests) errors by throttling requests
+    when multiple concurrent calls are made.
+    """
+
+    def __init__(self, requests_per_second: float = 2.0):
+        """
+        Initialize rate limiter.
+
+        Args:
+            requests_per_second: Maximum requests per second (default: 2.0)
+        """
+        self.rate = requests_per_second
+        self.tokens = requests_per_second
+        self.last_update = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        """
+        Acquire a token to make a request.
+        Blocks if rate limit would be exceeded.
+        """
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
+            self.last_update = now
+
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) / self.rate
+                logger.debug(f"Rate limit: waiting {wait_time:.2f}s")
+                await asyncio.sleep(wait_time)
+                self.tokens = 0
+            else:
+                self.tokens -= 1
+
+
+# Shared rate limiter instance for all Groq requests
+_groq_rate_limiter: Optional[AsyncRateLimiter] = None
+
+
+def _get_rate_limiter(requests_per_second: float = 2.0) -> AsyncRateLimiter:
+    """Get or create the shared rate limiter."""
+    global _groq_rate_limiter
+    if _groq_rate_limiter is None:
+        _groq_rate_limiter = AsyncRateLimiter(requests_per_second)
+    return _groq_rate_limiter
 
 
 class GroqProvider(BaseLLMProvider):
@@ -50,17 +107,29 @@ class GroqProvider(BaseLLMProvider):
 
     @property
     def client(self):
-        """Lazy load the Groq client (uses OpenAI SDK with custom base_url)."""
+        """
+        Lazy load the Groq client (uses OpenAI SDK with custom base_url).
+        BUG-032 Fix: Added retry and timeout configuration.
+        """
         if self._client is None:
             try:
+                import httpx
                 from openai import AsyncOpenAI
+
+                # BUG-032 Fix: Configure HTTP client with appropriate timeout
+                http_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(60.0, connect=10.0),
+                )
 
                 self._client = AsyncOpenAI(
                     api_key=self.api_key,
                     base_url=self.BASE_URL,
+                    max_retries=3,  # BUG-032 Fix: Retry up to 3 times on transient errors
+                    timeout=60.0,   # BUG-032 Fix: 60 second timeout
+                    http_client=http_client,
                 )
             except ImportError:
-                raise ImportError("openai package required: pip install openai")
+                raise ImportError("openai and httpx packages required: pip install openai httpx")
         return self._client
 
     def get_model(self, use_accurate: bool = False) -> str:
@@ -76,8 +145,15 @@ class GroqProvider(BaseLLMProvider):
         model: Optional[str] = None,
         use_accurate: bool = False,
     ) -> str:
-        """Generate response using Groq API (OpenAI compatible)."""
+        """
+        Generate response using Groq API (OpenAI compatible).
+        BUG-032 Fix: Added rate limiting to prevent 429 errors.
+        """
         model_to_use = model or self.get_model(use_accurate)
+
+        # BUG-032 Fix: Apply rate limiting before making request
+        rate_limiter = _get_rate_limiter()
+        await rate_limiter.acquire()
 
         try:
             messages = []
@@ -109,8 +185,15 @@ class GroqProvider(BaseLLMProvider):
         temperature: float = 0.7,
         model: Optional[str] = None,
     ) -> AsyncIterator[str]:
-        """Generate streaming response using Groq API."""
+        """
+        Generate streaming response using Groq API.
+        BUG-032 Fix: Added rate limiting.
+        """
         model_to_use = model or self.default_model
+
+        # BUG-032 Fix: Apply rate limiting before making request
+        rate_limiter = _get_rate_limiter()
+        await rate_limiter.acquire()
 
         try:
             messages = []
@@ -144,10 +227,17 @@ class GroqProvider(BaseLLMProvider):
         max_tokens: int = 1000,
         temperature: float = 0.1,
     ) -> dict:
-        """Generate JSON response using Groq's JSON mode."""
+        """
+        Generate JSON response using Groq's JSON mode.
+        BUG-032 Fix: Added rate limiting.
+        """
         import json
 
         model_to_use = self.default_model
+
+        # BUG-032 Fix: Apply rate limiting before making request
+        rate_limiter = _get_rate_limiter()
+        await rate_limiter.acquire()
 
         try:
             messages = []

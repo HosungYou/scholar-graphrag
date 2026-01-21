@@ -11,6 +11,18 @@ from uuid import UUID, uuid4
 logger = logging.getLogger(__name__)
 
 
+def _get_chunk_attr(chunk, attr: str, default=None):
+    """
+    BUG-030 Fix: Get attribute from either dict or object.
+
+    SemanticChunker.chunk_academic_text() returns dicts, but some code
+    paths might use Chunk objects. This helper handles both cases.
+    """
+    if isinstance(chunk, dict):
+        return chunk.get(attr, default)
+    return getattr(chunk, attr, default)
+
+
 class ChunkDAO:
     """
     Data Access Object for Semantic Chunk persistence.
@@ -62,14 +74,23 @@ class ChunkDAO:
         chunk_id_map = {}  # Map chunk.id to database UUID for parent references
 
         # First pass: Store parent chunks (level 0)
+        # BUG-030 Fix: Use _get_chunk_attr() to support both dict and Chunk objects
         for chunk in chunks:
-            if chunk.chunk_level != 0:
+            if _get_chunk_attr(chunk, 'chunk_level', 0) != 0:
                 continue
 
             chunk_uuid = uuid4()
-            chunk_id_map[chunk.id] = chunk_uuid
+            chunk_id = _get_chunk_attr(chunk, 'id')
+            chunk_id_map[chunk_id] = chunk_uuid
 
             try:
+                section_type = _get_chunk_attr(chunk, 'section_type', 'unknown')
+                section_type_str = section_type.value if hasattr(section_type, 'value') else str(section_type)
+
+                # Get metadata - could be dict or object attribute
+                metadata = _get_chunk_attr(chunk, 'metadata', {})
+                section_title = metadata.get("title", "") if isinstance(metadata, dict) else ""
+
                 await self.db.execute(
                     """
                     INSERT INTO semantic_chunks (
@@ -80,26 +101,31 @@ class ChunkDAO:
                     chunk_uuid,
                     project_uuid,
                     paper_uuid,
-                    chunk.text,
-                    chunk.section_type.value if hasattr(chunk.section_type, 'value') else str(chunk.section_type),
-                    chunk.metadata.get("title", ""),
-                    chunk.chunk_level,
-                    chunk.token_count,
-                    chunk.sequence_order,
+                    _get_chunk_attr(chunk, 'text', ''),
+                    section_type_str,
+                    section_title,
+                    _get_chunk_attr(chunk, 'chunk_level', 0),
+                    _get_chunk_attr(chunk, 'token_count', 0),
+                    _get_chunk_attr(chunk, 'sequence_order', 0),
                 )
                 stored_count += 1
             except Exception as e:
                 logger.warning(f"Failed to store parent chunk: {e}")
 
         # Second pass: Store child chunks (level 1) with parent references
+        # BUG-030 Fix: Use _get_chunk_attr() to support both dict and Chunk objects
         for chunk in chunks:
-            if chunk.chunk_level != 1:
+            if _get_chunk_attr(chunk, 'chunk_level', 0) != 1:
                 continue
 
             chunk_uuid = uuid4()
-            parent_uuid = chunk_id_map.get(chunk.parent_id) if chunk.parent_id else None
+            parent_id = _get_chunk_attr(chunk, 'parent_id')
+            parent_uuid = chunk_id_map.get(parent_id) if parent_id else None
 
             try:
+                section_type = _get_chunk_attr(chunk, 'section_type', 'unknown')
+                section_type_str = section_type.value if hasattr(section_type, 'value') else str(section_type)
+
                 await self.db.execute(
                     """
                     INSERT INTO semantic_chunks (
@@ -110,12 +136,12 @@ class ChunkDAO:
                     chunk_uuid,
                     project_uuid,
                     paper_uuid,
-                    chunk.text,
-                    chunk.section_type.value if hasattr(chunk.section_type, 'value') else str(chunk.section_type),
+                    _get_chunk_attr(chunk, 'text', ''),
+                    section_type_str,
                     parent_uuid,
-                    chunk.chunk_level,
-                    chunk.token_count,
-                    chunk.sequence_order,
+                    _get_chunk_attr(chunk, 'chunk_level', 1),
+                    _get_chunk_attr(chunk, 'token_count', 0),
+                    _get_chunk_attr(chunk, 'sequence_order', 0),
                 )
                 stored_count += 1
             except Exception as e:

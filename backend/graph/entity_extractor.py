@@ -17,6 +17,7 @@ Entity Types:
 Reference: NLP-AKG (https://arxiv.org/html/2502.14192v1)
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -25,6 +26,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# BUG-031 Fix: Constants for retry logic
+MAX_RETRIES = 2
+RETRY_DELAY_SECONDS = 1.0
 
 
 class EntityType(str, Enum):
@@ -439,7 +445,7 @@ class EntityExtractor:
         seed_concepts: Optional[List[str]] = None,
         user_notes: Optional[List[str]] = None,
     ) -> dict:
-        """Extract entities using LLM."""
+        """Extract entities using LLM with retry logic (BUG-031 Fix)."""
         # Build additional context from seed concepts and notes
         additional_context = ""
         if seed_concepts:
@@ -448,7 +454,7 @@ class EntityExtractor:
             # Truncate notes to avoid token overflow
             notes_text = " | ".join(n[:200] for n in user_notes[:3])
             additional_context += f"\nUser notes: {notes_text}"
-        
+
         # Select prompt based on mode
         if self.use_fast_mode:
             prompt = FAST_EXTRACTION_PROMPT.format(
@@ -461,38 +467,120 @@ class EntityExtractor:
                 abstract=abstract[:3000] + additional_context,
             )
 
-        # Call LLM
-        response = await self.llm.generate(
-            prompt,
-            max_tokens=1500,
-            temperature=0.1,
-            use_accurate=use_accurate,
-        )
+        # BUG-031 Fix: Add retry logic for resilience
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                # Try generate_json() first if available (BUG-031 Fix)
+                if hasattr(self.llm, 'generate_json'):
+                    try:
+                        response = await self.llm.generate_json(
+                            prompt,
+                            max_tokens=1500,
+                            temperature=0.1,
+                        )
+                        # generate_json returns dict directly
+                        if isinstance(response, dict) and response:
+                            result = self._parse_json_data(response, paper_id)
+                            logger.info(
+                                f"Extracted from '{title[:40]}...': "
+                                f"{len(result['concepts'])} concepts, "
+                                f"{len(result['methods'])} methods, "
+                                f"{len(result['findings'])} findings"
+                            )
+                            return result
+                    except Exception as json_err:
+                        logger.debug(f"generate_json() failed, falling back to generate(): {json_err}")
 
-        # Parse response
-        result = self._parse_llm_response(response, paper_id)
-        logger.info(
-            f"Extracted from '{title[:40]}...': "
-            f"{len(result['concepts'])} concepts, "
-            f"{len(result['methods'])} methods, "
-            f"{len(result['findings'])} findings"
-        )
+                # Fallback to generate() with manual JSON parsing
+                response = await self.llm.generate(
+                    prompt,
+                    max_tokens=1500,
+                    temperature=0.1,
+                    use_accurate=use_accurate,
+                )
 
-        return result
+                # Parse response
+                result = self._parse_llm_response(response, paper_id)
 
-    def _parse_llm_response(self, response: str, paper_id: Optional[str]) -> dict:
-        """Parse LLM response into structured entities."""
+                # Check if extraction was successful (at least one concept)
+                if result['concepts'] or result['methods'] or result['findings']:
+                    logger.info(
+                        f"Extracted from '{title[:40]}...': "
+                        f"{len(result['concepts'])} concepts, "
+                        f"{len(result['methods'])} methods, "
+                        f"{len(result['findings'])} findings"
+                    )
+                    return result
+
+                # No entities extracted, might be a parsing issue
+                if attempt < MAX_RETRIES:
+                    logger.warning(f"No entities extracted, retrying ({attempt + 1}/{MAX_RETRIES})")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    logger.warning(f"LLM extraction attempt {attempt + 1} failed: {e}, retrying...")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                else:
+                    logger.error(f"All LLM extraction attempts failed: {e}")
+
+        # All retries exhausted, return empty result
+        if last_error:
+            logger.error(f"LLM extraction failed after {MAX_RETRIES + 1} attempts: {last_error}")
+        return self._empty_result()
+
+    def _extract_json_from_text(self, response: str) -> Optional[dict]:
+        """
+        BUG-031 Fix: Extract JSON from LLM text response using multiple strategies.
+
+        Strategies (in order):
+        1. Check if response is already a dict (from generate_json)
+        2. Extract from markdown code blocks (```json ... ```)
+        3. Use find/rfind for balanced braces (safer than greedy regex)
+        """
+        if not response:
+            return None
+
+        # Strategy 1: Already a dict (from generate_json)
+        if isinstance(response, dict):
+            return response
+
+        # Strategy 2: Markdown code block extraction
+        code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response)
+        if code_block_match:
+            try:
+                return json.loads(code_block_match.group(1).strip())
+            except json.JSONDecodeError:
+                pass  # Fall through to next strategy
+
+        # Strategy 3: Find/rfind approach (safer than greedy regex)
+        # This handles nested braces better than r'\{[\s\S]*\}'
+        json_start = response.find("{")
+        json_end = response.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            try:
+                return json.loads(response[json_start:json_end])
+            except json.JSONDecodeError:
+                pass  # Fall through to warning
+
+        # All strategies failed
+        logger.warning(f"No valid JSON found in LLM response: {response[:200]}...")
+        return None
+
+    def _parse_json_data(self, data: dict, paper_id: Optional[str]) -> dict:
+        """
+        BUG-031 Fix: Parse already-extracted JSON data into structured entities.
+        Separated from _parse_llm_response for use with generate_json().
+        """
         result = self._empty_result()
 
+        if not data or not isinstance(data, dict):
+            return result
+
         try:
-            # Extract JSON from response
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if not json_match:
-                logger.warning("No JSON found in LLM response")
-                return result
-
-            data = json.loads(json_match.group())
-
             # Parse concepts (primary nodes)
             for c in data.get("concepts", [])[:10]:
                 if not c.get("name"):
@@ -598,12 +686,23 @@ class EntityExtractor:
                     )
                 )
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
         except Exception as e:
-            logger.error(f"Error parsing LLM response: {e}")
+            logger.error(f"Error parsing JSON data: {e}")
 
         return result
+
+    def _parse_llm_response(self, response: str, paper_id: Optional[str]) -> dict:
+        """
+        Parse LLM response into structured entities.
+        BUG-031 Fix: Delegates to improved JSON extraction and unified parsing.
+        """
+        # Extract JSON using improved multi-strategy approach
+        data = self._extract_json_from_text(response)
+        if not data:
+            return self._empty_result()
+
+        # Delegate to unified JSON parsing
+        return self._parse_json_data(data, paper_id)
 
     def _fallback_extraction(
         self, title: str, abstract: str, paper_id: Optional[str]

@@ -136,11 +136,11 @@ async def get_system_status(
             )
 
             # 3. Get data source info
+            # BUG-029 Fix: Removed non-existent columns 'import_source' and 'last_synced_at'
+            # These columns don't exist in the projects table schema
             project = await conn.fetchrow(
                 """
                 SELECT
-                    import_source,
-                    last_synced_at,
                     (SELECT COUNT(*) FROM paper_metadata WHERE project_id = $1) as paper_count
                 FROM projects
                 WHERE id = $1
@@ -150,8 +150,8 @@ async def get_system_status(
 
             if project:
                 data_source = DataSourceStatus(
-                    type=project.get('import_source'),
-                    importedAt=project['last_synced_at'].isoformat() if project.get('last_synced_at') else None,
+                    type="zotero",  # Default value since import_source column doesn't exist
+                    importedAt=None,  # Default value since last_synced_at column doesn't exist
                     paperCount=project.get('paper_count', 0) or 0
                 )
             else:
