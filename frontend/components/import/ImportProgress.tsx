@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { ImportJob, ImportResumeInfo } from '@/types';
 
@@ -49,7 +49,26 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
   const [error, setError] = useState<string | null>(null);
   const [isInterrupted, setIsInterrupted] = useState(false);
   const [resumeInfo, setResumeInfo] = useState<ImportResumeInfo | null>(null);
+  const [isResuming, setIsResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Handle resume import
+  const handleResumeImport = async () => {
+    setIsResuming(true);
+    setResumeError(null);
+    try {
+      const resumedJob = await api.resumeImport(jobId);
+      setJob(resumedJob);
+      setIsInterrupted(false);
+      // Polling will restart automatically via useEffect
+    } catch (err: any) {
+      console.error('Failed to resume import:', err);
+      setResumeError(err.message || 'Failed to resume import');
+    } finally {
+      setIsResuming(false);
+    }
+  };
 
   useEffect(() => {
     if (!jobId) return;
@@ -162,21 +181,49 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             </p>
           </div>
 
+          {resumeError && (
+            <div className="mb-3 p-3 bg-accent-red/10 border border-accent-red/20 rounded-sm">
+              <p className="text-sm text-accent-red">{resumeError}</p>
+            </div>
+          )}
+
           <div className="flex gap-3">
+            {/* Primary action: Resume Import */}
+            <button
+              onClick={handleResumeImport}
+              disabled={isResuming}
+              className="flex-1 flex items-center justify-center gap-2 py-3 bg-accent-teal text-white font-medium rounded-sm hover:bg-accent-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isResuming ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  재개 중...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  Import 재개
+                </>
+              )}
+            </button>
+
+            {/* Secondary: Re-upload files */}
             <button
               onClick={() => router.push('/import')}
-              className="flex-1 flex items-center justify-center gap-2 py-3 bg-accent-teal text-white font-medium rounded-sm hover:bg-accent-teal/90 transition-colors"
+              className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              파일 다시 업로드
+              새로 업로드
             </button>
+
+            {/* View partial results */}
             {checkpoint?.project_id && (
               <button
                 onClick={() => router.push(`/projects/${checkpoint.project_id}`)}
                 className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
               >
                 <ArrowRight className="w-4 h-4" />
-                부분 결과 보기
+                부분 결과
               </button>
             )}
           </div>
