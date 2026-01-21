@@ -55,7 +55,7 @@ const enforceHttps = (url: string): string => {
   return url;
 };
 
-const API_URL = enforceHttps(getRawApiUrl());
+export const API_URL = enforceHttps(getRawApiUrl());
 
 // Debug logging for API configuration (only in browser)
 if (typeof window !== 'undefined') {
