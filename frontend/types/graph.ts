@@ -190,6 +190,7 @@ export interface ImportJob {
   current_step?: string;
   total_steps?: number;
   completed_steps?: number;
+  message?: string;
   error?: string;
   result?: {
     project_id: string;
@@ -198,6 +199,15 @@ export interface ImportJob {
   };
   // BUG-028 Extension: Checkpoint for resume support
   checkpoint?: ImportCheckpoint;
+  // UI-002: Additional fields for job list display
+  created_at?: string;
+  updated_at?: string;
+  metadata?: {
+    project_name?: string;
+    research_question?: string;
+    checkpoint?: ImportCheckpoint;
+    [key: string]: unknown;
+  };
 }
 
 // BUG-028 Extension: Resume info response

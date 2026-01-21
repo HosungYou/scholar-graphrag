@@ -175,16 +175,20 @@ function InterruptedImportsSection() {
 
       <div className="space-y-3">
         {interruptedJobs.map((job) => {
-          const createdDate = new Date(job.created_at);
-          const dateStr = createdDate.toLocaleDateString('ko-KR', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-          });
-          const timeStr = createdDate.toLocaleTimeString('ko-KR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          });
+          const createdDate = job.created_at ? new Date(job.created_at) : null;
+          const dateStr = createdDate
+            ? createdDate.toLocaleDateString('ko-KR', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })
+            : '';
+          const timeStr = createdDate
+            ? createdDate.toLocaleTimeString('ko-KR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : '';
           const progress = Math.round((job.progress || 0) * 100);
           const isResuming = resumingJobId === job.job_id;
 
