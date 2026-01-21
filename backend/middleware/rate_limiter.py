@@ -276,10 +276,10 @@ class RateLimitConfig:
     # Format: (max_requests, window_seconds)
     # NOTE: Order matters! More specific patterns should come first.
     LIMITS: Dict[str, Tuple[int, int]] = {
-        "/api/import/status": (60, 60),  # 60 requests per minute (polling)
-        "/api/auth": (10, 60),           # 10 requests per minute
-        "/api/chat": (30, 60),           # 30 requests per minute
-        "/api/import": (10, 60),         # 10 requests per minute (increased from 5)
+        "/api/import/status": (120, 60),  # 120 requests per minute (polling - doubled for stability)
+        "/api/auth": (10, 60),            # 10 requests per minute
+        "/api/chat": (30, 60),            # 30 requests per minute
+        "/api/import": (10, 60),          # 10 requests per minute (increased from 5)
     }
 
     # Default limit for unmatched endpoints
@@ -378,9 +378,15 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if not self.enabled:
             return await call_next(request)
 
-        # Skip rate limiting for health checks and static files
+        # Skip rate limiting for health checks, static files, and CORS preflight
         path = request.url.path
         if path in ("/", "/health", "/docs", "/openapi.json", "/redoc"):
+            return await call_next(request)
+
+        # BUG-026: Skip rate limiting for OPTIONS preflight requests
+        # CORS preflight requests should never be rate-limited as they are
+        # browser-initiated, not user-initiated, and blocking them causes CORS errors
+        if request.method == "OPTIONS":
             return await call_next(request)
 
         # Get the rate limit store (in-memory or Redis)

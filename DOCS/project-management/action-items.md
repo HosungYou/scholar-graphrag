@@ -285,9 +285,48 @@
 
 ---
 
+### BUG-026: Rate Limiter가 OPTIONS Preflight 차단하여 CORS 에러
+- **Source**: Systematic Debugging Session 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🔴 High (Import 기능 완전 차단)
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/middleware/rate_limiter.py` - OPTIONS 요청 건너뛰기 추가
+- **Description**: Vercel Preview URL에서 Zotero Import 시 Validation 단계에서 멈춤. 콘솔에 CORS 에러와 429 Too Many Requests 에러 동시 발생.
+- **Root Cause Analysis**:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    요청 흐름 (문제)                              │
+  ├─────────────────────────────────────────────────────────────────┤
+  │  1. 프론트엔드: 빈번한 import status 폴링 (1초 간격)            │
+  │  2. 각 GET 요청 전에 OPTIONS preflight 요청 발생               │
+  │  3. Rate Limiter: OPTIONS도 rate limit에 카운트!               │
+  │  4. 60 req/min 초과 → 429 Too Many Requests 반환               │
+  │  5. OPTIONS가 429 반환 시 브라우저는 CORS 실패로 인식           │
+  │  6. 실제 GET 요청 전에 CORS 에러로 차단                        │
+  └─────────────────────────────────────────────────────────────────┘
+  ```
+- **Console Errors**:
+  ```
+  CORS Error: "Response to preflight request doesn't pass access control check:
+              It does not have HTTP ok status."
+  429 Error: "Too many requests. Please try again later."
+  ```
+- **Resolution**:
+  1. **OPTIONS 요청 건너뛰기**: Rate limiter에서 CORS preflight 제외
+  2. **Import status rate limit 증가**: 60 → 120 req/min
+- **Acceptance Criteria**:
+  - [ ] OPTIONS 요청이 rate limit에서 제외됨
+  - [ ] Import status 폴링이 429 에러 없이 동작
+  - [ ] Vercel Preview URL에서 import 정상 동작
+- **Created**: 2026-01-21
+- **Related**: BUG-019, CORS Configuration
+
+---
+
 ### BUG-025: Filter UI에 Paper/Author 표시 - ADR-001 위반
 - **Source**: Parallel Agent Audit (Filter UI) 2026-01-21
-- **Status**: ⬜ Pending
+- **Status**: ✅ Completed
 - **Priority**: 🟢 Low (ADR 위반 - 기능적 영향 적음)
 - **Assignee**: Frontend Team
 - **Files**:
