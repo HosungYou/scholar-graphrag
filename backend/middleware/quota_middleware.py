@@ -26,7 +26,9 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from auth.dependencies import get_current_user_optional
+# BUG-017 Fix: Import get_optional_user (correct name) instead of non-existent get_current_user_optional
+# The function exists as get_optional_user in auth.dependencies
+from auth.dependencies import get_optional_user
 from auth.models import User
 from middleware.quota_service import (
     ApiType,
@@ -78,7 +80,7 @@ class QuotaDependency:
     async def __call__(
         self,
         request: Request,
-        current_user: Optional[User] = Depends(get_current_user_optional),
+        current_user: Optional[User] = Depends(get_optional_user),
     ) -> QuotaStatus:
         """Check quota and return status."""
         quota_service = get_quota_service()
@@ -123,19 +125,6 @@ class QuotaDependency:
                 )
             # Return status even if exceeded (for soft limits)
             return e.status
-
-
-def get_current_user_optional(request: Request) -> Optional[User]:
-    """
-    Get current user if authenticated, None otherwise.
-
-    This is a fallback implementation - the actual one should be
-    imported from auth.dependencies.
-    """
-    # Try to get from request state (set by auth middleware)
-    if hasattr(request.state, "user"):
-        return request.state.user
-    return None
 
 
 # ============================================================================
