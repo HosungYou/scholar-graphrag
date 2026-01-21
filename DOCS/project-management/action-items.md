@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-21 (Parallel Agent Debugging)
+> **마지막 업데이트**: 2026-01-21 (BUG-018 vercel.json URL 수정)
 > **관리자**: Claude Code
 
 ---
@@ -11,14 +11,57 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 18 | 18 | 0 | 0 |
+| 🔴 High | 19 | 19 | 0 | 0 |
 | 🟡 Medium | 18 | 17 | 0 | 1 |
 | 🟢 Low | 9 | 8 | 0 | 1 |
-| **Total** | **45** | **43** | **0** | **2** |
+| **Total** | **46** | **44** | **0** | **2** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### BUG-018: vercel.json 폐기된 Render 서비스 URL (Mixed Content 근본 원인)
+- **Source**: Parallel Agent Brainstorming 2026-01-21
+- **Status**: ✅ Completed
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/vercel.json` - API rewrite URL 수정
+  - `frontend/.env.local.example` - 예제 URL 수정
+- **Description**: `vercel.json`의 rewrite 규칙이 삭제된 `scholarag-graph-api` 서비스를 가리키고 있어 Mixed Content 에러 발생. BUG-015/016/017 수정에도 불구하고 에러가 계속되는 실제 원인.
+- **Root Cause**:
+  ```json
+  // 이전 코드 (버그) - vercel.json
+  {
+    "source": "/api/:path*",
+    "destination": "https://scholarag-graph-api.onrender.com/api/:path*"  // ❌ 삭제된 서비스!
+  }
+  ```
+- **Discovery Method**:
+  1. `superpowers:brainstorming` 스킬로 체계적 문제 탐색
+  2. `superpowers:dispatching-parallel-agents`로 3개 에이전트 병렬 조사
+  3. 브라우저 자동화로 Vercel 환경 변수 직접 확인 → HTTPS 정상 설정 확인
+  4. 에이전트가 `vercel.json`의 폐기된 URL 발견
+- **Resolution**:
+  ```json
+  // 수정된 코드
+  {
+    "source": "/api/:path*",
+    "destination": "https://scholarag-graph-docker.onrender.com/api/:path*"  // ✅ 현재 Docker 서비스
+  }
+  ```
+- **Acceptance Criteria**:
+  - [x] `vercel.json` rewrite URL을 Docker 서비스로 변경
+  - [x] `.env.local.example`의 참조 URL도 업데이트
+  - [x] Vercel 재배포 트리거
+  - [x] Mixed Content 에러 해결
+- **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Verified By**: Claude Code
+- **Commit**: `3523eb4`
+- **Related**: BUG-015, BUG-016, BUG-017, INFRA-004 (Python→Docker 마이그레이션)
+- **Lesson Learned**: 인프라 마이그레이션(INFRA-004) 시 `vercel.json` rewrite 규칙도 함께 업데이트해야 함
+
+---
 
 ### BUG-015: system.py get_connection() AttributeError 수정
 - **Source**: Root Cause Analysis 2026-01-21
