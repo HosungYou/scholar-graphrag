@@ -186,6 +186,34 @@ export default function ProjectDetailPage() {
     return counts;
   }, [graphData]);
 
+  // Dynamic entity types: only show types that have at least 1 node in the graph
+  // This prevents showing Paper/Author (or other types) when they don't exist
+  // Per ADR-001: Paper/Author are metadata-only, not visualized in concept-centric mode
+  const actualEntityTypes = useMemo(() => {
+    // Define the preferred order for entity types
+    const orderedTypes: EntityType[] = ['Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation', 'Paper', 'Author'];
+    // Filter to only types that have at least 1 node
+    return orderedTypes.filter(type => (nodeCountsByType[type] || 0) > 0);
+  }, [nodeCountsByType]);
+
+  // Sync selected entity types with actual entity types when graph loads
+  // This ensures the filter selection matches available types
+  useEffect(() => {
+    if (actualEntityTypes.length > 0) {
+      // Only select types that actually exist in the graph
+      const validSelectedTypes = filters.entityTypes.filter(
+        type => actualEntityTypes.includes(type)
+      );
+      // If no valid types are selected, select all available types
+      if (validSelectedTypes.length === 0) {
+        setFilters({ entityTypes: [...actualEntityTypes] });
+      } else if (validSelectedTypes.length !== filters.entityTypes.length) {
+        // Update to only include valid types
+        setFilters({ entityTypes: validSelectedTypes });
+      }
+    }
+  }, [actualEntityTypes, filters.entityTypes, setFilters]);
+
   // Handle node click in graph
   const handleNodeClick = useCallback(
     (nodeId: string, nodeData: GraphEntity) => {
@@ -628,7 +656,7 @@ export default function ProjectDetailPage() {
 
             {/* Filter Panel */}
             <FilterPanel
-              entityTypes={ALL_ENTITY_TYPES}
+              entityTypes={actualEntityTypes}
               selectedTypes={filters.entityTypes}
               onTypeChange={(types) => setFilters({ entityTypes: types })}
               onReset={resetFilters}

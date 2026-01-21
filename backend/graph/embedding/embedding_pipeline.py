@@ -17,9 +17,14 @@ class EmbeddingPipeline:
     Embedding Pipeline for vector operations.
 
     Handles:
-    - Entity embedding creation (Cohere)
-    - Chunk embedding creation (Cohere/SPECTER2)
+    - Entity embedding creation (Cohere/OpenAI with fallback)
+    - Chunk embedding creation (Cohere/OpenAI/SPECTER2 with fallback)
     - Vector similarity search
+
+    Embedding Provider Priority:
+    1. Cohere (if COHERE_API_KEY set) - FREE tier available
+    2. OpenAI (if OPENAI_API_KEY set) - Paid fallback
+    3. Skip embeddings (if no provider available)
     """
 
     def __init__(self, db=None):
@@ -32,6 +37,43 @@ class EmbeddingPipeline:
         self.db = db
 
     # =========================================================================
+    # Embedding Provider Selection
+    # =========================================================================
+
+    def _get_embedding_provider(self):
+        """
+        Get the best available embedding provider with fallback logic.
+
+        Priority order:
+        1. Cohere (if COHERE_API_KEY available) - FREE tier, recommended
+        2. OpenAI (if OPENAI_API_KEY available) - Paid fallback
+        3. None (skip embeddings)
+
+        Returns:
+            Embedding provider instance or None if no provider available
+        """
+        from config import settings
+
+        # Priority 1: Cohere (FREE tier available)
+        if settings.cohere_api_key:
+            from llm.cohere_embeddings import CohereEmbeddingProvider
+            logger.info("Using Cohere for embeddings (primary provider)")
+            return CohereEmbeddingProvider(api_key=settings.cohere_api_key)
+
+        # Priority 2: OpenAI (paid fallback)
+        if settings.openai_api_key:
+            from llm.openai_embeddings import OpenAIEmbeddingProvider
+            logger.info("Using OpenAI for embeddings (Cohere fallback)")
+            return OpenAIEmbeddingProvider(api_key=settings.openai_api_key)
+
+        # No provider available
+        logger.warning(
+            "No embedding provider available - skipping embedding creation. "
+            "Set COHERE_API_KEY (free) or OPENAI_API_KEY to enable embeddings."
+        )
+        return None
+
+    # =========================================================================
     # Entity Embeddings
     # =========================================================================
 
@@ -41,11 +83,16 @@ class EmbeddingPipeline:
         embedding_provider=None,
     ) -> int:
         """
-        Create embeddings for all entities in a project using Cohere.
+        Create embeddings for all entities in a project.
+
+        Supports multiple embedding providers with fallback:
+        1. Cohere (if COHERE_API_KEY available) - FREE tier available
+        2. OpenAI (if OPENAI_API_KEY available) - Paid fallback
+        3. Skip embeddings if no provider available
 
         Args:
             project_id: UUID of the project
-            embedding_provider: CohereEmbeddingProvider instance (optional)
+            embedding_provider: Pre-configured embedding provider instance (optional)
 
         Returns:
             Number of entities that received embeddings
@@ -56,14 +103,10 @@ class EmbeddingPipeline:
             logger.warning("No database connection - skipping embedding creation")
             return 0
 
-        # Get or create embedding provider
+        # Get or create embedding provider with fallback logic
         if embedding_provider is None:
-            from config import settings
-            if settings.cohere_api_key:
-                from llm.cohere_embeddings import CohereEmbeddingProvider
-                embedding_provider = CohereEmbeddingProvider(api_key=settings.cohere_api_key)
-            else:
-                logger.warning("No Cohere API key configured - skipping embedding creation")
+            embedding_provider = self._get_embedding_provider()
+            if embedding_provider is None:
                 return 0
 
         project_uuid = UUID(project_id) if isinstance(project_id, str) else project_id
@@ -198,19 +241,21 @@ class EmbeddingPipeline:
             logger.info("No chunks need embeddings")
             return 0
 
-        # Get or create embedding provider
+        # Get or create embedding provider with fallback logic
         if not embedding_provider:
             if use_specter:
                 try:
                     from llm.embedding_factory import get_embedding_factory, EmbeddingProvider
                     factory = get_embedding_factory()
                 except ImportError:
-                    logger.warning("SPECTER2 not available, falling back to Cohere")
+                    logger.warning("SPECTER2 not available, falling back to standard embeddings")
                     use_specter = False
 
             if not use_specter:
-                from llm.cohere_embeddings import get_cohere_embeddings
-                embedding_provider = get_cohere_embeddings()
+                embedding_provider = self._get_embedding_provider()
+                if embedding_provider is None:
+                    logger.warning("No embedding provider available - skipping chunk embeddings")
+                    return 0
 
         embeddings_created = 0
 

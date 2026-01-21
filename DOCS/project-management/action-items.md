@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-21 22:55 (BUG-019 완전 해결 - API_URL export 수정 후 빌드/배포 성공)
+> **마지막 업데이트**: 2026-01-21 23:45 (시각화 파이프라인 감사 결과 - 6개 신규 이슈 발견)
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 20 | 20 | 0 | 0 |
-| 🟡 Medium | 18 | 17 | 0 | 1 |
+| 🔴 High | 23 | 20 | 0 | 3 |
+| 🟡 Medium | 20 | 17 | 0 | 3 |
 | 🟢 Low | 9 | 8 | 0 | 1 |
-| **Total** | **47** | **45** | **0** | **2** |
+| **Total** | **52** | **45** | **0** | **7** |
 
 ---
 
@@ -87,6 +87,238 @@
 - **Commits**: `169dfb8` (proxy-headers), `c9efd80` (API_URL export)
 - **Related**: BUG-015, BUG-016, BUG-017, BUG-018
 - **Key Insight**: 프론트엔드만 수정해서는 해결 불가. 백엔드가 프록시 환경을 인식해야 함.
+
+---
+
+### BUG-020: PDF 텍스트 4000자 제한 - 95%+ 콘텐츠 무시 🔴 P0
+- **Source**: Parallel Agent Audit (Import Pipeline) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🔴 P0 (Critical - 데이터 손실)
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/importers/zotero_rdf_importer.py:569-577` - 엔티티 추출 텍스트 제한
+- **Description**: Zotero RDF 임포트 시 PDF에서 추출된 텍스트의 첫 4000자만 엔티티 추출에 사용됨. 200+ 페이지 PDF에서 95% 이상의 콘텐츠가 무시되어 18개 노드만 생성됨.
+- **Root Cause**:
+  ```python
+  # zotero_rdf_importer.py:569-577
+  text_for_extraction = item.abstract or pdf_text[:4000]  # ❌ 첫 4000자만 사용!
+
+  # PDF 전체 텍스트가 있더라도 첫 4000자만 엔티티 추출에 사용
+  # 200페이지 = ~400,000자 중 1%만 처리됨
+  ```
+- **Impact**:
+  - 16개 논문에서 18개 노드만 추출 (논문당 ~1개)
+  - 개념 간 관계 파악 불가능
+  - Knowledge Graph 유용성 심각하게 저하
+- **Resolution**:
+  1. **Semantic Chunking 도입**: PDF 전체 텍스트를 의미 단위로 분할
+  2. **청크별 엔티티 추출**: 각 청크에서 엔티티 추출 후 병합
+  3. **중복 제거**: 동일 엔티티 병합 및 출현 빈도 추적
+  ```python
+  # 수정 방안
+  chunks = semantic_chunker.chunk_text(pdf_text, max_chunk_size=4000)
+  all_entities = []
+  for chunk in chunks:
+      entities = await self._extract_entities_from_text(chunk)
+      all_entities.extend(entities)
+  merged_entities = self._merge_duplicate_entities(all_entities)
+  ```
+- **Acceptance Criteria**:
+  - [ ] PDF 전체 텍스트를 청킹하여 처리
+  - [ ] 청크별 엔티티 추출 구현
+  - [ ] 중복 엔티티 병합 로직 구현
+  - [ ] 16개 논문에서 100+ 노드 생성 확인
+- **Created**: 2026-01-21
+- **Related**: BUG-021, BUG-022
+
+---
+
+### BUG-021: Cohere API 키 없음 - 임베딩/관계 생성 완전 스킵 🔴 P0
+- **Source**: Parallel Agent Audit (Edge Generation) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🔴 P0 (Critical - 관계 0개)
+- **Assignee**: Backend Team / DevOps
+- **Files**:
+  - `backend/graph/embedding/embedding_pipeline.py:38-68` - 임베딩 생성 로직
+  - `backend/importers/zotero_rdf_importer.py:649-671` - 관계 빌딩 조건
+- **Description**: Cohere API 키가 설정되지 않아 임베딩 생성이 스킵되고, 임베딩이 없으면 관계 빌딩도 완전히 스킵됨. 결과적으로 0개의 엣지 생성.
+- **Root Cause**:
+  ```python
+  # embedding_pipeline.py:38-68
+  if settings.cohere_api_key:
+      embedding_provider = CohereEmbeddingProvider(api_key=settings.cohere_api_key)
+  else:
+      logger.warning("No Cohere API key configured - skipping embedding creation")
+      return 0  # ❌ 임베딩 0개 반환!
+
+  # zotero_rdf_importer.py:649-671
+  if extract_concepts and self.graph_store and embeddings_created > 0:
+      # 관계 빌딩 로직
+  # ❌ embeddings_created == 0이면 관계 빌딩 완전 스킵!
+  ```
+- **Dependency Chain**:
+  ```
+  Cohere API 키 없음
+       ↓
+  임베딩 생성 스킵 (return 0)
+       ↓
+  embeddings_created == 0
+       ↓
+  관계 빌딩 조건 실패
+       ↓
+  엣지 0개!
+  ```
+- **Resolution**:
+  1. **Render에 COHERE_API_KEY 환경변수 설정**
+  2. **폴백 로직 추가**: Cohere 없으면 OpenAI 임베딩 사용
+  3. **Co-occurrence 관계 추가**: 임베딩 없이도 동시 출현 기반 관계 생성
+- **Acceptance Criteria**:
+  - [ ] Render에 COHERE_API_KEY 설정
+  - [ ] 임베딩 Provider 폴백 로직 구현 (Cohere → OpenAI → 스킵)
+  - [ ] 임베딩 없이도 Co-occurrence 관계 생성 옵션 추가
+  - [ ] 재임포트 후 관계 생성 확인
+- **API Key**: Configured in Render Dashboard (Environment Variables)
+- **Created**: 2026-01-21
+- **Related**: BUG-020, BUG-022
+
+---
+
+### BUG-022: Entity 추출 시 LLM Provider None - 키워드 폴백
+- **Source**: Parallel Agent Audit (Import Pipeline) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🟡 Medium (기능 저하)
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/importers/zotero_rdf_importer.py:155-180` - LLM Provider 초기화
+- **Description**: LLM Provider가 None으로 초기화될 수 있어 LLM 기반 엔티티 추출 대신 키워드 기반 추출로 폴백됨. 키워드 추출은 정확도가 낮음.
+- **Root Cause**:
+  ```python
+  # zotero_rdf_importer.py
+  self.llm_provider = llm_provider  # None일 수 있음
+
+  # 엔티티 추출 시
+  if self.llm_provider:
+      entities = await self._extract_entities_with_llm(text)
+  else:
+      entities = self._extract_entities_with_keywords(text)  # 정확도 낮음
+  ```
+- **Resolution**:
+  1. **GROQ_API_KEY 환경변수 설정** (빠르고 무료)
+  2. **LLM Provider 자동 초기화**: 환경변수 기반 자동 감지
+  3. **명확한 경고 로깅**: LLM 없이 진행 시 사용자에게 알림
+- **Acceptance Criteria**:
+  - [ ] Render에 GROQ_API_KEY 설정
+  - [ ] LLM Provider 자동 초기화 로직 개선
+  - [ ] 키워드 폴백 시 명확한 경고 로깅
+- **API Key**: Configured in Render Dashboard (Environment Variables)
+- **Created**: 2026-01-21
+- **Related**: BUG-020, BUG-021
+
+---
+
+### BUG-023: Three.js 버전 충돌 (0.160.1 vs 0.182.0)
+- **Source**: Parallel Agent Audit (Visualization) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🟡 Medium (경고 + 잠재적 불안정)
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/package.json` - 의존성 버전
+- **Description**: `three@0.160.1`이 직접 의존성으로 설치되어 있지만, `react-force-graph-3d`가 `three@0.182.0`을 peer dependency로 요구함. 두 버전이 충돌하여 콘솔 경고 발생.
+- **Console Warning**:
+  ```
+  THREE.WebGLRenderer: Multiple THREE.js instances detected
+  ```
+- **Root Cause**:
+  ```json
+  // package.json
+  "dependencies": {
+    "three": "^0.160.1",           // 직접 설치
+    "react-force-graph-3d": "..."  // three@0.182.0 peer dependency
+  }
+  ```
+- **Resolution**:
+  ```json
+  // package.json에 overrides 추가
+  "overrides": {
+    "three": "0.160.1"
+  }
+  ```
+  또는 three 버전을 0.182.0으로 업그레이드
+- **Acceptance Criteria**:
+  - [ ] Three.js 버전 통일 (overrides 또는 업그레이드)
+  - [ ] "Multiple instances" 경고 제거 확인
+  - [ ] 그래프 렌더링 정상 동작 확인
+- **Created**: 2026-01-21
+- **Related**: BUG-024
+
+---
+
+### BUG-024: 노드 클릭 시 자동 카메라 포커스 - 줌 불안정
+- **Source**: Parallel Agent Audit (Visualization) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🟡 Medium (UX 저하)
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/components/graph/Graph3D.tsx:527-534` - onNodeClick 핸들러
+- **Description**: 노드 클릭 시 `focusOnNode` 함수가 자동으로 카메라를 노드에 포커스하면서 줌 레벨이 변경됨. 사용자가 의도하지 않은 줌 변경으로 불안정한 UX 제공.
+- **Root Cause**:
+  ```typescript
+  // Graph3D.tsx:527-534
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    setSelectedNode(node);
+    focusOnNode(node);  // ❌ 자동으로 카메라 이동 + 줌 변경
+  }, [focusOnNode]);
+  ```
+- **Additional Issues**:
+  - Hover 시 `setHoveredNode` 호출로 불필요한 리렌더링
+  - Force simulation 설정이 적극적 (alphaDecay, velocityDecay)
+- **Resolution**:
+  1. **자동 포커스 제거 또는 옵션화**
+  2. **더블클릭으로 포커스 변경** (단일 클릭은 선택만)
+  3. **Hover 리렌더링 최적화**: 상태 업데이트 throttle
+- **Acceptance Criteria**:
+  - [ ] 노드 클릭 시 자동 카메라 이동 제거/옵션화
+  - [ ] 더블클릭 시에만 카메라 포커스 (선택 사항)
+  - [ ] 줌 안정성 개선 확인
+- **Created**: 2026-01-21
+- **Related**: BUG-023
+
+---
+
+### BUG-025: Filter UI에 Paper/Author 표시 - ADR-001 위반
+- **Source**: Parallel Agent Audit (Filter UI) 2026-01-21
+- **Status**: ⬜ Pending
+- **Priority**: 🟢 Low (ADR 위반 - 기능적 영향 적음)
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/components/graph/EntityFilter.tsx` - 엔티티 필터 UI
+  - `backend/graph/graph_store.py` - 엔티티 타입 정의
+- **Description**: ADR-001에 따르면 Paper/Author는 메타데이터로만 존재하고 시각화되지 않아야 함. 그러나 Filter UI에 Paper/Author 필터 옵션이 표시됨.
+- **ADR-001 요약**:
+  > "Concept-Centric Knowledge Graph: Papers/Authors as metadata only, not visualized"
+- **Root Cause**:
+  ```typescript
+  // EntityFilter.tsx
+  const ALL_ENTITY_TYPES = ['Paper', 'Author', 'Concept', 'Method', 'Finding'];
+  // ❌ Paper/Author가 하드코딩되어 있음
+  ```
+  ```python
+  # graph_store.py - "Hybrid Mode" 존재
+  class EntityType(Enum):
+      PAPER = "Paper"      # 메타데이터지만 EntityType에 존재
+      AUTHOR = "Author"    # 메타데이터지만 EntityType에 존재
+      CONCEPT = "Concept"  # 시각화 대상
+      ...
+  ```
+- **Resolution**:
+  1. **동적 엔티티 타입 감지**: 실제 그래프 데이터에서 존재하는 타입만 표시
+  2. **Paper/Author 필터 숨김**: 노드 수 0이면 필터에서 제외
+  3. **ADR-001 명확화**: Hybrid Mode 문서화 또는 제거
+- **Acceptance Criteria**:
+  - [ ] Paper/Author가 0개일 때 필터에서 숨김
+  - [ ] 또는 ADR-001 업데이트하여 Hybrid Mode 명시
+- **Created**: 2026-01-21
+- **Related**: ADR-001
 
 ---
 

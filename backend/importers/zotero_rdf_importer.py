@@ -39,6 +39,14 @@ from importers.semantic_chunker import SemanticChunker
 
 logger = logging.getLogger(__name__)
 
+
+# Track entities per paper for co-occurrence relationship building
+@dataclass
+class PaperEntities:
+    """Track extracted entities for a paper (used for co-occurrence relationships)."""
+    paper_id: str
+    entity_ids: List[str] = field(default_factory=list)
+
 # RDF Namespaces used by Zotero
 NAMESPACES = {
     'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
@@ -120,6 +128,9 @@ class ZoteroRDFImporter:
 
         # Cache for deduplication
         self._concept_cache: Dict[str, dict] = {}
+
+        # Track entities per paper for co-occurrence relationship building
+        self._paper_entities: Dict[str, PaperEntities] = {}
 
     def _update_progress(
         self,
@@ -372,6 +383,143 @@ class ZoteroRDFImporter:
 
         return len(intersection) / len(union) >= threshold
 
+    def _chunk_text_for_extraction(
+        self,
+        text: str,
+        chunk_size: int = 4000,
+        overlap: int = 200,
+    ) -> List[str]:
+        """
+        Chunk text into overlapping segments for entity extraction.
+
+        This ensures all PDF content is processed, not just the first 4000 chars.
+
+        Args:
+            text: Full text to chunk
+            chunk_size: Maximum characters per chunk
+            overlap: Characters to overlap between chunks
+
+        Returns:
+            List of text chunks
+        """
+        if len(text) <= chunk_size:
+            return [text]
+
+        chunks = []
+        start = 0
+
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+
+            # Try to break at sentence boundary for cleaner chunks
+            if end < len(text):
+                # Look for sentence-ending punctuation in the last 200 chars
+                search_start = max(end - 200, start)
+                last_period = text.rfind('. ', search_start, end)
+                last_question = text.rfind('? ', search_start, end)
+                last_exclaim = text.rfind('! ', search_start, end)
+
+                best_break = max(last_period, last_question, last_exclaim)
+                if best_break > search_start:
+                    end = best_break + 2  # Include the punctuation and space
+
+            chunks.append(text[start:end])
+            start = end - overlap
+
+            # Prevent infinite loop on very small overlaps
+            if start >= len(text) - overlap:
+                break
+
+        logger.debug(f"Split {len(text)} chars into {len(chunks)} chunks for extraction")
+        return chunks
+
+    async def _extract_entities_from_full_text(
+        self,
+        pdf_text: str,
+        item: ZoteroItem,
+        research_question: Optional[str] = None,
+    ) -> List[ExtractedEntity]:
+        """
+        Extract entities from full PDF text using chunking strategy.
+
+        Instead of truncating to 4000 chars (which loses 95%+ of content),
+        this method:
+        1. Chunks the full PDF text
+        2. Extracts entities from each chunk
+        3. Merges duplicate entities, tracking occurrence frequency
+
+        Args:
+            pdf_text: Full PDF text
+            item: ZoteroItem with metadata (tags, notes, etc.)
+            research_question: Research context for extraction
+
+        Returns:
+            List of ExtractedEntity objects with occurrence counts
+        """
+        # Use abstract if available, otherwise chunk full PDF
+        if item.abstract and len(item.abstract) > 200:
+            # Abstract is a good summary - use it plus samples from PDF
+            text_for_extraction = item.abstract
+
+            # Add introduction and conclusion samples from PDF if long enough
+            if len(pdf_text) > 10000:
+                intro_sample = pdf_text[1000:3000]  # Skip header noise
+                conclusion_sample = pdf_text[-4000:]  # Last portion
+                text_for_extraction += f"\n\n[Introduction Sample]:\n{intro_sample}"
+                text_for_extraction += f"\n\n[Conclusion Sample]:\n{conclusion_sample}"
+
+            chunks = [text_for_extraction]
+        else:
+            # No abstract - chunk the full PDF
+            chunks = self._chunk_text_for_extraction(pdf_text, chunk_size=4000, overlap=200)
+
+        # Track entities across all chunks with occurrence counts
+        entity_occurrences: Dict[str, Dict] = {}  # name -> {entity, count}
+
+        for i, chunk in enumerate(chunks):
+            try:
+                chunk_entities = await self.entity_extractor.extract_entities(
+                    text=chunk,
+                    title=item.title,
+                    context=research_question,
+                    seed_concepts=item.tags if item.tags else None,
+                    user_notes=item.notes if i == 0 else None,  # Only first chunk
+                )
+
+                for entity in chunk_entities:
+                    entity_key = f"{entity.entity_type.value}:{entity.name}"
+
+                    if entity_key in entity_occurrences:
+                        # Increment occurrence count
+                        entity_occurrences[entity_key]["count"] += 1
+                        # Update confidence to max
+                        if entity.confidence > entity_occurrences[entity_key]["entity"].confidence:
+                            entity_occurrences[entity_key]["entity"].confidence = entity.confidence
+                    else:
+                        entity_occurrences[entity_key] = {
+                            "entity": entity,
+                            "count": 1,
+                        }
+
+            except Exception as e:
+                logger.warning(f"Entity extraction failed for chunk {i+1}/{len(chunks)}: {e}")
+
+        # Add occurrence counts to entity properties
+        result_entities = []
+        for data in entity_occurrences.values():
+            entity = data["entity"]
+            entity.properties = entity.properties or {}
+            entity.properties["occurrence_count"] = data["count"]
+            entity.properties["chunks_processed"] = len(chunks)
+            result_entities.append(entity)
+
+        logger.info(
+            f"Extracted {len(result_entities)} unique entities from {len(chunks)} chunks "
+            f"({len(pdf_text)} chars) for '{item.title[:40]}...'"
+        )
+
+        return result_entities
+
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text from PDF using PyMuPDF."""
         try:
@@ -388,6 +536,78 @@ class ZoteroRDFImporter:
         except Exception as e:
             logger.error(f"Error extracting text from PDF {pdf_path}: {e}")
             return ""
+
+    async def _build_cooccurrence_relationships(
+        self,
+        project_id: str,
+    ) -> int:
+        """
+        Build CO_OCCURS_WITH relationships between entities that appear in the same paper.
+
+        This method creates relationships based on co-occurrence - entities extracted
+        from the same paper are considered related. This works WITHOUT embeddings,
+        providing a fallback when Cohere API or other embedding services are unavailable.
+
+        The weight of the relationship is set to 1.0 for same-paper co-occurrence.
+
+        Args:
+            project_id: Project UUID
+
+        Returns:
+            Number of relationships created
+        """
+        if not self.graph_store or not self._paper_entities:
+            logger.info("No paper entities tracked for co-occurrence relationships")
+            return 0
+
+        relationships_created = 0
+        seen_pairs = set()  # Track (entity1_id, entity2_id) pairs to avoid duplicates
+
+        for paper_id, paper_entity_tracker in self._paper_entities.items():
+            entity_ids = paper_entity_tracker.entity_ids
+
+            # Skip papers with 0 or 1 entities (no co-occurrence possible)
+            if len(entity_ids) < 2:
+                continue
+
+            # Create relationships between all pairs of entities in this paper
+            for i, entity1_id in enumerate(entity_ids):
+                for entity2_id in entity_ids[i + 1:]:
+                    # Ensure consistent ordering for deduplication
+                    pair_key = tuple(sorted([entity1_id, entity2_id]))
+
+                    if pair_key in seen_pairs:
+                        continue
+
+                    seen_pairs.add(pair_key)
+
+                    try:
+                        await self.graph_store.add_relationship(
+                            project_id=project_id,
+                            source_id=entity1_id,
+                            target_id=entity2_id,
+                            relationship_type="CO_OCCURS_WITH",
+                            properties={
+                                "source_paper_id": paper_id,
+                                "auto_generated": True,
+                                "generation_method": "cooccurrence",
+                            },
+                            weight=1.0,
+                        )
+                        relationships_created += 1
+                    except Exception as e:
+                        # Log but continue - may fail due to unique constraint if relationship exists
+                        logger.debug(f"Could not create co-occurrence relationship: {e}")
+
+        logger.info(
+            f"Created {relationships_created} co-occurrence relationships "
+            f"from {len(self._paper_entities)} papers"
+        )
+
+        # Clear the tracker after building relationships
+        self._paper_entities.clear()
+
+        return relationships_created
 
     async def validate_folder(self, folder_path: str) -> Dict[str, Any]:
         """
@@ -607,19 +827,19 @@ class ZoteroRDFImporter:
                     except Exception as e:
                         logger.warning(f"Semantic chunking failed for {item.title}: {e}")
 
-                # Extract concepts if enabled
+                # Extract concepts if enabled - use full PDF text with chunking
                 if extract_concepts and self.llm and (item.abstract or pdf_text):
-                    text_for_extraction = item.abstract or pdf_text[:4000]
-
                     try:
-                        # Pass Zotero tags as seed concepts for boosted extraction
-                        entities = await self.entity_extractor.extract_entities(
-                            text=text_for_extraction,
-                            title=item.title,
-                            context=research_question,
-                            seed_concepts=item.tags if item.tags else None,
-                            user_notes=item.notes if item.notes else None,
+                        # Use chunking strategy to process full PDF content
+                        # instead of truncating to 4000 chars (which loses 95%+ of content)
+                        entities = await self._extract_entities_from_full_text(
+                            pdf_text=pdf_text,
+                            item=item,
+                            research_question=research_question,
                         )
+
+                        # Track entities per paper for co-occurrence relationships
+                        paper_entity_tracker = PaperEntities(paper_id=paper_id)
 
                         # Store entities
                         for entity in entities:
@@ -634,8 +854,15 @@ class ZoteroRDFImporter:
                                     properties=entity.properties or {},
                                 )
 
+                                # Track entity ID for co-occurrence relationships
+                                paper_entity_tracker.entity_ids.append(entity_id)
+
                                 self.progress.concepts_extracted += 1
                                 results["concepts_extracted"] += 1
+
+                        # Store paper entities for later co-occurrence building
+                        if paper_entity_tracker.entity_ids:
+                            self._paper_entities[paper_id] = paper_entity_tracker
 
                     except Exception as e:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
@@ -646,29 +873,48 @@ class ZoteroRDFImporter:
                 self.progress.errors.append(error_msg)
                 results["errors"].append(error_msg)
 
-        # Create embeddings FIRST (needed for relationship building)
+        # Create embeddings (optional - may fail if Cohere API unavailable)
         embeddings_created = 0
         if self.graph_store and self.progress.concepts_extracted > 0:
-            self._update_progress("embeddings", 0.90, "임베딩 생성 중 (Cohere)...")
+            self._update_progress("embeddings", 0.85, "임베딩 생성 중 (Cohere)...")
             try:
                 embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
                 logger.info(f"Created {embeddings_created} embeddings")
             except Exception as e:
-                logger.warning(f"Embedding creation failed: {e}")
+                logger.warning(f"Embedding creation failed (continuing with co-occurrence relationships): {e}")
 
-        # Build relationships AFTER embeddings are created
-        if extract_concepts and self.graph_store and embeddings_created > 0:
-            self._update_progress("building_relationships", 0.95, "관계 구축 중...")
+        # Build relationships - ALWAYS build co-occurrence, optionally build semantic
+        if extract_concepts and self.graph_store:
+            total_relationships = 0
 
+            # Step 1: Build co-occurrence relationships (NO embeddings needed)
+            # Entities that appear in the same paper are related
+            self._update_progress("building_relationships", 0.90, "공출현 관계 구축 중...")
             try:
-                relationship_count = await self.graph_store.build_concept_relationships(
+                cooccurrence_count = await self._build_cooccurrence_relationships(
                     project_id=project_id
                 )
-                self.progress.relationships_created = relationship_count
-                results["relationships_created"] = relationship_count
-                logger.info(f"Created {relationship_count} relationships")
+                total_relationships += cooccurrence_count
+                logger.info(f"Created {cooccurrence_count} co-occurrence relationships")
             except Exception as e:
-                logger.warning(f"Relationship building failed: {e}")
+                logger.warning(f"Co-occurrence relationship building failed: {e}")
+
+            # Step 2: Build semantic relationships (ONLY if embeddings exist)
+            if embeddings_created > 0:
+                self._update_progress("building_relationships", 0.95, "의미적 관계 구축 중...")
+                try:
+                    semantic_count = await self.graph_store.build_concept_relationships(
+                        project_id=project_id
+                    )
+                    total_relationships += semantic_count
+                    logger.info(f"Created {semantic_count} semantic relationships")
+                except Exception as e:
+                    logger.warning(f"Semantic relationship building failed: {e}")
+            else:
+                logger.info("Skipping semantic relationships (no embeddings available)")
+
+            self.progress.relationships_created = total_relationships
+            results["relationships_created"] = total_relationships
 
         self._update_progress("complete", 1.0, "Import 완료!")
 
@@ -760,6 +1006,7 @@ class ZoteroRDFImporter:
             "items_skipped": len(existing_keys),
             "pdfs_processed": 0,
             "concepts_extracted": 0,
+            "relationships_created": 0,
             "errors": [],
         }
         
@@ -802,21 +1049,23 @@ class ZoteroRDFImporter:
                 
                 results["items_added"] += 1
                 
-                # Extract concepts if enabled
+                # Extract concepts if enabled - use full PDF text with chunking
                 if extract_concepts and self.llm and (item.abstract or pdf_text):
-                    text_for_extraction = item.abstract or pdf_text[:4000]
-                    
                     try:
-                        entities = await self.entity_extractor.extract_entities(
-                            text=text_for_extraction,
-                            title=item.title,
-                            seed_concepts=item.tags if item.tags else None,
-                            user_notes=item.notes if item.notes else None,
+                        # Use chunking strategy to process full PDF content
+                        # instead of truncating to 4000 chars (which loses 95%+ of content)
+                        entities = await self._extract_entities_from_full_text(
+                            pdf_text=pdf_text,
+                            item=item,
+                            research_question=None,  # sync_folder doesn't have research_question
                         )
-                        
+
+                        # Track entities per paper for co-occurrence relationships
+                        paper_entity_tracker = PaperEntities(paper_id=paper_id)
+
                         for entity in entities:
                             if self.graph_store:
-                                await self.graph_store.store_entity(
+                                entity_id = await self.graph_store.store_entity(
                                     project_id=project_id,
                                     name=entity.name,
                                     entity_type=entity.entity_type.value,
@@ -825,24 +1074,42 @@ class ZoteroRDFImporter:
                                     confidence=entity.confidence,
                                     properties=entity.properties or {},
                                 )
+                                paper_entity_tracker.entity_ids.append(entity_id)
                                 results["concepts_extracted"] += 1
-                                
+
+                        # Store paper entities for later co-occurrence building
+                        if paper_entity_tracker.entity_ids:
+                            self._paper_entities[paper_id] = paper_entity_tracker
+
                     except Exception as e:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
-                        
+
             except Exception as e:
                 error_msg = f"동기화 실패 ({item.title}): {e}"
                 logger.error(error_msg)
                 results["errors"].append(error_msg)
-        
-        # Create embeddings for new entities
+
+        # Create embeddings for new entities (optional - may fail)
+        embeddings_created = 0
         if self.graph_store and results["concepts_extracted"] > 0:
-            self._update_progress("embeddings", 0.95, "새 항목 임베딩 생성 중...")
+            self._update_progress("embeddings", 0.90, "새 항목 임베딩 생성 중...")
             try:
-                await self.graph_store.create_embeddings(project_id=project_id)
+                embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
             except Exception as e:
-                logger.warning(f"Embedding creation failed: {e}")
-        
+                logger.warning(f"Embedding creation failed (continuing with co-occurrence): {e}")
+
+        # Build co-occurrence relationships (works without embeddings)
+        if self.graph_store and results["concepts_extracted"] > 0:
+            self._update_progress("building_relationships", 0.95, "관계 구축 중...")
+            try:
+                cooccurrence_count = await self._build_cooccurrence_relationships(
+                    project_id=project_id
+                )
+                results["relationships_created"] = cooccurrence_count
+                logger.info(f"Created {cooccurrence_count} co-occurrence relationships during sync")
+            except Exception as e:
+                logger.warning(f"Co-occurrence relationship building failed: {e}")
+
         self._update_progress("complete", 1.0, "동기화 완료!")
         
         return results

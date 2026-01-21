@@ -7,6 +7,7 @@ from .openai_provider import OpenAIProvider
 from .groq_provider import GroqProvider
 from .cached_provider import CachedLLMProvider, wrap_with_cache
 from .cohere_embeddings import CohereEmbeddingProvider, get_cohere_embeddings
+from .openai_embeddings import OpenAIEmbeddingProvider, get_openai_embeddings
 
 __all__ = [
     "BaseLLMProvider",
@@ -19,4 +20,6 @@ __all__ = [
     "wrap_with_cache",
     "CohereEmbeddingProvider",
     "get_cohere_embeddings",
+    "OpenAIEmbeddingProvider",
+    "get_openai_embeddings",
 ]

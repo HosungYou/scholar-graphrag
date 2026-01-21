@@ -139,6 +139,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const fgRef = useRef<any>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
+  // Double-click detection state
+  const lastClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
+  const DOUBLE_CLICK_THRESHOLD = 300; // ms
+
   // Build cluster color map
   const clusterColorMap = useMemo(() => {
     const colorMap = new Map<number, string>();
@@ -513,17 +517,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return false;
   }, []);
 
-  // Node click handler
-  const handleNodeClick = useCallback((nodeData: unknown) => {
-    const node = nodeData as ForceGraphNode;
-    if (onNodeClick) {
-      const originalNode = nodes.find(n => n.id === node.id);
-      if (originalNode) {
-        onNodeClick(originalNode);
-      }
-    }
-
-    // Focus camera on clicked node
+  // Focus camera on node helper function
+  const focusCameraOnNode = useCallback((node: ForceGraphNode) => {
     if (fgRef.current && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
       const distance = 200;
       fgRef.current.cameraPosition(
@@ -532,7 +527,42 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         1000
       );
     }
-  }, [nodes, onNodeClick]);
+  }, []);
+
+  // Node click handler - selects node, double-click focuses camera
+  const handleNodeClick = useCallback((nodeData: unknown) => {
+    const node = nodeData as ForceGraphNode;
+    const now = Date.now();
+
+    // Check for double-click
+    if (
+      lastClickRef.current &&
+      lastClickRef.current.nodeId === node.id &&
+      now - lastClickRef.current.timestamp < DOUBLE_CLICK_THRESHOLD
+    ) {
+      // Double-click detected - focus camera on node
+      focusCameraOnNode(node);
+      lastClickRef.current = null; // Reset after double-click
+      return;
+    }
+
+    // Single click - update last click reference and trigger selection
+    lastClickRef.current = { nodeId: node.id, timestamp: now };
+
+    if (onNodeClick) {
+      const originalNode = nodes.find(n => n.id === node.id);
+      if (originalNode) {
+        onNodeClick(originalNode);
+      }
+    }
+    // Note: Camera focus only happens on double-click for stable UX
+  }, [nodes, onNodeClick, focusCameraOnNode]);
+
+  // Node right-click handler - alternative way to focus camera on node
+  const handleNodeRightClick = useCallback((nodeData: unknown) => {
+    const node = nodeData as ForceGraphNode;
+    focusCameraOnNode(node);
+  }, [focusCameraOnNode]);
 
   // Node hover handler
   const handleNodeHover = useCallback((nodeData: unknown) => {
@@ -704,6 +734,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         linkDirectionalParticleColor={() => '#FFD700'}
         backgroundColor="#0d1117"
         onNodeClick={handleNodeClick}
+        onNodeRightClick={handleNodeRightClick}  // Right-click also focuses camera on node
         onNodeHover={handleNodeHover}
         onBackgroundClick={handleBackgroundClick}
         // Force simulation parameters (optimized for fast stabilization)
