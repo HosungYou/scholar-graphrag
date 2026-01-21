@@ -115,6 +115,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
   const currentStepIndex = job.current_step ? getStepIndex(job.current_step) : 0;
   const isComplete = job.status === 'completed';
 
+  // BUG-027 FIX: Backend sends progress as 0.0-1.0 fraction, convert to 0-100 percent
+  // Without this, Math.round(0.1) = 0 and width: "0.1%" makes the bar invisible
+  const progressPercent = Math.round((job.progress ?? 0) * 100);
+
   return (
     <div className="relative overflow-hidden bg-paper dark:bg-ink rounded-sm shadow-lg border-2 border-accent-teal/30">
       {/* Decorative corner accent */}
@@ -155,7 +159,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           </div>
           <div className="text-right">
             <div className="font-mono text-5xl text-white font-bold tracking-tight">
-              {Math.round(job.progress)}
+              {progressPercent}
               <span className="text-2xl text-accent-teal">%</span>
             </div>
           </div>
@@ -165,7 +169,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         <div className="mt-5 h-2 bg-white/10 rounded-full overflow-hidden">
           <div
             className="h-full bg-gradient-to-r from-accent-teal to-accent-teal/80 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(46,196,182,0.5)]"
-            style={{ width: `${job.progress}%` }}
+            style={{ width: `${progressPercent}%` }}
           />
         </div>
       </div>

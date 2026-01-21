@@ -327,9 +327,9 @@
 
 ---
 
-### BUG-027: Import Progress가 0%에서 멈춤 - JobStore 업데이트 누락
-- **Source**: Systematic Debugging Session 2026-01-21
-- **Status**: ⬜ Pending Verification
+### BUG-027: Import Progress가 0%에서 멈춤 - 다중 원인
+- **Source**: Systematic Debugging Session + Codex gpt-5.2-codex Review 2026-01-21
+- **Status**: ✅ Completed
 - **Priority**: 🔴 P0 (Critical - Import 완전 차단)
 - **Assignee**: Backend Team
 - **Files**:
@@ -380,11 +380,38 @@
       except RuntimeError:
           logger.warning("Could not update JobStore: no running event loop")
   ```
+- **Additional Root Cause (Codex gpt-5.2-codex Review)**:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │              Progress 단위 불일치 (핵심 원인)                    │
+  ├─────────────────────────────────────────────────────────────────┤
+  │                                                                 │
+  │  Backend: progress = 0.1 (10%를 의미하는 fraction 0.0-1.0)      │
+  │                    ↓                                            │
+  │  Frontend: Math.round(0.1) = 0, width: "0.1%" (거의 안보임)     │
+  │                    ↓                                            │
+  │  결과: UI에 항상 0% 표시!                                       │
+  │                                                                 │
+  └─────────────────────────────────────────────────────────────────┘
+  ```
+- **Additional Fix (Frontend)**:
+  ```typescript
+  // frontend/components/import/ImportProgress.tsx
+  // BUG-027 FIX: Backend sends progress as 0.0-1.0, convert to 0-100
+  const progressPercent = Math.round((job.progress ?? 0) * 100);
+
+  // Use progressPercent instead of job.progress
+  {progressPercent}%
+  style={{ width: `${progressPercent}%` }}
+  ```
 - **Acceptance Criteria**:
-  - [ ] progress_callback이 JobStore도 업데이트
+  - [x] progress_callback이 JobStore도 업데이트
+  - [x] Frontend가 progress를 100배로 스케일링
   - [ ] Zotero Import가 Validation → Parsing → Processing 진행
   - [ ] Frontend에서 실시간 progress 표시
 - **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Commits**: `16531bc` (JobStore update), `TBD` (Frontend scaling)
 - **Related**: BUG-026
 
 ---
