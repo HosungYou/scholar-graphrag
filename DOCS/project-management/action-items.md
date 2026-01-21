@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 10 | 10 | 0 | 0 |
-| 🟡 Medium | 6 | 6 | 0 | 0 |
+| 🔴 High | 12 | 12 | 0 | 0 |
+| 🟡 Medium | 7 | 7 | 0 | 0 |
 | 🟢 Low | 3 | 3 | 0 | 0 |
-| **Total** | **19** | **19** | **0** | **0** |
+| **Total** | **22** | **22** | **0** | **0** |
 
 ---
 
@@ -38,6 +38,40 @@
 
 ## 📝 Completed Items Archive
 
+### BUG-037: ImportJobResponse metadata 필드 누락
+- **Source**: UI-002 구현 중 발견 2026-01-21
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/routers/import_.py` - ImportJobResponse에 metadata 필드 추가
+- **Description**: `ImportJobResponse`에 `metadata` 필드가 없어서 프론트엔드가 project_name, checkpoint 정보를 받을 수 없음
+- **Solution Applied**:
+  - [x] `ImportJobResponse`에 `metadata: Optional[dict] = None` 필드 추가
+  - [x] `list_import_jobs` 엔드포인트에서 metadata 반환 추가
+- **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Notes**: BUG-036과 함께 Render 재배포 필요
+
+---
+
+### BUG-036: list_import_jobs INTERRUPTED 상태 누락
+- **Source**: 중단된 Import 미표시 문제 분석 2026-01-21
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/routers/import_.py` - status_map에 INTERRUPTED 추가
+- **Description**: `list_import_jobs` 엔드포인트의 `status_map`에 `INTERRUPTED` 상태가 누락되어 interrupted 상태의 job이 pending으로 잘못 표시됨
+- **Root Cause**:
+  - `get_job_status`에는 INTERRUPTED 매핑 있음
+  - `list_import_jobs`에는 INTERRUPTED 매핑 누락 (코드 복사 시 누락)
+- **Solution Applied**:
+  - [x] `status_map`에 `JobStatus.INTERRUPTED: ImportStatus.INTERRUPTED` 추가
+- **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Notes**: Render 재배포 필요
+
+---
+
 ### BUG-035: Resume Checkpoint project_id 누락
 - **Source**: 사용자 리포트 2026-01-21 (Resume 400 Bad Request)
 - **Status**: ✅ Completed
@@ -54,6 +88,27 @@
 - **Created**: 2026-01-21
 - **Completed**: 2026-01-21
 - **Notes**: Render 재배포 필요
+
+---
+
+### UI-002: 중단된 Import 목록 표시 기능
+- **Source**: 사용자 요청 2026-01-21
+- **Status**: ✅ Completed
+- **Assignee**: Frontend Team
+- **Files**:
+  - `frontend/app/projects/page.tsx` - InterruptedImportsSection 컴포넌트 추가
+  - `frontend/lib/api.ts` - getImportJobs() API 메서드 추가
+  - `frontend/types/graph.ts` - ImportJob 타입에 created_at, updated_at, metadata 추가
+- **Description**: 프로젝트 목록 페이지에서 중단된 Import를 확인하고 Resume 할 수 있어야 함
+- **Features Implemented**:
+  - [x] 중단된 Import 목록 표시 (amber 색상 경고 박스)
+  - [x] Resume 버튼으로 재시작 가능
+  - [x] 날짜 + 시간(HH:MM) 표시
+  - [x] 진행률 표시
+  - [x] 한국어 UI
+- **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Notes**: Vercel 자동 배포
 
 ---
 
