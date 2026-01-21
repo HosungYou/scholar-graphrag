@@ -404,14 +404,42 @@
   {progressPercent}%
   style={{ width: `${progressPercent}%` }}
   ```
+- **Phase 3 Fix (Fire-and-Forget Problem)**:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    Fire-and-Forget Problem                      │
+  ├─────────────────────────────────────────────────────────────────┤
+  │  asyncio.create_task()가 예외를 조용히 무시                     │
+  │  DB 업데이트 실패 시 → 메모리만 업데이트됨                       │
+  │  Status API는 DB 우선 조회 → stale 데이터 반환                  │
+  │                                                                 │
+  │  78% 계산: 0.25 + 0.65 * (8/10) = 0.77 ≈ 78%                   │
+  └─────────────────────────────────────────────────────────────────┘
+  ```
+- **BUG-027-C Fix (Error Callback)**:
+  ```python
+  task = loop.create_task(job_store.update_job(...))
+  def _handle_jobstore_error(t):
+      if t.exception():
+          logger.error(f"JobStore update failed: {t.exception()}")
+  task.add_done_callback(_handle_jobstore_error)
+  ```
+- **BUG-027-D Fix (Status API Prefer Recent Data)**:
+  ```python
+  # Compare timestamps between DB and in-memory
+  if legacy_updated > db_updated:
+      return legacy_data  # Use in-memory if more recent
+  ```
 - **Acceptance Criteria**:
   - [x] progress_callback이 JobStore도 업데이트
   - [x] Frontend가 progress를 100배로 스케일링
-  - [ ] Zotero Import가 Validation → Parsing → Processing 진행
-  - [ ] Frontend에서 실시간 progress 표시
+  - [x] Fire-and-forget tasks에 error callback 추가
+  - [x] Status API가 최신 데이터 소스를 우선 반환
+  - [ ] Zotero Import가 Validation → Parsing → Processing → Complete
+  - [ ] Frontend에서 실시간 progress 표시 (0% → 100%)
 - **Created**: 2026-01-21
 - **Completed**: 2026-01-21
-- **Commits**: `16531bc` (JobStore update), `TBD` (Frontend scaling)
+- **Commits**: `16531bc` (JobStore update), `12d6ae4` (Frontend scaling), `fef83eb` (Error callback + Status API fix)
 - **Related**: BUG-026
 
 ---
