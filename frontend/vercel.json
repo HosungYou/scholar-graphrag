@@ -19,7 +19,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://scholarag-graph-api.onrender.com/api/:path*"
+      "destination": "https://scholarag-graph-docker.onrender.com/api/:path*"
     }
   ]
 }
