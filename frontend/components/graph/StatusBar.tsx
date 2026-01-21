@@ -10,14 +10,17 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react';
+// Import the centralized API_URL which has enforceHttps applied
+import { API_URL } from '@/lib/api';
+
 /* ============================================================
    StatusBar - VS Design Diverge Style
    Shows real-time system status: LLM, Vectors, Data Source
 
    Design: Compact, monospace, high-contrast indicators
    ============================================================ */
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// NOTE: Removed local API_URL definition - now using centralized export from api.ts
+// This ensures HTTPS is enforced consistently across all components
 
 interface SystemStatus {
   llm: {

@@ -77,4 +77,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT:-10000}/health || exit 1
 
 # Run the application (Render injects PORT env var)
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}
+# CRITICAL: --proxy-headers enables X-Forwarded-Proto support for HTTPS redirects
+# --forwarded-allow-ips="*" trusts all proxies (Render's load balancer)
+# Without this, FastAPI redirects use http:// causing Mixed Content errors
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000} --proxy-headers --forwarded-allow-ips="*"

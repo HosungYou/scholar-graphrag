@@ -165,8 +165,9 @@ class ApiClient {
   }
 
   // Projects
+  // IMPORTANT: Use trailing slash to avoid FastAPI redirect (causes Mixed Content on Render)
   async getProjects(): Promise<Project[]> {
-    return this.request<Project[]>('/api/projects');
+    return this.request<Project[]>('/api/projects/');
   }
 
   async getProject(id: string): Promise<Project> {
@@ -174,7 +175,8 @@ class ApiClient {
   }
 
   async createProject(data: { name: string; research_question?: string }): Promise<Project> {
-    return this.request<Project>('/api/projects', {
+    // IMPORTANT: Use trailing slash to avoid FastAPI redirect
+    return this.request<Project>('/api/projects/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
