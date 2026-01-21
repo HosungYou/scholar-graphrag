@@ -4,6 +4,10 @@ Groq LLM Provider
 Supports Llama 3.3, Llama 3.1, and Mixtral models.
 FREE TIER: 14,400 requests/day, 300+ tokens/sec (fastest!)
 
+Rate Limits:
+- Free tier: ~30 requests/minute, 14,400 requests/day
+- Retry-After header respected on 429 responses
+
 Get API key: https://console.groq.com
 
 BUG-032 Fix: Added rate limiting and retry configuration to prevent 429 errors.
@@ -26,50 +30,34 @@ class AsyncRateLimiter:
 
     Prevents 429 (Too Many Requests) errors by throttling requests
     when multiple concurrent calls are made.
+
+    Implements smooth rate limiting using interval-based approach.
     """
 
-    def __init__(self, requests_per_second: float = 2.0):
+    def __init__(self, requests_per_minute: int = 20):
         """
         Initialize rate limiter.
 
         Args:
-            requests_per_second: Maximum requests per second (default: 2.0)
+            requests_per_minute: Maximum requests per minute (default: 20 for safety margin)
         """
-        self.rate = requests_per_second
-        self.tokens = requests_per_second
-        self.last_update = time.monotonic()
+        self.requests_per_minute = requests_per_minute
+        self.min_interval = 60.0 / requests_per_minute  # seconds between requests
+        self._last_request_time: float = 0.0
         self._lock = asyncio.Lock()
 
     async def acquire(self):
-        """
-        Acquire a token to make a request.
-        Blocks if rate limit would be exceeded.
-        """
+        """Wait until a request can be made without exceeding rate limit."""
         async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self.last_update
-            self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
-            self.last_update = now
+            current_time = time.monotonic()
+            time_since_last = current_time - self._last_request_time
 
-            if self.tokens < 1:
-                wait_time = (1 - self.tokens) / self.rate
-                logger.debug(f"Rate limit: waiting {wait_time:.2f}s")
+            if time_since_last < self.min_interval:
+                wait_time = self.min_interval - time_since_last
+                logger.debug(f"Rate limiter: waiting {wait_time:.2f}s")
                 await asyncio.sleep(wait_time)
-                self.tokens = 0
-            else:
-                self.tokens -= 1
 
-
-# Shared rate limiter instance for all Groq requests
-_groq_rate_limiter: Optional[AsyncRateLimiter] = None
-
-
-def _get_rate_limiter(requests_per_second: float = 2.0) -> AsyncRateLimiter:
-    """Get or create the shared rate limiter."""
-    global _groq_rate_limiter
-    if _groq_rate_limiter is None:
-        _groq_rate_limiter = AsyncRateLimiter(requests_per_second)
-    return _groq_rate_limiter
+            self._last_request_time = time.monotonic()
 
 
 class GroqProvider(BaseLLMProvider):
@@ -81,6 +69,12 @@ class GroqProvider(BaseLLMProvider):
     - llama-3.1-8b-instant: Fastest
     - mixtral-8x7b-32768: Good for long context
     - gemma2-9b-it: Google's Gemma 2
+
+    Features:
+    - Automatic retry on 429 (rate limit) errors
+    - Respects Retry-After header
+    - Client-side rate limiting to prevent 429s
+    - Exponential backoff for transient errors
     """
 
     MODELS = {
@@ -93,9 +87,21 @@ class GroqProvider(BaseLLMProvider):
     # Groq API base URL (OpenAI compatible)
     BASE_URL = "https://api.groq.com/openai/v1"
 
-    def __init__(self, api_key: str):
+    # Retry configuration
+    MAX_RETRIES = 3
+    DEFAULT_TIMEOUT = 60  # seconds
+
+    def __init__(self, api_key: str, requests_per_minute: int = 20):
+        """
+        Initialize Groq provider.
+
+        Args:
+            api_key: Groq API key
+            requests_per_minute: Rate limit (default: 20 for safety margin)
+        """
         self.api_key = api_key
         self._client = None
+        self._rate_limiter = AsyncRateLimiter(requests_per_minute)
 
     @property
     def name(self) -> str:
@@ -136,6 +142,93 @@ class GroqProvider(BaseLLMProvider):
         """Get model based on accuracy requirement."""
         return self.MODELS["default"] if use_accurate else self.MODELS["fast"]
 
+    async def _execute_with_retry(self, operation, operation_name: str = "API call"):
+        """
+        Execute an async operation with retry logic.
+
+        Handles:
+        - 429 (rate limit) errors with Retry-After header
+        - Transient errors with exponential backoff
+        - Timeout errors
+
+        Args:
+            operation: Async callable to execute
+            operation_name: Name for logging
+
+        Returns:
+            Result of the operation
+
+        Raises:
+            Exception: After max retries exhausted
+        """
+        last_exception = None
+
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Apply rate limiting before request
+                await self._rate_limiter.acquire()
+
+                return await operation()
+
+            except Exception as e:
+                last_exception = e
+                error_str = str(e).lower()
+                error_type = type(e).__name__
+
+                # Handle rate limit errors (429)
+                if "rate" in error_str and "limit" in error_str or "429" in error_str:
+                    # Try to extract Retry-After from error message
+                    retry_after = self._extract_retry_after(str(e))
+                    logger.warning(
+                        f"Groq rate limited on {operation_name} (attempt {attempt + 1}/{self.MAX_RETRIES}), "
+                        f"waiting {retry_after}s"
+                    )
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                # Handle timeout errors
+                if "timeout" in error_str or "timed out" in error_str:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
+                    logger.warning(
+                        f"Groq timeout on {operation_name} (attempt {attempt + 1}/{self.MAX_RETRIES}), "
+                        f"waiting {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                # Handle connection errors
+                if "connection" in error_str or "network" in error_str:
+                    wait_time = 2 ** attempt
+                    logger.warning(
+                        f"Groq connection error on {operation_name} (attempt {attempt + 1}/{self.MAX_RETRIES}), "
+                        f"waiting {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                # For other errors, don't retry
+                logger.error(f"Groq {operation_name} error ({error_type}): {self._sanitize_error(str(e))}")
+                raise
+
+        # All retries exhausted
+        logger.error(f"Groq {operation_name} failed after {self.MAX_RETRIES} retries")
+        raise last_exception
+
+    def _extract_retry_after(self, error_message: str) -> int:
+        """Extract retry-after value from error message or return default."""
+        import re
+        # Try to find retry-after in various formats
+        patterns = [
+            r'retry[_-]?after[:\s]+(\d+)',
+            r'wait[:\s]+(\d+)',
+            r'(\d+)\s*seconds?',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, error_message, re.IGNORECASE)
+            if match:
+                return min(int(match.group(1)), 120)  # Cap at 2 minutes
+        return 10  # Default wait time
+
     async def generate(
         self,
         prompt: str,
@@ -145,22 +238,13 @@ class GroqProvider(BaseLLMProvider):
         model: Optional[str] = None,
         use_accurate: bool = False,
     ) -> str:
-        """
-        Generate response using Groq API (OpenAI compatible).
-        BUG-032 Fix: Added rate limiting to prevent 429 errors.
-        """
+        """Generate response using Groq API with automatic retry."""
         model_to_use = model or self.get_model(use_accurate)
 
-        # BUG-032 Fix: Apply rate limiting before making request
-        rate_limiter = _get_rate_limiter()
-        await rate_limiter.acquire()
-
-        try:
+        async def _call():
             messages = []
-
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
-
             messages.append({"role": "user", "content": prompt})
 
             response = await self.client.chat.completions.create(
@@ -169,13 +253,9 @@ class GroqProvider(BaseLLMProvider):
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
-
             return response.choices[0].message.content
 
-        except Exception as e:
-            error_type = type(e).__name__
-            logger.error(f"Groq API error ({error_type}): {self._sanitize_error(str(e))}")
-            raise
+        return await self._execute_with_retry(_call, "generate")
 
     async def generate_stream(
         self,
@@ -191,9 +271,8 @@ class GroqProvider(BaseLLMProvider):
         """
         model_to_use = model or self.default_model
 
-        # BUG-032 Fix: Apply rate limiting before making request
-        rate_limiter = _get_rate_limiter()
-        await rate_limiter.acquire()
+        # Apply rate limiting before making request
+        await self._rate_limiter.acquire()
 
         try:
             messages = []
@@ -227,21 +306,13 @@ class GroqProvider(BaseLLMProvider):
         max_tokens: int = 1000,
         temperature: float = 0.1,
     ) -> dict:
-        """
-        Generate JSON response using Groq's JSON mode.
-        BUG-032 Fix: Added rate limiting.
-        """
+        """Generate JSON response using Groq's JSON mode with automatic retry."""
         import json
 
         model_to_use = self.default_model
 
-        # BUG-032 Fix: Apply rate limiting before making request
-        rate_limiter = _get_rate_limiter()
-        await rate_limiter.acquire()
-
-        try:
+        async def _call():
             messages = []
-
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
 
@@ -256,12 +327,12 @@ class GroqProvider(BaseLLMProvider):
                 temperature=temperature,
                 response_format={"type": "json_object"},
             )
-
             return json.loads(response.choices[0].message.content)
 
+        try:
+            return await self._execute_with_retry(_call, "generate_json")
         except Exception as e:
-            error_type = type(e).__name__
-            logger.error(f"Groq JSON generation error ({error_type}): {self._sanitize_error(str(e))}")
+            logger.error(f"Groq JSON generation failed: {self._sanitize_error(str(e))}")
             return {}
 
     @staticmethod

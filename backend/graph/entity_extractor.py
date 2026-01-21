@@ -372,14 +372,14 @@ class EntityExtractor:
     ) -> list:
         """
         Extract entities from text (wrapper for compatibility with importers).
-        
+
         Args:
             text: Text to extract entities from (abstract or full text)
             title: Paper title
             context: Research context (not used, for API compatibility)
             seed_concepts: User-provided concepts (from Zotero tags) to boost
             user_notes: User notes to include in extraction context
-            
+
         Returns:
             List of ExtractedEntity objects
         """
@@ -392,10 +392,10 @@ class EntityExtractor:
             seed_concepts=seed_concepts,
             user_notes=user_notes,
         )
-        
+
         # Convert dict result to list of ExtractedEntity
         entities = []
-        
+
         for entity_type, entity_list in result.items():
             if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets"):
                 type_map = {
@@ -419,7 +419,7 @@ class EntityExtractor:
                         ))
                     elif isinstance(entity_data, ExtractedEntity):
                         entities.append(entity_data)
-        
+
         # Add seed concepts as high-confidence USER_TAG entities
         if seed_concepts:
             for tag in seed_concepts:
@@ -433,7 +433,7 @@ class EntityExtractor:
                         confidence=0.95,  # High confidence for user-provided tags
                         properties={"source": "zotero_tag", "user_provided": True},
                     ))
-        
+
         return entities
 
     async def _llm_extraction(
@@ -532,42 +532,67 @@ class EntityExtractor:
             logger.error(f"LLM extraction failed after {MAX_RETRIES + 1} attempts: {last_error}")
         return self._empty_result()
 
-    def _extract_json_from_text(self, response: str) -> Optional[dict]:
+    def _extract_json_from_text(self, text: str) -> Optional[dict]:
         """
-        BUG-031 Fix: Extract JSON from LLM text response using multiple strategies.
+        BUG-031 Fix: Extract JSON from LLM response using multiple strategies.
 
         Strategies (in order):
-        1. Check if response is already a dict (from generate_json)
-        2. Extract from markdown code blocks (```json ... ```)
-        3. Use find/rfind for balanced braces (safer than greedy regex)
+        1. Direct JSON parse (if response is pure JSON)
+        2. Code block extraction (```json ... ```)
+        3. Greedy brace matching (first { to last })
+        4. Relaxed brace matching (any valid JSON object)
+
+        Returns:
+            Parsed JSON dict or None if extraction fails
         """
-        if not response:
+        if not text or not text.strip():
             return None
 
-        # Strategy 1: Already a dict (from generate_json)
-        if isinstance(response, dict):
-            return response
+        text = text.strip()
 
-        # Strategy 2: Markdown code block extraction
-        code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response)
+        # Handle if already a dict (from generate_json)
+        if isinstance(text, dict):
+            return text
+
+        # Strategy 1: Try direct JSON parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Strategy 2: Extract from code block (```json ... ``` or ``` ... ```)
+        code_block_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
         if code_block_match:
             try:
                 return json.loads(code_block_match.group(1).strip())
             except json.JSONDecodeError:
-                pass  # Fall through to next strategy
+                pass
 
-        # Strategy 3: Find/rfind approach (safer than greedy regex)
-        # This handles nested braces better than r'\{[\s\S]*\}'
-        json_start = response.find("{")
-        json_end = response.rfind("}") + 1
-        if json_start >= 0 and json_end > json_start:
+        # Strategy 3: Greedy brace matching (first { to last })
+        first_brace = text.find('{')
+        last_brace = text.rfind('}')
+        if first_brace != -1 and last_brace > first_brace:
             try:
-                return json.loads(response[json_start:json_end])
+                return json.loads(text[first_brace:last_brace + 1])
             except json.JSONDecodeError:
-                pass  # Fall through to warning
+                pass
 
-        # All strategies failed
-        logger.warning(f"No valid JSON found in LLM response: {response[:200]}...")
+        # Strategy 4: Find any valid JSON object using regex
+        json_patterns = [
+            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Nested objects
+            r'\{[\s\S]*?\}',  # Any JSON-like structure
+        ]
+        for pattern in json_patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                try:
+                    parsed = json.loads(match)
+                    if isinstance(parsed, dict) and any(k in parsed for k in ['concepts', 'methods', 'findings']):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
+
+        logger.warning(f"Failed to extract JSON from response (length={len(text)})")
         return None
 
     def _parse_json_data(self, data: dict, paper_id: Optional[str]) -> dict:
@@ -873,27 +898,27 @@ class EntityExtractor:
     ) -> List:
         """
         Extract entities from paper sections using section-specific prompts.
-        
+
         This method provides more accurate extraction by using prompts
         tailored to each section type (introduction, methodology, results, discussion).
-        
+
         Args:
             sections: List of dicts with 'section_type', 'text', 'title' keys
                       (compatible with SemanticChunker Section output)
             paper_id: Optional paper ID for tracking source
-            
+
         Returns:
             List of ExtractedEntity objects
         """
         all_entities = []
-        
+
         for section in sections:
             section_type = section.get("section_type", "unknown").lower()
             text = section.get("text", "")
-            
+
             if not text or len(text) < 50:
                 continue
-            
+
             # Get section-specific prompt or fall back to default
             if section_type in ("methodology", "methods"):
                 prompt_template = SECTION_PROMPTS.get("methodology")
@@ -906,30 +931,30 @@ class EntityExtractor:
             else:
                 # Use fast extraction for other sections
                 prompt_template = None
-            
+
             if prompt_template and self.llm:
                 try:
                     # Use section-specific prompt
                     prompt = prompt_template.format(text=text[:3000])
-                    
+
                     response = await self.llm.generate(
                         prompt,
                         max_tokens=1000,
                         temperature=0.1,
                     )
-                    
+
                     # Parse response
                     result = self._parse_llm_response(response, paper_id)
-                    
+
                     # Convert to entities with section metadata
                     for entity_type, entity_list in result.items():
                         for entity in entity_list:
                             if isinstance(entity, ExtractedEntity):
                                 entity.properties["source_section"] = section_type
                                 all_entities.append(entity)
-                    
+
                     logger.debug(f"Extracted {len(result)} entity types from {section_type} section")
-                    
+
                 except Exception as e:
                     logger.warning(f"Section extraction failed for {section_type}: {e}")
             else:
@@ -939,13 +964,13 @@ class EntityExtractor:
                     abstract=text[:2000],
                     paper_id=paper_id,
                 )
-                
+
                 for entity_type, entity_list in result.items():
                     for entity in entity_list:
                         if isinstance(entity, ExtractedEntity):
                             entity.properties["source_section"] = section_type
                             all_entities.append(entity)
-        
+
         # Deduplicate entities by name
         seen_names = set()
         unique_entities = []
@@ -953,9 +978,9 @@ class EntityExtractor:
             if entity.name not in seen_names:
                 seen_names.add(entity.name)
                 unique_entities.append(entity)
-        
+
         logger.info(f"Section-aware extraction: {len(unique_entities)} unique entities from {len(sections)} sections")
-        
+
         return unique_entities
 
 
