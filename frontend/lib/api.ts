@@ -39,11 +39,19 @@ const getRawApiUrl = () => {
 
 // Force HTTPS in production to prevent Mixed Content errors
 // This handles cases where NEXT_PUBLIC_API_URL is accidentally set to HTTP
+// BUG-016 Fix: Also enforce HTTPS during SSR (when window is undefined)
 const enforceHttps = (url: string): string => {
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-    // In HTTPS context, force API URL to use HTTPS
+  // Always force HTTPS for known production domains (works during SSR)
+  // This is critical because window is undefined during Next.js SSR
+  if (url.includes('onrender.com') || url.includes('vercel.app') || url.includes('render.com')) {
     return url.replace(/^http:\/\//, 'https://');
   }
+
+  // Client-side: force HTTPS when page is loaded over HTTPS
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return url.replace(/^http:\/\//, 'https://');
+  }
+
   return url;
 };
 
