@@ -21,6 +21,7 @@ from middleware.rate_limiter import RateLimiterMiddleware, init_rate_limit_store
 from middleware.quota_service import init_quota_service
 from middleware.quota_middleware import QuotaTrackingMiddleware
 from middleware.error_tracking import ErrorTrackingMiddleware, init_error_tracker
+from middleware.cors_error_handler import CORSErrorHandlerMiddleware
 from jobs.job_store import JobStore
 
 logging.basicConfig(level=logging.INFO)
@@ -173,6 +174,13 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# INFRA-007: CORS Error Handler Middleware
+# Must be added BEFORE CORSMiddleware so that error responses
+# pass through CORS and get proper headers added.
+# This handles exceptions from FastAPI routes but NOT Render LB 502/503.
+app.add_middleware(CORSErrorHandlerMiddleware)
+logger.info("CORS Error Handler: enabled (INFRA-007)")
 
 # CORS middleware
 # SECURITY: Use explicit origins + strict regex for Vercel previews.

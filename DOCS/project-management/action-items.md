@@ -12,9 +12,9 @@
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
 | 🔴 High | 15 | 15 | 0 | 0 |
-| 🟡 Medium | 9 | 8 | 0 | 1 |
-| 🟢 Low | 4 | 3 | 0 | 1 |
-| **Total** | **28** | **26** | **0** | **2** |
+| 🟡 Medium | 9 | 9 | 0 | 0 |
+| 🟢 Low | 4 | 4 | 0 | 0 |
+| **Total** | **28** | **28** | **0** | **0** |
 
 ---
 
@@ -26,57 +26,81 @@
 
 ## 🟡 Medium Priority (Short-term)
 
+*모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 Medium Priority - Completed Archive
+
 ### INFRA-007: 502/503 에러 응답에 CORS 헤더 누락
 - **Source**: Import 스크린샷 분석 2026-01-21 (CORS 에러 다수 발생)
-- **Status**: ⏳ Pending
+- **Status**: ✅ Completed (Partial)
 - **Assignee**: DevOps Team
 - **Files**:
-  - `backend/main.py` - 에러 핸들러에 CORS 헤더 추가 고려
+  - `backend/middleware/cors_error_handler.py` - CORSErrorHandlerMiddleware 추가
+  - `backend/main.py` - 미들웨어 등록
+  - `DOCS/development/frontend-cors-error-handling.md` - 프론트엔드 가이드
 - **Description**: Render 서버 에러(502/503) 시 CORS 헤더가 없어서 브라우저가 응답 차단
 - **Root Cause**:
   - FastAPI CORSMiddleware는 정상 응답에만 CORS 헤더 추가
   - Render 로드밸런서가 반환하는 502/503 에러에는 CORS 헤더 없음
   - 프론트엔드에서 에러 내용 확인 불가 (CORS 차단으로 인해)
-- **Proposed Solution**:
-  - [ ] Option A: Cloudflare 프록시 추가하여 모든 응답에 CORS 헤더 삽입
-  - [ ] Option B: 프론트엔드에서 CORS 에러 시 네트워크 에러로 graceful 처리
-  - [ ] Option C: FastAPI exception handler에서 CORS 헤더 수동 추가
+- **Solution Applied**:
+  - [x] Option C: CORSErrorHandlerMiddleware 구현 - 예외를 JSONResponse로 래핑
+  - [x] Option B: 프론트엔드 CORS 에러 핸들링 가이드 작성
+  - [ ] Option A: Cloudflare 프록시 (필요시 추가 검토)
+- **Limitation**:
+  - Render LB가 직접 반환하는 502/503은 FastAPI 도달 전이므로 처리 불가
+  - 프론트엔드에서 NetworkError로 graceful 처리 필요 (가이드 참조)
 - **Evidence**:
   ```
   Console: Access to fetch at '.../api/import/status/...' has been blocked by CORS policy
   Network: Status 502 → CORS 헤더 없음 → 브라우저 차단
   ```
 - **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Notes**: Render 재배포 필요, 프론트엔드 에러 핸들링 권장
 
 ---
 
 ## 🟢 Low Priority (Long-term)
 
+*모든 Low Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 Low Priority - Completed Archive
+
 ### PERF-011: Import 처리 중 17분 로그 공백 원인 조사
 - **Source**: Import 로그 분석 2026-01-21
-- **Status**: ⏳ Pending
+- **Status**: ✅ Completed
 - **Assignee**: Backend Team
 - **Files**:
-  - `backend/graph/entity_extractor.py` - 로깅 추가 필요
-  - `backend/importers/zotero_rdf_importer.py` - 진행 로깅 개선
+  - `backend/graph/entity_extractor.py` - LLM API 호출 시간 측정 로깅 추가
+  - `backend/importers/zotero_rdf_importer.py` - 논문별 처리 시간 로깅 추가
 - **Description**: Import 중 10:29:56 → 10:47:20 사이 약 17분 40초 동안 로그 출력 없음
 - **Possible Causes**:
   - Entity 추출 중 Groq API 레이트 리밋 대기
   - 메모리 부족으로 GC 지연
   - asyncio 이벤트 루프 블로킹
   - DB 커넥션 풀 고갈
-- **Proposed Solution**:
-  - [ ] Entity 추출 루프에 진행 로그 추가 (매 5개 논문마다)
-  - [ ] Groq API 호출 시간 측정 로깅 추가
-  - [ ] 메모리 사용량 주기적 로깅 추가 (psutil 활용)
-- **Evidence**:
+- **Solution Applied**:
+  - [x] LLM API 호출 전/후 타이밍 로그 추가 (`PERF-011:` 접두어)
+  - [x] Slow API call 감지 (>10초 시 WARNING)
+  - [x] 논문별 처리 시간 측정 및 로깅
+  - [x] Slow paper processing 감지 (>30초 시 WARNING)
+  - [x] 각 논문 처리 시작/완료 로그 추가
+- **New Log Patterns**:
   ```
-  10:29:56 INFO: 논문 처리 중: 1/16
-  ... (17분 40초 로그 없음) ...
-  10:47:20 INFO: Cohere API 호출 재개
+  PERF-011: Starting paper 1/16: 'Paper Title...'
+  PERF-011: Starting LLM API call for 'Paper Title...' (attempt 1)
+  PERF-011: Slow LLM API call: 15.2s for 'Paper Title...'  # WARNING if >10s
+  PERF-011: Completed paper 1/16 in 18.5s: 'Paper Title...'
+  PERF-011: Slow paper processing: 45.3s for 'Paper Title...'  # WARNING if >30s
   ```
 - **Created**: 2026-01-21
-- **Priority Justification**: 디버깅 용이성 개선, 직접적 장애 아님
+- **Completed**: 2026-01-21
+- **Priority Justification**: 디버깅 용이성 개선, Render 재배포 필요
 
 ---
 

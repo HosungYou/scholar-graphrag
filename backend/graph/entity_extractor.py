@@ -21,11 +21,16 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# PERF-011: Slow API call threshold (seconds)
+SLOW_API_THRESHOLD = 10.0
 
 
 # PERF-013: Optimized retry constants (reduced from 2/1.0 to 1/0.5)
@@ -470,9 +475,14 @@ class EntityExtractor:
             )
 
         # BUG-031 Fix: Add retry logic for resilience
+        # PERF-011: Track timing for debugging long API calls
         last_error = None
         for attempt in range(MAX_RETRIES + 1):
             try:
+                # PERF-011: Log before API call to track gaps
+                api_start_time = time.time()
+                logger.debug(f"PERF-011: Starting LLM API call for '{title[:40]}...' (attempt {attempt + 1})")
+
                 # Try generate_json() first if available (BUG-031 Fix)
                 if hasattr(self.llm, 'generate_json'):
                     try:
@@ -481,11 +491,16 @@ class EntityExtractor:
                             max_tokens=1500,
                             temperature=0.1,
                         )
+                        # PERF-011: Log API call timing
+                        api_elapsed = time.time() - api_start_time
+                        if api_elapsed > SLOW_API_THRESHOLD:
+                            logger.warning(f"PERF-011: Slow LLM API call: {api_elapsed:.1f}s for '{title[:40]}...'")
+
                         # generate_json returns dict directly
                         if isinstance(response, dict) and response:
                             result = self._parse_json_data(response, paper_id)
                             logger.info(
-                                f"Extracted from '{title[:40]}...': "
+                                f"Extracted from '{title[:40]}...' ({api_elapsed:.1f}s): "
                                 f"{len(result['concepts'])} concepts, "
                                 f"{len(result['methods'])} methods, "
                                 f"{len(result['findings'])} findings"
@@ -495,12 +510,22 @@ class EntityExtractor:
                         logger.debug(f"generate_json() failed, falling back to generate(): {json_err}")
 
                 # Fallback to generate() with manual JSON parsing
+                # PERF-011: Reset timer for generate() fallback
+                if not hasattr(self.llm, 'generate_json'):
+                    api_start_time = time.time()
+                    logger.debug(f"PERF-011: Starting LLM generate() for '{title[:40]}...'")
+
                 response = await self.llm.generate(
                     prompt,
                     max_tokens=1500,
                     temperature=0.1,
                     use_accurate=use_accurate,
                 )
+
+                # PERF-011: Log API call timing for generate()
+                api_elapsed = time.time() - api_start_time
+                if api_elapsed > SLOW_API_THRESHOLD:
+                    logger.warning(f"PERF-011: Slow LLM generate() call: {api_elapsed:.1f}s for '{title[:40]}...'")
 
                 # Parse response
                 result = self._parse_llm_response(response, paper_id)
@@ -510,14 +535,14 @@ class EntityExtractor:
                 if result is not None:
                     if result['concepts'] or result['methods'] or result['findings']:
                         logger.info(
-                            f"Extracted from '{title[:40]}...': "
+                            f"Extracted from '{title[:40]}...' ({api_elapsed:.1f}s): "
                             f"{len(result['concepts'])} concepts, "
                             f"{len(result['methods'])} methods, "
                             f"{len(result['findings'])} findings"
                         )
                     else:
                         # PERF-013: Empty but valid result - don't retry
-                        logger.info(f"No entities in '{title[:40]}...' (valid response, skipping retry)")
+                        logger.info(f"No entities in '{title[:40]}...' ({api_elapsed:.1f}s, valid response)")
                     return result
 
                 # Only retry if result is None (actual failure)

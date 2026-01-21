@@ -23,6 +23,7 @@ import gc
 import logging
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -772,6 +773,9 @@ class ZoteroRDFImporter:
                 logger.debug(f"Skipping already processed paper: {item.item_key}")
                 continue
 
+            # PERF-011: Track timing for each paper to identify slow processing
+            paper_start_time = time.time()
+
             try:
                 # BUG-028 Extension: Update progress with current paper info for checkpoint
                 self.progress.current_paper_id = item.item_key
@@ -783,6 +787,9 @@ class ZoteroRDFImporter:
                     progress_pct,
                     f"논문 처리 중: {i+1}/{len(items)} - {item.title[:50]}..."
                 )
+
+                # PERF-011: Log paper processing start
+                logger.info(f"PERF-011: Starting paper {i+1}/{len(items)}: '{item.title[:50]}...'")
 
                 # Get PDF text if available
                 pdf_text = ""
@@ -884,6 +891,19 @@ class ZoteroRDFImporter:
 
                     except Exception as e:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
+
+                # PERF-011: Log paper processing completion with timing
+                paper_elapsed = time.time() - paper_start_time
+                if paper_elapsed > 30.0:  # Warn if paper takes more than 30 seconds
+                    logger.warning(
+                        f"PERF-011: Slow paper processing: {paper_elapsed:.1f}s for "
+                        f"'{item.title[:40]}...' (paper {i+1}/{len(items)})"
+                    )
+                else:
+                    logger.info(
+                        f"PERF-011: Completed paper {i+1}/{len(items)} in {paper_elapsed:.1f}s: "
+                        f"'{item.title[:40]}...'"
+                    )
 
             except Exception as e:
                 error_msg = f"항목 처리 실패 ({item.title}): {e}"
