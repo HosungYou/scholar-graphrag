@@ -28,9 +28,11 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
-# BUG-031 Fix: Constants for retry logic
-MAX_RETRIES = 2
-RETRY_DELAY_SECONDS = 1.0
+# PERF-013: Optimized retry constants (reduced from 2/1.0 to 1/0.5)
+# - Max API calls: 3 → 2 (33% reduction)
+# - Recovery time: 1.0s → 0.5s
+MAX_RETRIES = 1
+RETRY_DELAY_SECONDS = 0.5
 
 
 class EntityType(str, Enum):
@@ -503,19 +505,24 @@ class EntityExtractor:
                 # Parse response
                 result = self._parse_llm_response(response, paper_id)
 
-                # Check if extraction was successful (at least one concept)
-                if result['concepts'] or result['methods'] or result['findings']:
-                    logger.info(
-                        f"Extracted from '{title[:40]}...': "
-                        f"{len(result['concepts'])} concepts, "
-                        f"{len(result['methods'])} methods, "
-                        f"{len(result['findings'])} findings"
-                    )
+                # PERF-013: Accept valid responses even if empty (prevent unnecessary retries)
+                # A valid response with no entities is better than retrying and hitting rate limits
+                if result is not None:
+                    if result['concepts'] or result['methods'] or result['findings']:
+                        logger.info(
+                            f"Extracted from '{title[:40]}...': "
+                            f"{len(result['concepts'])} concepts, "
+                            f"{len(result['methods'])} methods, "
+                            f"{len(result['findings'])} findings"
+                        )
+                    else:
+                        # PERF-013: Empty but valid result - don't retry
+                        logger.info(f"No entities in '{title[:40]}...' (valid response, skipping retry)")
                     return result
 
-                # No entities extracted, might be a parsing issue
+                # Only retry if result is None (actual failure)
                 if attempt < MAX_RETRIES:
-                    logger.warning(f"No entities extracted, retrying ({attempt + 1}/{MAX_RETRIES})")
+                    logger.warning(f"Null result, retrying ({attempt + 1}/{MAX_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY_SECONDS)
                     continue
 
