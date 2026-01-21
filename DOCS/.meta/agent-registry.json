@@ -1,10 +1,47 @@
 {
-  "version": "1.6.0",
-  "last_updated": "2026-01-21T02:30:00Z",
+  "version": "1.7.0",
+  "last_updated": "2026-01-21T04:00:00Z",
   "project": "ScholaRAG_Graph",
   "repository": "https://github.com/HosungYou/ScholaRAG_Graph",
 
   "sessions": [
+    {
+      "id": "2026-01-21_brainstorming-vercel-url-fix",
+      "date": "2026-01-21T03:30:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "debugging",
+      "feature": "vercel-url-fix",
+      "duration_minutes": 30,
+      "skills_used": ["superpowers:brainstorming", "superpowers:dispatching-parallel-agents", "superpowers:systematic-debugging"],
+      "files_read": 12,
+      "files_created": 1,
+      "files_modified": 3,
+      "lines_added": 52,
+      "lines_removed": 3,
+      "artifacts": [
+        "frontend/vercel.json",
+        "frontend/.env.local.example",
+        "DOCS/.meta/sessions/2026-01-21_brainstorming-vercel-url-fix.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [
+        "Use brainstorming skill for systematic problem exploration",
+        "Browser automation for direct verification of Vercel env vars",
+        "Parallel agent dispatching for independent problem investigation"
+      ],
+      "outcome": "completed",
+      "follow_up_required": false,
+      "bugs_fixed": [
+        "BUG-018: vercel.json deprecated Render service URL"
+      ],
+      "deployment_verified": true,
+      "commits": ["3523eb4", "659eb28"],
+      "parallel_agents_dispatched": 3,
+      "browser_automation_actions": 8,
+      "methodology": "superpower-skills-based",
+      "root_cause_discovery": "vercel.json rewrite pointing to deleted service",
+      "related_issues": ["INFRA-004"]
+    },
     {
       "id": "2026-01-21_parallel-agent-debugging-deployment-fix",
       "date": "2026-01-21T02:00:00Z",
