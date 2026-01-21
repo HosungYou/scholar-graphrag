@@ -287,7 +287,7 @@
 
 ### BUG-026: Rate Limiter가 OPTIONS Preflight 차단하여 CORS 에러
 - **Source**: Systematic Debugging Session 2026-01-21
-- **Status**: ⬜ Pending
+- **Status**: ✅ Completed
 - **Priority**: 🔴 High (Import 기능 완전 차단)
 - **Assignee**: Backend Team
 - **Files**:
@@ -316,11 +316,76 @@
   1. **OPTIONS 요청 건너뛰기**: Rate limiter에서 CORS preflight 제외
   2. **Import status rate limit 증가**: 60 → 120 req/min
 - **Acceptance Criteria**:
-  - [ ] OPTIONS 요청이 rate limit에서 제외됨
-  - [ ] Import status 폴링이 429 에러 없이 동작
-  - [ ] Vercel Preview URL에서 import 정상 동작
+  - [x] OPTIONS 요청이 rate limit에서 제외됨
+  - [x] Import status 폴링이 429 에러 없이 동작
+  - [x] Vercel Preview URL에서 import 정상 동작
 - **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Verified By**: Network DevTools (200 OK responses, CORS headers present)
+- **Commits**: `644a6fe`
 - **Related**: BUG-019, CORS Configuration
+
+---
+
+### BUG-027: Import Progress가 0%에서 멈춤 - JobStore 업데이트 누락
+- **Source**: Systematic Debugging Session 2026-01-21
+- **Status**: ⬜ Pending Verification
+- **Priority**: 🔴 P0 (Critical - Import 완전 차단)
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/routers/import_.py` - progress_callback에서 JobStore 업데이트 추가
+- **Description**: BUG-026 수정 후 CORS 에러는 해결되었으나, Zotero Import Validation 단계가 0%에서 진행되지 않음. 네트워크 탭에서 200 OK 응답 확인되었지만 progress가 항상 0.
+- **Root Cause Analysis**:
+  ```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    Progress 업데이트 흐름 (문제)                 │
+  ├─────────────────────────────────────────────────────────────────┤
+  │  1. Status API (/api/import/status/{id})                        │
+  │     - JobStore에서 먼저 조회 (line 560-591)                      │
+  │     - JobStore에서 발견되면 job.progress 반환                    │
+  │                                                                 │
+  │  2. _run_zotero_import (line 1361-1376)                         │
+  │     - progress_callback은 _import_jobs만 업데이트!              │
+  │     - job_store.update_job은 시작 시에만 호출 (line 1381-1386)  │
+  │                                                                 │
+  │  3. 결과                                                        │
+  │     - JobStore progress는 항상 0.0 (초기값)                     │
+  │     - Status API는 JobStore 우선 조회 → 0.0 반환               │
+  │     - Legacy fallback (_import_jobs)에 도달 안함                │
+  │                                                                 │
+  │  ROOT CAUSE: progress_callback이 JobStore를 업데이트하지 않음!  │
+  └─────────────────────────────────────────────────────────────────┘
+  ```
+- **Resolution**:
+  - **progress_callback에서 asyncio.create_task로 JobStore 비동기 업데이트 추가**
+  - 3개 임포트 함수 모두 수정: Zotero, PDF, Multi-PDF
+  ```python
+  def progress_callback(progress):
+      # Update legacy in-memory store
+      _import_jobs[job_id]["status"] = import_status
+      _import_jobs[job_id]["progress"] = progress.progress
+      ...
+
+      # BUG-027 FIX: Also update JobStore
+      try:
+          import asyncio
+          loop = asyncio.get_running_loop()
+          loop.create_task(
+              job_store.update_job(
+                  job_id=job_id,
+                  progress=progress.progress,
+                  message=progress.message,
+              )
+          )
+      except RuntimeError:
+          logger.warning("Could not update JobStore: no running event loop")
+  ```
+- **Acceptance Criteria**:
+  - [ ] progress_callback이 JobStore도 업데이트
+  - [ ] Zotero Import가 Validation → Parsing → Processing 진행
+  - [ ] Frontend에서 실시간 progress 표시
+- **Created**: 2026-01-21
+- **Related**: BUG-026
 
 ---
 

@@ -770,7 +770,10 @@ async def _run_pdf_import(
     }
 
     def progress_callback(stage: str, progress: float, message: str):
-        """Update job status from importer progress."""
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        """
         status_map = {
             "starting": ImportStatus.PENDING,
             "extracting": ImportStatus.EXTRACTING,
@@ -784,6 +787,21 @@ async def _run_pdf_import(
         _import_jobs[job_id]["progress"] = progress
         _import_jobs[job_id]["message"] = message
         _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-027 FIX: Also update JobStore for persistent progress tracking
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                job_store.update_job(
+                    job_id=job_id,
+                    progress=progress,
+                    message=message,
+                )
+            )
+        except RuntimeError:
+            logger.warning(f"[PDF Import {job_id}] Could not update JobStore: no running event loop")
+
         logger.info(f"[PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
 
     try:
@@ -985,7 +1003,10 @@ async def _run_multiple_pdf_import(
     job_store = await get_job_store()
 
     def progress_callback(stage: str, progress: float, message: str):
-        """Update job status from importer progress."""
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        """
         status_map = {
             "starting": ImportStatus.PENDING,
             "importing": ImportStatus.PROCESSING,
@@ -996,6 +1017,21 @@ async def _run_multiple_pdf_import(
         _import_jobs[job_id]["progress"] = progress
         _import_jobs[job_id]["message"] = message
         _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-027 FIX: Also update JobStore for persistent progress tracking
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                job_store.update_job(
+                    job_id=job_id,
+                    progress=progress,
+                    message=message,
+                )
+            )
+        except RuntimeError:
+            logger.warning(f"[Multi-PDF Import {job_id}] Could not update JobStore: no running event loop")
+
         logger.info(f"[Multi-PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
 
     try:
@@ -1359,7 +1395,12 @@ async def _run_zotero_import(
     job_store = await get_job_store()
 
     def progress_callback(progress):
-        """Update job status from importer progress."""
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        The status API checks JobStore first, so we must update it for progress
+        to be visible to the frontend.
+        """
         status_map = {
             "validating": ImportStatus.VALIDATING,
             "parsing": ImportStatus.EXTRACTING,
@@ -1370,10 +1411,31 @@ async def _run_zotero_import(
             "embeddings": ImportStatus.BUILDING_GRAPH,
             "complete": ImportStatus.COMPLETED,
         }
-        _import_jobs[job_id]["status"] = status_map.get(progress.status, ImportStatus.PROCESSING)
+        import_status = status_map.get(progress.status, ImportStatus.PROCESSING)
+
+        # Update legacy in-memory store
+        _import_jobs[job_id]["status"] = import_status
         _import_jobs[job_id]["progress"] = progress.progress
         _import_jobs[job_id]["message"] = progress.message
         _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-027 FIX: Also update JobStore for persistent progress tracking
+        # Status API checks JobStore first, so without this update, frontend
+        # always sees progress=0.0 (the initial value set at job start)
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                job_store.update_job(
+                    job_id=job_id,
+                    progress=progress.progress,
+                    message=progress.message,
+                )
+            )
+        except RuntimeError:
+            # No running loop (shouldn't happen in async context)
+            logger.warning(f"[Zotero Import {job_id}] Could not update JobStore: no running event loop")
+
         logger.info(f"[Zotero Import {job_id}] {progress.status}: {progress.progress:.0%} - {progress.message}")
 
     try:
