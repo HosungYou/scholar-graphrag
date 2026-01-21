@@ -190,8 +190,51 @@ FastAPI에서 `@router.get("/")` 정의 시, trailing slash 없는 요청은 자
 
 ---
 
-## Verification Pending
+## Verification Complete ✅
 
-- [ ] Render Docker 서비스 수동 재배포
-- [ ] Mixed Content 에러 완전 해결 확인
-- [ ] /api/projects 정상 응답 확인
+- [x] Render Docker 서비스 자동 재배포 (Auto-Deploy: 169dfb8 @ 10:15 PM)
+- [x] Mixed Content 에러 완전 해결 확인 (Console: "No Issues")
+- [x] /api/projects 정상 응답 확인
+
+---
+
+## Additional Fix: API_URL Export (2026-01-21 22:53)
+
+### Issue Discovered
+Vercel 빌드 시 다음 에러 발생:
+```
+./components/graph/StatusBar.tsx:14:10
+Type error: Module '"@/lib/api"' declares 'API_URL' locally, but it is not exported.
+```
+
+### Root Cause
+`StatusBar.tsx`에서 `import { API_URL } from '@/lib/api'`를 사용했으나, `api.ts`에서 `API_URL`이 `const`로만 선언되어 있고 `export`되지 않음.
+
+```typescript
+// api.ts:58 (이전)
+const API_URL = enforceHttps(getRawApiUrl());
+
+// api.ts:58 (수정 후)
+export const API_URL = enforceHttps(getRawApiUrl());
+```
+
+### Resolution
+| Commit | Description |
+|--------|-------------|
+| `c9efd80` | fix(BUG-019): export API_URL from api.ts for StatusBar import |
+
+### Verification
+- **Vercel Build**: ✅ Success (2m ago)
+- **Console (DevTools)**: "No Issues" - Mixed Content 에러 없음
+- **Network**: API 요청 정상 동작
+
+---
+
+## Final Session Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total Commits | 3 (169dfb8, e09c7d6, c9efd80) |
+| Files Modified | 5 (Dockerfile, api.ts x2, StatusBar.tsx, action-items.md) |
+| Verification Time | 2026-01-21 22:53 |
+| Status | ✅ **BUG-019 FULLY RESOLVED**

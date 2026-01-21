@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-01-21 (BUG-019 Uvicorn proxy headers 추가 - 진짜 근본 원인!)
+> **마지막 업데이트**: 2026-01-21 22:55 (BUG-019 완전 해결 - API_URL export 수정 후 빌드/배포 성공)
 > **관리자**: Claude Code
 
 ---
@@ -75,11 +75,16 @@
   - [x] api.ts에 trailing slash 추가
   - [x] StatusBar.tsx가 중앙화된 API_URL 사용
   - [x] Render Docker 서비스 재배포
-  - [ ] Mixed Content 에러 완전 해결 확인
+  - [x] Mixed Content 에러 완전 해결 확인 ✅ (2026-01-21 22:53)
+- **Additional Fix Required**:
+  - **Issue**: StatusBar.tsx에서 `import { API_URL } from '@/lib/api'` 사용했으나, api.ts에서 `API_URL`이 export되지 않아 Vercel 빌드 실패
+  - **Error**: `Module '"@/lib/api"' declares 'API_URL' locally, but it is not exported`
+  - **Fix**: `const API_URL` → `export const API_URL` (api.ts:58)
+  - **Commit**: `c9efd80`
 - **Created**: 2026-01-21
-- **Completed**: 2026-01-21
-- **Verified By**: Codex gpt-5.2-codex
-- **Commit**: `169dfb8`
+- **Completed**: 2026-01-21 22:53
+- **Verified By**: User (Console: "No Issues", Network: No Mixed Content)
+- **Commits**: `169dfb8` (proxy-headers), `c9efd80` (API_URL export)
 - **Related**: BUG-015, BUG-016, BUG-017, BUG-018
 - **Key Insight**: 프론트엔드만 수정해서는 해결 불가. 백엔드가 프록시 환경을 인식해야 함.
 
