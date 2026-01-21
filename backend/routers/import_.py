@@ -259,6 +259,8 @@ class ImportJobResponse(BaseModel):
     result: Optional[dict] = None  # Contains nodes_created, edges_created for frontend
     created_at: datetime
     updated_at: datetime
+    # UI-002: Added metadata for interrupted jobs display (project_name, checkpoint)
+    metadata: Optional[dict] = None
 
 
 class ImportValidationResponse(BaseModel):
@@ -702,12 +704,14 @@ async def list_import_jobs(
 
     jobs = await job_store.list_jobs(job_type="import", status=status_filter, limit=limit)
 
+    # BUG-036 FIX: Include INTERRUPTED status in mapping
     status_map = {
         JobStatus.PENDING: ImportStatus.PENDING,
         JobStatus.RUNNING: ImportStatus.PROCESSING,
         JobStatus.COMPLETED: ImportStatus.COMPLETED,
         JobStatus.FAILED: ImportStatus.FAILED,
         JobStatus.CANCELLED: ImportStatus.FAILED,
+        JobStatus.INTERRUPTED: ImportStatus.INTERRUPTED,
     }
 
     return [
@@ -720,6 +724,8 @@ async def list_import_jobs(
             stats=job.result.get("stats") if job.result else None,
             created_at=job.created_at,
             updated_at=job.updated_at,
+            # UI-002: Include metadata for frontend (project_name, checkpoint)
+            metadata=job.metadata if job.metadata else None,
         )
         for job in jobs
     ]
