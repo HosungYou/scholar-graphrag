@@ -66,8 +66,9 @@ class OpenAIEmbeddingProvider:
         model_to_use = model or self.DEFAULT_MODEL
 
         try:
-            # OpenAI has a limit of ~8191 tokens per request, batch to be safe
-            batch_size = 50
+            # PERF-009: Reduced batch size for memory optimization on 512MB instances
+            # OpenAI allows ~8191 tokens, but smaller batches use less memory
+            batch_size = 20
             all_embeddings = []
 
             for i in range(0, len(texts), batch_size):

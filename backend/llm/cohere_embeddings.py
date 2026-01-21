@@ -66,8 +66,9 @@ class CohereEmbeddingProvider:
         model_to_use = model or self.DEFAULT_MODEL
 
         try:
-            # Cohere has a limit of 96 texts per request
-            batch_size = 96
+            # PERF-009: Reduced batch size for memory optimization on 512MB instances
+            # Cohere API allows up to 96, but smaller batches use less memory
+            batch_size = 20
             all_embeddings = []
 
             for i in range(0, len(texts), batch_size):

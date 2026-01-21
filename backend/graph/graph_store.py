@@ -263,7 +263,7 @@ class GraphStore:
         self,
         project_id: str,
         embedding_provider=None,
-        batch_size: int = 50,
+        batch_size: int = 20,  # PERF-009: Reduced from 50 for memory optimization
         use_specter: bool = False,
     ) -> int:
         """Create embeddings for chunks without embeddings."""
