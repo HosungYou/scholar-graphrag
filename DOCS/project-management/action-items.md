@@ -12,9 +12,9 @@
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
 | 🔴 High | 15 | 15 | 0 | 0 |
-| 🟡 Medium | 14 | 14 | 0 | 0 |
+| 🟡 Medium | 15 | 15 | 0 | 0 |
 | 🟢 Low | 4 | 4 | 0 | 0 |
-| **Total** | **33** | **33** | **0** | **0** |
+| **Total** | **34** | **34** | **0** | **0** |
 
 ---
 
@@ -52,25 +52,56 @@
 
 ---
 
-### UI-005: Force Simulation 불안정성 - d3AlphaDecay 설정 오류
-- **Source**: 시각화 UI 리뷰 2026-01-21 (스크린샷 분석)
+### UI-004: LLM Panel에 잘못된 프로바이더 표시 (Groq 대신 Anthropic)
+- **Source**: 사용자 리포트 2026-01-21 (StatusBar에 claude-3-5-haiku 표시되나 Groq만 사용)
+- **Status**: ✅ Completed
+- **Assignee**: Backend Team
+- **Files**:
+  - `backend/routers/system.py` - check_llm_connection()에 Groq 지원 추가
+  - `backend/config.py` - 기본 LLM 프로바이더를 groq으로 변경
+- **Description**: StatusBar에 "claude-3-5-haiku-20241022" 표시되지만 사용자는 Groq만 사용하도록 환경변수 설정함
+- **Root Cause**:
+  1. `backend/config.py`의 기본값이 anthropic/claude-3-5-haiku로 설정됨
+  2. `check_llm_connection()`에서 Groq provider에 대한 API 키 체크 로직 누락
+  3. `settings` 객체가 환경변수보다 기본값 우선 사용하는 경우 발생
+- **Solution Applied**:
+  - [x] `config.py` 기본값 변경: anthropic → groq, claude-3-5-haiku → llama-3.3-70b-versatile
+  - [x] `check_llm_connection()`에 Groq provider case 추가
+  - [x] `os.getenv()` 직접 사용으로 환경변수 우선 읽기
+  - [x] 모든 4개 provider (anthropic, openai, google, groq)에 대한 API 키 체크 로직 통일
+- **Created**: 2026-01-21
+- **Completed**: 2026-01-21
+- **Commit**: aa71318
+- **Notes**: Render 수동 배포 필요 (INFRA-006: Auto-Deploy OFF)
+
+---
+
+### UI-005: Force Simulation Jitter/Oscillation - d3-force 파라미터 방향 오류
+- **Source**: 시각화 UI 리뷰 2026-01-21 (스크린샷 분석 + 사용자 상세 피드백)
 - **Status**: ✅ Completed
 - **Assignee**: Frontend Team
 - **Files**:
   - `frontend/components/graph/Graph3D.tsx` - d3 force 파라미터 최적화
-- **Description**: 노드 클릭/드래그 시 노드들이 급격히 확장/수축 반복하며 불안정한 동작
+- **Description**: 노드 드래그/클릭 시 "jittery, oscillating, rubber-banding" 현상 - 노드가 빠르게 진동하며 안정화되지 않음
 - **Root Cause**:
-  - `d3AlphaDecay=0.05` 너무 낮음 (시뮬레이션이 오래 지속)
-  - `d3VelocityDecay=0.7` 너무 높음 (끈적거리는 움직임)
-  - `d3AlphaMin` 미설정 (무한 미세 조정)
-- **Solution Applied**:
-  - [x] `d3AlphaDecay` 0.05 → 0.02 (빠른 안정화)
-  - [x] `d3VelocityDecay` 0.7 → 0.4 (부드러운 움직임)
-  - [x] `d3AlphaMin=0.001` 추가 (미세 조정 중단점)
-  - [x] `warmupTicks=30` 추가 (초기 안정화)
+  - d3-force 파라미터 방향 혼동 (높은 값 = 빠른 감쇠)
+  - 초기 수정에서 값을 낮춰 오히려 악화시킴
+- **Initial (Wrong) Fix**:
+  - ❌ `d3AlphaDecay` 0.05 → 0.02 (더 느린 냉각 = 악화)
+  - ❌ `d3VelocityDecay` 0.7 → 0.4 (더 적은 댐핑 = 악화)
+- **Final (Correct) Fix**:
+  - [x] `d3AlphaDecay` → 0.1 (빠른 냉각, 기본값 0.0228의 4배)
+  - [x] `d3VelocityDecay` → 0.85 (높은 댐핑, 진동 억제)
+  - [x] `d3AlphaMin` → 0.01 (조기 종료)
+  - [x] `cooldownTicks` → 100 (충분한 냉각 틱)
+- **d3-force Parameter Reference**:
+  - `d3AlphaDecay`: 높은 값 = 빠른 냉각/안정화
+  - `d3VelocityDecay`: 높은 값 = 높은 마찰/댐핑 (진동 감소)
+  - `d3AlphaMin`: 높은 값 = 조기 시뮬레이션 종료
 - **Created**: 2026-01-21
 - **Completed**: 2026-01-21
-- **Notes**: Force simulation 빠른 안정화로 UX 개선
+- **Commit**: aa71318
+- **Notes**: d3-force 파라미터는 Decay라는 이름과 달리 높은 값 = 빠른 감쇠. 공식 문서 확인 필수.
 
 ---
 
