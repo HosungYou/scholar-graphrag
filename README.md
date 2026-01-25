@@ -35,6 +35,12 @@ Automatically identify **structural gaps** between concept clusters and receive 
 - Bridge concept identification
 - Chain-of-Thought reasoning for contextual questions
 
+### 👁️ View Modes (InfraNodus-Inspired Visualization)
+Explore your knowledge graph with multiple visualization perspectives:
+- **3D Mode**: Interactive 3D graph visualization using Three.js for spatial concept relationships
+- **Topic Mode**: 2D cluster-based analysis with D3.js showing topic groupings and concept hierarchies
+- **Gaps Mode**: Structural gap exploration identifying research opportunities and missing connections
+
 ### 🤖 6-Agent Multi-Agent System
 Intelligent query processing through specialized agents:
 1. **Intent Agent**: Classifies user intent (Search, Explore, Compare, Identify Gaps...)
@@ -43,6 +49,12 @@ Intelligent query processing through specialized agents:
 4. **Query Execution Agent**: Executes against graph database
 5. **Reasoning Agent**: Chain-of-Thought analysis + gap detection
 6. **Response Agent**: Natural language response generation
+
+### 📊 Insight HUD
+Real-time analytics for graph understanding:
+- **Diversity**: Concept variety across the knowledge base
+- **Modularity**: Cluster cohesion and separation quality
+- **Density**: Network connectivity and relationship concentration
 
 ### 📊 PRISMA 2020 Compliance
 Full systematic review automation:
@@ -158,32 +170,55 @@ psql scholarag_graph < database/migrations/004_concept_centric.sql
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | Next.js 14, React 18, React Flow, Zustand, TanStack Query, Tailwind CSS |
-| Backend | FastAPI, Python 3.11+, asyncpg |
-| Database | PostgreSQL 15+, pgvector |
-| LLM | Anthropic Claude, OpenAI GPT-4, Google Gemini |
-| ML | scikit-learn (K-means), sentence-transformers |
-| Deployment | Docker, Vercel (Frontend), Render (Backend) |
+| **Frontend** | Next.js 14, React 18, React Flow, Three.js (3D), D3.js (2D clustering), Zustand, TanStack Query, Tailwind CSS |
+| **Backend** | FastAPI, Python 3.11+, asyncpg, Uvicorn |
+| **Database** | PostgreSQL 15+ (Supabase), pgvector (semantic search) |
+| **LLM Provider** | Groq (llama-3.3-70b-versatile) - default, with Anthropic Claude & OpenAI GPT-4 support |
+| **Embeddings** | OpenAI (text-embedding-3-small), 1536-dimensional vectors |
+| **ML & Analytics** | scikit-learn (K-means clustering), sentence-transformers, NetworkX (graph metrics) |
+| **Visualization** | Three.js (3D graph), D3.js (2D clustering), React Flow (node editor), Plotly.js |
+| **Deployment** | Docker (Render backend), Vercel (Next.js frontend), Supabase (PostgreSQL + pgvector) |
+| **Authentication** | Supabase Auth (JWT-based) |
 
 ## 🔧 Configuration
+
+### Environment Variables
 
 ```env
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/scholarag_graph
 
-# LLM Providers (at least one required)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GOOGLE_API_KEY=...
+# LLM Providers (Groq recommended for cost efficiency)
+GROQ_API_KEY=gsk_...                              # Recommended (free tier available)
+ANTHROPIC_API_KEY=sk-ant-...                      # Alternative
+OPENAI_API_KEY=sk-...                             # Alternative
 
-# Default LLM
-DEFAULT_LLM_PROVIDER=anthropic
-DEFAULT_LLM_MODEL=claude-3-5-haiku-20241022
+# Default LLM Configuration
+DEFAULT_LLM_PROVIDER=groq                         # Using Groq for production
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile         # Latest Llama model
 
 # Embeddings
+EMBEDDING_PROVIDER=openai
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSION=1536
+
+# Supabase (PostgreSQL + pgvector)
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+
+# CORS Configuration
+CORS_ORIGINS=https://schola-rag-graph.vercel.app,http://localhost:3000
 ```
+
+### Infrastructure Stack
+
+| Component | Technology | Status |
+|-----------|-----------|--------|
+| **Frontend** | Next.js 14 (Vercel) | Hosted at `https://schola-rag-graph.vercel.app` |
+| **Backend** | FastAPI with Docker (Render) | Hosted at `https://scholarag-graph-docker.onrender.com` |
+| **Database** | Supabase (PostgreSQL + pgvector) | Production-ready |
+| **LLM** | Groq (llama-3.3-70b-versatile) | Default provider |
+| **Embeddings** | OpenAI (text-embedding-3-small) | 1536-dimensional |
 
 ## 🤝 Contributing
 

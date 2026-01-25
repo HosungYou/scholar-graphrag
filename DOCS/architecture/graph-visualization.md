@@ -25,26 +25,359 @@
 
 ## 아키텍처
 
+### 전체 구조
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    KnowledgeGraph Component                      │
+│                    KnowledgeGraph3D Component                    │
 ├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                    ReactFlow Canvas                         ││
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       ││
-│  │  │ Paper   │──│ Author  │  │ Concept │──│ Method  │       ││
-│  │  │  Node   │  │  Node   │  │  Node   │  │  Node   │       ││
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘       ││
-│  └─────────────────────────────────────────────────────────────┘│
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                  View Mode Selector                        │ │
+│  │  [3D Mode] [Topic Mode] [Gaps Mode]                       │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  3D Mode: Graph3D (Three.js/react-three-fiber)            │ │
+│  │  ├─ 3D force-directed layout                              │ │
+│  │  ├─ Camera controls (orbit, pan, zoom)                    │ │
+│  │  ├─ Node sizing by centrality                             │ │
+│  │  └─ Edge weighted rendering                               │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Topic Mode: TopicViewMode (D3.js Force Simulation)       │ │
+│  │  ├─ Concept clusters as force-grouped nodes               │ │
+│  │  ├─ Cluster-level relationships                           │ │
+│  │  ├─ Main topic identification                             │ │
+│  │  └─ Research direction indicators                         │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Gaps Mode: GapsViewMode (3D + Ghost Edges)               │ │
+│  │  ├─ Actual edges (solid)                                  │ │
+│  │  ├─ Ghost edges (potential relationships - dotted)        │ │
+│  │  ├─ Bridge candidates highlighted                         │ │
+│  │  ├─ Research gap visualization                            │ │
+│  │  └─ AI-generated bridge hypotheses                        │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │   MiniMap    │  │   Controls   │  │     Background       │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ FilterPanel  │  │  SearchBar   │  │    NodeDetails       │  │
+│  │   Controls   │  │  Side Panels │  │   Node Details       │  │
+│  │   Legend     │  │  Gap Panel   │  │   Modals             │  │
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 컴포넌트 계층 구조
+
+```
+KnowledgeGraph3D (루트 컴포넌트)
+├── View Mode Selection (상단 우측 컨트롤)
+├── Graph Renderer (현재 viewMode에 따라)
+│   ├── Graph3D (viewMode === '3d')
+│   ├── TopicViewMode (viewMode === 'topic')
+│   └── GapsViewMode (viewMode === 'gaps')
+├── Side Panels
+│   ├── GapPanel (연구 갭 분석)
+│   ├── CentralityPanel (노드 슬라이싱/필터링)
+│   └── ClusterPanel (클러스터 분석)
+├── Overlays
+│   ├── GraphLegend (범례)
+│   ├── NodeDetails (선택된 노드 상세정보)
+│   ├── EdgeContextModal (관계 상세정보)
+│   ├── InsightHUD (통계)
+│   └── MainTopicsPanel (주요 주제)
+└── Status Bar (하단 우측)
+```
+
+---
+
+## View Modes 아키텍처 (UI-012)
+
+세 가지 상호 보완적인 시각화 모드로 지식 그래프를 탐색합니다.
+
+### 1. 3D Mode (Graph3D)
+
+**용도**: 전체 그래프의 3D 공간 시각화 및 네트워크 구조 이해
+
+**기술 스택**:
+- `react-force-graph-3d`: 3D force-directed layout
+- `three.js`: 3D 렌더링 엔진
+- `react-three-fiber`: React Three.js 바인딩
+
+**주요 기능**:
+| 기능 | 설명 |
+|------|------|
+| Force-Directed Layout | 노드와 엣지의 물리 시뮬레이션 |
+| Node Sizing | 중심성(Centrality)에 따른 동적 크기 |
+| Camera Control | Orbit, Pan, Zoom 인터랙션 |
+| Particle Effect | 주변 입자 효과 (토글 가능) |
+| Bloom Effect | 글로우 이펙트 (토글 가능) |
+| Level of Detail (LOD) | 대규모 그래프의 성능 최적화 |
+| Node Highlighting | 선택/연결된 노드 강조 |
+| Edge Weighting | 관계 강도로 엣지 두께 결정 |
+
+**코드 구조**:
+```typescript
+// frontend/components/graph/Graph3D.tsx
+interface Graph3DProps {
+  nodes: GraphEntity[];
+  edges: GraphEdge[];
+  clusters: ConceptCluster[];
+  centralityMetrics: CentralityMetrics;
+  highlightedNodes: string[];
+  highlightedEdges: string[];
+  selectedGap?: StructuralGap;
+  bloomEnabled?: boolean;
+  bloomIntensity?: number;
+  glowSize?: number;
+  showParticles?: boolean;
+  particleSpeed?: number;
+}
+
+export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>((props) => {
+  // Three.js 렌더링 로직
+  // Force simulation, collision detection, camera control
+});
+```
+
+**사용 시나리오**:
+- 전체 그래프 구조 파악
+- 노드 간 거리 관계 이해
+- 클러스터 시각적 확인
+- 네트워크 밀도 분석
+
+---
+
+### 2. Topic Mode (TopicViewMode)
+
+**용도**: 연구 주제별 클러스터 중심 분석
+
+**기술 스택**:
+- `d3-force`: D3.js 포스 시뮬레이션
+- `d3-scale`: 색상 및 크기 스케일
+- Canvas/SVG 렌더링
+
+**주요 기능**:
+| 기능 | 설명 |
+|------|------|
+| Cluster Grouping | 개념들을 주제별로 그룹화 |
+| Force Simulation | 클러스터 간 척력/인력 시뮬레이션 |
+| Main Topic Identification | 가장 중요한 주제 강조 |
+| Cluster Relationships | 클러스터 간 연결 시각화 |
+| Topic Statistics | 각 클러스터의 논문 수, 주요 키워드 |
+| Research Directions | 클러스터 성장 추세 표시 |
+
+**코드 구조**:
+```typescript
+// frontend/components/graph/TopicViewMode.tsx
+interface TopicViewModeProps {
+  clusters: ConceptCluster[];
+  gaps: StructuralGap[];
+  edges: GraphEdge[];
+  onClusterClick: (clusterId: number) => void;
+  onClusterHover: (clusterId: number | null) => void;
+}
+
+export function TopicViewMode({
+  clusters,
+  gaps,
+  edges,
+  onClusterClick,
+  onClusterHover,
+}: TopicViewModeProps) {
+  // D3 force simulation
+  // Cluster-level rendering
+}
+```
+
+**InfraNodus 스타일 분석**:
+- 주요 주제(Main Topics) 식별
+- 클러스터 간 다리(Bridges) 감지
+- 변질되는 주제(Peripheral) 식별
+
+**사용 시나리오**:
+- 연구 분야의 주요 주제 파악
+- 주제 간 연관성 분석
+- 연구 방향 추세 파악
+- 학제 간 연구 기회 발견
+
+---
+
+### 3. Gaps Mode (GapsViewMode)
+
+**용도**: 구조적 연구 갭 탐색 및 AI 기반 가설 생성
+
+**기술 스택**:
+- `Graph3D` (기반): 3D 렌더링 재사용
+- Ghost edges (잠재 엣지): 점선으로 표현
+- AI LLM (Groq llama-3.3-70b): 브리지 가설 생성
+
+**주요 기능**:
+| 기능 | 설명 | 구현 상태 |
+|------|------|----------|
+| Structural Gap Detection | 두 클러스터 간 연결 부족 감지 | ✅ 완료 |
+| Ghost Edges | 잠재적 관계 (가상 엣지) 시각화 | ✅ 완료 |
+| Bridge Candidates | 두 갭을 연결할 수 있는 노드 | ✅ 완료 |
+| AI Bridge Hypotheses | Groq를 사용한 자동 가설 생성 | ✅ 완료 |
+| Gap Statistics | 갭의 크기, 영향도, 관련 논문 수 | ✅ 완료 |
+| Gap Query Panel | 갭별 상세 쿼리 인터페이스 | ✅ 완료 |
+
+**구조적 갭의 정의**:
+```python
+# backend/graph/gap_detector.py
+class StructuralGap:
+    cluster_a_id: int          # 첫 번째 클러스터
+    cluster_b_id: int          # 두 번째 클러스터
+    cluster_a_concepts: list[str]  # 클러스터 A의 개념들
+    cluster_b_concepts: list[str]  # 클러스터 B의 개념들
+
+    gap_size: int              # 클러스터 간 거리 (엣지 수)
+    bridge_candidates: list[str]   # 두 클러스터를 연결할 수 있는 노드
+    potential_edges: list[PotentialEdge]  # 잠재적 관계들
+
+    ai_hypothesis: str         # Groq가 생성한 브리지 가설
+    confidence: float          # 가설의 신뢰도 (0-1)
+```
+
+**AI 브리지 가설 생성 (Groq llama-3.3-70b)**:
+```python
+# backend/graph/gap_detector.py의 GapDetector 클래스
+
+async def generate_bridge_hypothesis(
+    gap: StructuralGap,
+    all_nodes: list[GraphEntity],
+    context: str = None
+) -> str:
+    """
+    두 클러스터를 연결하는 가설을 AI로 생성
+
+    Groq를 통해:
+    1. 클러스터 A의 주요 개념 분석
+    2. 클러스터 B의 주요 개념 분석
+    3. 브리지 후보 노드의 역할 검토
+    4. 가설 생성 (예: "클러스터 A의 '기계학습'과
+       클러스터 B의 '교육학'을 잇는 '학습 과학' 개념이 필요함")
+
+    Returns: "AI 생성 가설 텍스트"
+    """
+```
+
+**코드 구조**:
+```typescript
+// frontend/components/graph/GapsViewMode.tsx
+interface GapsViewModeProps {
+  nodes: GraphEntity[];
+  edges: GraphEdge[];
+  clusters: ConceptCluster[];
+  centralityMetrics: CentralityMetrics;
+  gaps: StructuralGap[];
+  selectedGap?: StructuralGap;
+  onGapSelect: (gap: StructuralGap) => void;
+  onNodeClick: (node: GraphEntity) => void;
+  onBackgroundClick: () => void;
+  onEdgeClick: (edge: GraphEdge) => void;
+  projectId: string;
+}
+
+export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(
+  (props) => {
+    // 3D Graph with ghost edges
+    // Gap highlighting and analysis
+    // AI hypothesis display
+  }
+);
+```
+
+**시각적 표현**:
+```
+Gaps Mode Visualization:
+
+    Cluster A              Cluster B
+    (개념들)  ─ ─ ─ ─ ─  (개념들)
+      ●      Ghost Edges     ●
+      ●      (잠재적 관계)    ●
+      ●                      ●
+
+    Bridge Candidates:
+    ├─ 노드 X (신뢰도 0.85)
+    ├─ 노드 Y (신뢰도 0.72)
+    └─ 노드 Z (신뢰도 0.68)
+
+    AI 가설:
+    "Cluster A의 '기계학습'과 Cluster B의 '교육'을 잇는
+     '적응형 학습 시스템' 연구가 필요합니다."
+```
+
+**사용 시나리오**:
+- 미개척 연구 영역 발견
+- 학제 간 연구 아이디어 도출
+- 논문 작성 방향 제시
+- 문헌 검토 갭 분석
+
+---
+
+### View Mode 전환 메커니즘
+
+```typescript
+// frontend/components/graph/KnowledgeGraph3D.tsx의 View Mode 구현
+
+const [viewMode, setViewMode] = useState<'3d' | 'topic' | 'gaps'>('3d');
+
+return (
+  <div className="relative w-full h-full">
+    {/* View Mode Selector - Top Right Control */}
+    <div className="absolute top-4 right-4">
+      <button onClick={() => setViewMode('3d')}>3D</button>
+      <button onClick={() => setViewMode('topic')}>Topics</button>
+      <button onClick={() => setViewMode('gaps')}>Gaps</button>
+    </div>
+
+    {/* Conditional Rendering */}
+    {viewMode === '3d' && (
+      <Graph3D
+        nodes={displayData.nodes}
+        edges={displayData.edges}
+        clusters={clusters}
+        centralityMetrics={centralityMetrics}
+        // ... props
+      />
+    )}
+
+    {viewMode === 'topic' && (
+      <TopicViewMode
+        clusters={clusters}
+        gaps={gaps}
+        edges={displayData.edges}
+        onClusterClick={handleFocusCluster}
+        // ... props
+      />
+    )}
+
+    {viewMode === 'gaps' && (
+      <GapsViewMode
+        nodes={displayData.nodes}
+        edges={displayData.edges}
+        clusters={clusters}
+        gaps={gaps}
+        selectedGap={selectedGap}
+        onGapSelect={setSelectedGap}
+        // ... props
+      />
+    )}
+  </div>
+);
+```
+
+### View Mode별 최적화
+
+| 측면 | 3D Mode | Topic Mode | Gaps Mode |
+|------|---------|-----------|-----------|
+| 권장 그래프 크기 | 50-500 노드 | 10-100 클러스터 | 20-1000 노드 |
+| 렌더링 엔진 | Three.js | D3.js + Canvas | Three.js |
+| 상호작용 복잡도 | 높음 | 중간 | 높음 |
+| 데이터 처리 시간 | 1-3초 | 0.5-2초 | 2-5초 (AI 포함) |
+| GPU 요구사항 | 필수 | 선택 | 권장 |
 
 ---
 
@@ -297,42 +630,62 @@ const handleSelect = (result: SearchResult) => {
 
 ## 구현 진행률
 
-### 전체: 90%
+### 전체: 95%
 
 ```
-[██████████████████████░░] 90%
+[████████████████████████░] 95%
 ```
 
 | 기능 | 진행률 | 상태 |
 |------|--------|------|
-| 노드 렌더링 | 100% | ✅ |
-| 엣지 렌더링 | 100% | ✅ |
-| 커스텀 스타일 | 100% | ✅ |
-| 줌/패닝 | 100% | ✅ |
-| 미니맵 | 100% | ✅ |
-| 필터링 | 95% | ✅ |
-| 검색 | 95% | ✅ |
-| 하이라이팅 | 90% | ⚠️ |
-| Force-Directed | 0% | ❌ |
-| 내보내기 | 0% | ❌ |
+| **3D Mode** |  |  |
+| ├─ Graph3D (Three.js) | 100% | ✅ |
+| ├─ Force Layout | 100% | ✅ |
+| ├─ Centrality Visualization | 100% | ✅ |
+| ├─ Camera Control | 100% | ✅ |
+| ├─ Particle Effect | 100% | ✅ |
+| └─ Bloom Effect | 100% | ✅ |
+| **Topic Mode** | 100% | ✅ |
+| ├─ D3 Force Simulation | 100% | ✅ |
+| ├─ Cluster Grouping | 100% | ✅ |
+| ├─ Main Topic Identification | 100% | ✅ |
+| └─ Cluster Statistics | 100% | ✅ |
+| **Gaps Mode** | 100% | ✅ |
+| ├─ Ghost Edges | 100% | ✅ |
+| ├─ Gap Detection | 100% | ✅ |
+| ├─ Bridge Candidates | 100% | ✅ |
+| ├─ AI Hypothesis (Groq) | 100% | ✅ |
+| └─ Gap Query Panel | 100% | ✅ |
+| **General Features** |  |  |
+| ├─ 노드 렌더링 | 100% | ✅ |
+| ├─ 엣지 렌더링 | 100% | ✅ |
+| ├─ 커스텀 스타일 | 100% | ✅ |
+| ├─ 필터링 | 95% | ✅ |
+| ├─ 검색 | 95% | ✅ |
+| ├─ 하이라이팅 | 100% | ✅ |
+| └─ 내보내기 | 0% | ❌ |
 
 ---
 
 ## 향후 요구사항
 
 ### 우선순위 높음
-- [ ] Force-directed 레이아웃 (d3-force 또는 elkjs)
-- [ ] 엣지 클릭 → 관계 상세
+- [x] ~~Force-directed 레이아웃~~ ✅ (3D & Topic Mode에서 구현)
+- [x] ~~엣지 클릭 → 관계 상세~~ ✅ (EdgeContextModal 구현 - UI-011)
+- [ ] PNG/SVG 내보내기 (Graph3D 캡처)
+- [ ] 시간 기반 필터링 (논문 발표년도별 애니메이션)
 
 ### 우선순위 중간
-- [ ] PNG/SVG 내보내기
-- [ ] 클러스터링 (동일 주제 그룹화)
-- [ ] 시간 기반 애니메이션 (연도별)
+- [ ] 다중 선택 노드 비교 기능
+- [ ] 갭 분석 결과 내보내기
+- [ ] 동적 AI 가설 재생성 (다른 모델 사용 시)
+- [ ] View Mode 간 상태 동기화 개선
 
 ### 우선순위 낮음
-- [ ] 3D 시각화 (Three.js)
 - [ ] VR/AR 지원
 - [ ] 협업 편집 (실시간 동기화)
+- [ ] 커스텀 노드 모양 (원, 사각형, 다각형 등)
+- [ ] 음성 기반 그래프 탐색
 
 ---
 

@@ -120,17 +120,21 @@ DATABASE_URL=postgresql://...
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_ANON_KEY=eyJ...
 
-# LLM (at least one required)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GROQ_API_KEY=gsk_...  # FREE! Recommended for cost savings
+# LLM Provider (Groq - Default Configuration)
+GROQ_API_KEY=gsk_...
+DEFAULT_LLM_PROVIDER=groq
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+
+# Embedding Provider (OpenAI)
+OPENAI_API_KEY=sk-...  # Used for embeddings only
+
+# Optional LLM Providers
+ANTHROPIC_API_KEY=sk-ant-...  # Optional: Claude models
 
 # CORS (CRITICAL - must include actual frontend URL)
 CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.app,http://localhost:3000
 
-# Defaults
-DEFAULT_LLM_PROVIDER=groq  # or anthropic/openai
-DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+# Environment
 ENVIRONMENT=production
 ```
 
@@ -417,15 +421,17 @@ POST /api/import/scholarag     # ScholaRAG folder import
 POST /api/import/pdf           # PDF import
 POST /api/import/zotero/validate  # Zotero file validation
 GET  /api/projects             # Project list
-POST /api/chat                 # Chat (6-Agent)
+POST /api/chat/query           # Chat (6-Agent RAG query)
 GET  /api/graph/{project_id}   # Graph data
-GET  /api/graph/visualization/{project_id}  # Graph visualization
+GET  /api/graph/visualization/{project_id}  # Graph visualization (InfraNodus style)
 GET  /api/integrations/zotero/collections  # Zotero collections
 
 # InfraNodus Integration (v0.4.0)
 GET  /api/graph/relationships/{id}/evidence    # Relationship evidence
 GET  /api/graph/temporal/{project_id}          # Temporal graph stats
 POST /api/graph/temporal/{project_id}/migrate  # Trigger temporal migration
+POST /api/graph/gaps/{project_id}/refresh      # Refresh gap analysis
+GET  /api/graph/gaps/{project_id}/analysis     # Get gap analysis data
 POST /api/graph/gaps/{id}/generate-bridge      # AI bridge hypotheses
 GET  /api/graph/diversity/{project_id}         # Diversity metrics
 GET  /api/graph/compare/{a}/{b}                # Project comparison
@@ -439,3 +445,45 @@ GET  /api/graph/compare/{a}/{b}                # Project comparison
 curl https://scholarag-graph-docker.onrender.com/health
 # Expected: {"status":"healthy","database":"connected","llm_provider":"groq"}
 ```
+
+---
+
+## View Modes (InfraNodus Style)
+
+ScholaRAG_Graph provides three interactive visualization modes inspired by InfraNodus:
+
+| Mode | Component | Technology | Icon | Purpose |
+|------|-----------|------------|------|---------|
+| **3D** | `Graph3D.tsx` | Three.js + Force Graph | Box (Teal) | Full knowledge graph exploration with physics simulation |
+| **Topic** | `TopicViewMode.tsx` | D3.js force layout | Grid2X2 (Purple) | Topic clustering and community detection |
+| **Gaps** | `GapsViewMode.tsx` | Three.js + Ghost Edges | AlertTriangle (Amber) | Research gap identification with bridge hypotheses |
+
+### View Mode Details
+
+#### 3D View
+- **Physics**: Customizable force simulation (charge, link distance, gravity)
+- **Interactions**: Click nodes to highlight connections, drag to reposition
+- **Highlighting**: Yellow glow for selected nodes, connected nodes in green
+- **Controls**: Orbit controls for 360° rotation and zoom
+
+#### Topic View
+- **Communities**: Louvain algorithm for topic clustering
+- **Layout**: D3.js force-directed graph with custom forces
+- **Zoom**: Semantic zoom levels (0.5-3x)
+- **Clusters**: Visual grouping by research theme
+
+#### Gaps View
+- **Ghost Edges**: Semi-transparent yellow edges showing potential connections
+- **AI Hypotheses**: LLM-generated bridge concepts for unexplored areas
+- **High-Impact**: Prioritized gaps based on PageRank and betweenness centrality
+- **Interactive**: Click gaps to generate research suggestions
+
+### View Mode Switching
+
+All modes share:
+- Same graph data source
+- Consistent node/edge filtering
+- Search functionality
+- Export capabilities
+
+Switch between modes using toolbar icons in the graph interface.

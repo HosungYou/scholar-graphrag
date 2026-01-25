@@ -369,11 +369,47 @@ class ConversationContext:
 
 ### 지원 Provider
 
-| Provider | 모델 | 용도 |
-|----------|------|------|
-| **Anthropic** | claude-3-5-haiku | 기본 LLM (저비용) |
-| **OpenAI** | gpt-4o-mini | 대체 LLM |
-| **Google** | gemini-1.5-flash | 대체 LLM |
+| Provider | 모델 | 상태 | 비용 | 성능 | 추천 용도 |
+|----------|------|------|------|------|----------|
+| **Groq** | llama-3.3-70b-versatile | 🟢 기본 | 무료 (14.4K req/day) | 매우 빠름 (67 tok/s) | 프로덕션 (권장) |
+| **OpenAI** | gpt-4o-mini | 🟢 옵션 | 유료 | 매우 높음 | 고정확도 필요 시 |
+| **Anthropic** | claude-3-5-haiku | 🟡 옵션 | 유료 | 높음 | 복잡한 추론 시 |
+| **Google** | gemini-1.5-flash | 🟡 옵션 | 유료 | 높음 | 멀티모달 필요 시 |
+
+#### Groq 선택 이유
+
+1. **비용**: 무료 Tier 제공 (14,400 req/day)
+2. **속도**: 70B 모델도 초당 67 토큰 처리 (매우 빠름)
+3. **안정성**: Production-ready API
+4. **LLM 성능**: Llama 3.3 70B는 Claude 3.5 Haiku와 유사 수준
+
+#### 환경변수 설정
+
+```env
+# Groq (기본, 무료)
+GROQ_API_KEY=gsk_...
+DEFAULT_LLM_PROVIDER=groq
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+
+# Embedding Provider (별도 관리)
+OPENAI_API_KEY=sk-...  # text-embedding-3-small 용도로만 사용
+
+# Optional Fallback
+ANTHROPIC_API_KEY=sk-ant-...  # Groq 불가 시 대체
+```
+
+### Provider 우선순위
+
+```python
+# backend/routers/chat.py의 LLM Provider 선택 로직
+
+PROVIDER_PRIORITY = [
+    "groq",           # 1순위: 빠르고 무료
+    "anthropic",      # 2순위: Fallback
+    "openai",         # 3순위: Fallback
+    "google"          # 4순위: Fallback
+]
+```
 
 ### Fallback 전략
 
@@ -387,6 +423,19 @@ async def classify(self, query: str) -> IntentResult:
         except Exception as e:
             logger.warning(f"LLM classification failed: {e}")
     return self._classify_with_keywords(query)  # Fallback
+```
+
+### Rate Limiting (Groq)
+
+```python
+# Groq Free Tier: 14,400 requests/day
+requests_per_minute = 14400 / (24 * 60) ≈ 10 req/min
+
+# 구현 예시
+llm_provider = GroqProvider(
+    api_key=settings.groq_api_key,
+    requests_per_minute=10  # Rate limiter 적용
+)
 ```
 
 ---
