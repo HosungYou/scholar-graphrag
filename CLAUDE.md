@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-04
-> **Version**: 3.1.0 (v0.5.0 Architecture Documentation)
+> **Version**: 3.2.0 (v0.7.0 Continuous Documentation)
 
 ## Project Overview
 
@@ -297,6 +297,98 @@ Use `INFRA-XXX` prefix for infrastructure-related action items:
 
 ---
 
+## 📚 Continuous Architecture Documentation Protocol (v0.7.0)
+
+> **Purpose**: Keep architecture documentation in sync with code changes through automated triggers and clear ownership.
+
+### Documentation Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Level 1: Quick Reference (CLAUDE.md)                          │
+│    - Commands, environment vars, deployment                     │
+│    - Updated: Every session with relevant changes              │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 2: Architecture Deep Dive (DOCS/architecture/SDD.md)    │
+│    - System design, component specs, data flow                  │
+│    - Updated: On architectural changes                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 3: Release History (RELEASE_NOTES_vX.X.X.md)           │
+│    - Features, fixes, migration guides                          │
+│    - Created: On each release                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 4: Decision Records (DOCS/.meta/decisions/ADR-XXX.md)   │
+│    - Why decisions were made, alternatives considered          │
+│    - Created: On significant architectural decisions           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Auto-Update Triggers
+
+| Change Type | Update Required | Files to Modify |
+|-------------|-----------------|-----------------|
+| **New Feature** | ✅ | RELEASE_NOTES, SDD.md (if architectural) |
+| **Bug Fix** | ⚠️ Conditional | RELEASE_NOTES (if user-facing) |
+| **Dependency Change** | ✅ | SDD.md §3.2.3, RELEASE_NOTES |
+| **API Endpoint** | ✅ | SDD.md §3.1, DOCS/api/* |
+| **Database Schema** | ✅ | SDD.md §3.3, migration scripts |
+| **Environment Variable** | ✅ | CLAUDE.md, SDD.md |
+| **Deployment Change** | ✅ | CLAUDE.md, INFRA-XXX |
+
+### SDD Update Checklist
+
+When making architectural changes:
+
+```
+□ Update SDD.md version number (top of file)
+□ Update relevant component section (§3.x)
+□ Add to Change Log (bottom of file)
+□ Update Mermaid diagrams if flow changes
+□ Create ADR if decision was significant
+□ Link to release notes
+```
+
+### Version Number Convention
+
+| Format | When to Use | Example |
+|--------|-------------|---------|
+| `MAJOR.MINOR.PATCH` | Standard releases | `0.7.0` |
+| `MAJOR.MINOR.PATCH-rc.N` | Release candidates | `0.8.0-rc.1` |
+
+**Increment Rules**:
+- **PATCH**: Bug fixes, documentation updates
+- **MINOR**: New features, non-breaking changes
+- **MAJOR**: Breaking changes, major refactoring
+
+### Dependency Documentation Requirements (v0.7.0)
+
+When modifying dependencies:
+
+1. **Document in SDD.md §3.2.3** (Frontend Dependency Management)
+2. **Include rationale** for version pinning
+3. **Add webpack config** if build system changes needed
+4. **Test build locally** before committing
+
+Example:
+```markdown
+| Package | Version | Reason for Pin |
+|---------|---------|----------------|
+| `three` | `0.152.2` | ESM compatibility with webpack |
+```
+
+### Diagram Update Requirements
+
+Keep Mermaid diagrams in sync with code:
+
+| Diagram | Location | Update When |
+|---------|----------|-------------|
+| System Context | `DOCS/architecture/diagrams/system-context.mmd` | External integrations change |
+| Agent Pipeline | `DOCS/architecture/diagrams/agent-pipeline.mmd` | Agent flow changes |
+| Data Flow | `DOCS/architecture/diagrams/data-flow.mmd` | Import/query flow changes |
+| Container | `DOCS/architecture/diagrams/container-diagram.mmd` | Component architecture changes |
+
+---
+
 ## ❓ User Confirmation Protocol (AskUserQuestion)
 
 > **CRITICAL**: Claude Code NEVER guesses in uncertain situations.
@@ -587,21 +679,30 @@ When making architectural changes:
 
 ---
 
-## 📊 v0.5.0 Release Notes
+## 📊 v0.7.0 Release Notes
 
-> **Version**: 0.5.0 | **Date**: 2026-02-04
+> **Version**: 0.7.0 | **Date**: 2026-02-04
+> **Full Notes**: See `RELEASE_NOTES_v0.7.0.md`
 
 ### Added
-- **SDD.md**: Comprehensive Software Design Document
-- **Mermaid Diagrams**: 4 architecture diagrams (system-context, agent-pipeline, data-flow, container)
-- **Architecture Review Protocol**: Mandatory review process for architectural changes
+- **Node Pinning**: Click to pin, Shift+click for multi-select
+- **Adaptive Labeling**: Zoom-responsive label visibility
+- **Graph-to-Prompt**: Export graph context for AI tools
+- **Continuous Documentation Protocol**: Auto-update triggers and guidelines
+- **SDD §3.2.3**: Frontend Dependency Management section
 
-### Changed
-- HUD metrics simplified (Modularity, Diversity, Density core; others in "Details")
-- "Bias Detected" → "Focused Research" terminology
+### Fixed
+- `'focused'` diversity rating type error (BUG-041)
+- Three.js ESM module resolution for Vercel builds (BUG-042)
 
-### Planned (v0.6.0)
+### Technical
+- Pinned Three.js ecosystem to stable versions
+- webpack NormalModuleReplacementPlugin for ESM paths
+- npm overrides for transitive dependencies
+
+### Planned (v0.8.0)
 - Entity Extraction V2 (all 8 entity types)
 - AI Chat data-based fallback
 - Adaptive gap detection threshold
 - Semantic diversity metrics
+- Next.js 14.2+ security upgrade

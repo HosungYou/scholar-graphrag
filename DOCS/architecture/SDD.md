@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.5.0
+**Version**: 0.7.0
 **Last Updated**: 2026-02-04
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.0.0 |
-| **Project Version** | 0.5.0 |
+| **Document Version** | 1.1.0 |
+| **Project Version** | 0.7.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -56,6 +56,9 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **Zotero Integration** | Hybrid import (Local API + Web API fallback) | ✅ Complete |
 | **ScholaRAG Import** | Batch import from ScholaRAG systematic review projects | ✅ Complete |
 | **Team Collaboration** | Project sharing, role-based access control | ✅ Complete |
+| **Node Pinning** | Pin nodes with click, multi-select with Shift+click | ✅ v0.7.0 |
+| **Adaptive Labels** | Zoom-responsive label visibility based on node importance | ✅ v0.7.0 |
+| **Graph-to-Prompt** | Export graph context as structured prompt for AI tools | ✅ v0.7.0 |
 
 ### 1.4 Success Metrics
 
@@ -464,7 +467,101 @@ interface GapsViewProps {
 
 **Full Details**: See [`DOCS/development/VIEW_MODES_REFERENCE.md`](../development/VIEW_MODES_REFERENCE.md)
 
-#### 3.2.3 State Management
+#### 3.2.3 Frontend Dependency Management (v0.7.0)
+
+**Purpose**: Ensure stable builds and prevent breaking changes from transitive dependencies.
+
+**Critical Dependencies** (Three.js ecosystem):
+
+| Package | Pinned Version | Role |
+|---------|----------------|------|
+| `three` | `0.152.2` | Core 3D rendering engine |
+| `react-force-graph-3d` | `1.21.3` | React wrapper for 3D force graphs |
+| `3d-force-graph` | `1.70.0` (override) | Force-directed graph layout |
+| `three-render-objects` | `1.26.5` (override) | Three.js rendering utilities |
+| `three-forcegraph` | `1.38.0` (override) | Force graph visualization |
+
+**npm Overrides Strategy**:
+
+```json
+// package.json
+{
+  "dependencies": {
+    "react-force-graph-3d": "1.21.3",  // Exact version
+    "three": "0.152.2"                   // Exact version
+  },
+  "overrides": {
+    "three": "0.152.2",
+    "three-render-objects": "1.26.5",
+    "three-forcegraph": "1.38.0",
+    "3d-force-graph": "1.70.0"
+  }
+}
+```
+
+**webpack Configuration** (next.config.js):
+
+```javascript
+// Resolve ESM imports for three/examples/jsm/*
+webpack: (config) => {
+  const path = require('path');
+  const webpack = require('webpack');
+  const threePackageRoot = path.join(
+    path.dirname(require.resolve('three')), '..'
+  );
+
+  // Single Three.js instance
+  config.resolve.alias = {
+    ...config.resolve.alias,
+    three: require.resolve('three'),
+  };
+
+  // Rewrite three/examples/jsm/* paths
+  config.plugins.push(
+    new webpack.NormalModuleReplacementPlugin(
+      /^three\/examples\/jsm\/.+/,
+      (resource) => {
+        const subPath = resource.request.replace(/^three\//, '');
+        resource.request = path.join(threePackageRoot, subPath);
+      }
+    )
+  );
+
+  return config;
+}
+```
+
+**Why This Matters**:
+
+```
+Problem: ESM Module Resolution Failure
+┌─────────────────────────────────────────────────────────────────┐
+│  react-force-graph-3d@1.29.0 (latest)                          │
+│    └── 3d-force-graph@1.79.0                                   │
+│        └── three-render-objects@1.40.4                         │
+│            └── import from 'three/examples/jsm/...'            │
+│                └── ❌ webpack can't resolve ESM subpath        │
+└─────────────────────────────────────────────────────────────────┘
+
+Solution: Pin to stable versions + webpack path rewriting
+┌─────────────────────────────────────────────────────────────────┐
+│  react-force-graph-3d@1.21.3 (pinned)                          │
+│    └── 3d-force-graph@1.70.0 (override)                        │
+│        └── three-render-objects@1.26.5 (override)              │
+│            └── import from 'three/examples/jsm/...'            │
+│                └── ✅ webpack NormalModuleReplacementPlugin    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Dependency Update Protocol**:
+
+1. **Test locally first**: `npm run build`
+2. **Verify version tree**: `npm ls three three-render-objects 3d-force-graph`
+3. **Never use `^` or `~`** for Three.js ecosystem packages
+4. **Monitor Vercel builds** after any dependency change
+5. **Document changes** in this section and release notes
+
+#### 3.2.4 State Management
 
 **Global State** (Zustand):
 ```typescript
@@ -1025,6 +1122,22 @@ app.add_middleware(
 **Known Issues**:
 - Auto-deploy disabled to prevent import interruption (INFRA-006)
 - Graph visualization performance degrades above 500 nodes
+
+### Version 0.7.0 (2026-02-04)
+
+**Features**:
+- **Node Pinning**: Click to pin nodes, Shift+click for multi-select
+- **Adaptive Labeling**: Zoom-responsive label visibility
+- **Graph-to-Prompt**: Export graph context as structured prompt
+
+**Bug Fixes**:
+- Fixed 'focused' diversity rating type error (BUG-041)
+- Resolved Three.js ESM module resolution for Vercel builds (BUG-042)
+
+**Technical**:
+- Added Frontend Dependency Management section (§3.2.3)
+- webpack NormalModuleReplacementPlugin for ESM paths
+- Pinned Three.js ecosystem to stable versions
 
 ### Version 0.4.0 (2026-01-20)
 
