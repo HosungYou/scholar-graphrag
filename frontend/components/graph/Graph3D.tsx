@@ -109,6 +109,9 @@ export interface Graph3DProps {
   bloomEnabled?: boolean;
   bloomIntensity?: number;
   glowSize?: number;
+  // v0.7.0: Adaptive labeling props
+  labelVisibility?: 'none' | 'important' | 'all';
+  onLabelVisibilityChange?: (mode: 'none' | 'important' | 'all') => void;
 }
 
 export interface Graph3DRef {
@@ -138,9 +141,31 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   bloomEnabled = false,
   bloomIntensity = 0.5,
   glowSize = 1.3,
+  labelVisibility: labelVisibilityProp = 'important',
+  onLabelVisibilityChange,
 }, ref) => {
   const fgRef = useRef<any>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+
+  // v0.7.0: Adaptive labeling state
+  const [labelVisibility, setLabelVisibility] = useState<'none' | 'important' | 'all'>('important');
+  const [currentZoom, setCurrentZoom] = useState<number>(500);
+
+  // v0.7.0: Calculate label threshold based on zoom level
+  const calculateLabelThreshold = useCallback((zoomLevel: number): number => {
+    // zoomLevel: 100 (close) to 800 (far)
+    // Returns size threshold: higher = fewer labels shown
+    if (zoomLevel < 200) return 2;      // Very close: show most labels
+    if (zoomLevel < 350) return 4;      // Medium close: show important
+    if (zoomLevel < 500) return 5;      // Medium: show main topics
+    if (zoomLevel < 650) return 6;      // Far: show only major nodes
+    return 8;                           // Very far: show only largest nodes
+  }, []);
+
+  // v0.7.0: Sync label visibility with external prop
+  useEffect(() => {
+    setLabelVisibility(labelVisibilityProp);
+  }, [labelVisibilityProp]);
 
   // UI-010 FIX: Store node positions to persist across re-renders
   // This prevents the simulation from restarting when graphData is recreated
@@ -485,11 +510,17 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       group.add(ring);
     }
 
-    // UI-009 FIX: InfraNodus-style labels
-    // Show labels based on node SIZE (which reflects centrality), not centrality threshold
-    // This ensures labels show even when centralityMetrics is empty or IDs don't match
-    const nodeSizeThreshold = 4;  // Show labels for nodes larger than this
-    const shouldShowLabel = nodeSize >= nodeSizeThreshold && node.name;
+    // v0.7.0: Adaptive labeling based on zoom level and visibility mode
+    const adaptiveThreshold = calculateLabelThreshold(currentZoom);
+    const shouldShowLabel =
+      node.name && (
+        labelVisibility === 'all' ||
+        (labelVisibility === 'important' && (
+          nodeSize >= adaptiveThreshold ||
+          isHighlighted ||
+          node.isBridge
+        ))
+      );
 
     if (shouldShowLabel) {
       // Truncate long names
@@ -498,10 +529,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         ? node.name.substring(0, maxLabelLength - 2) + '..'
         : node.name;
 
-      // Scale font size by node size (InfraNodus style: bigger nodes = bigger labels)
+      // v0.7.0: Scale font size by node size (InfraNodus style: bigger nodes = bigger labels)
+      // Use adaptiveThreshold as baseline for normalization
       const minFontSize = 10;
       const maxFontSize = 24;
-      const sizeNormalized = Math.min(1, (nodeSize - nodeSizeThreshold) / 10);
+      const sizeNormalized = Math.min(1, (nodeSize - adaptiveThreshold) / 10);
       const fontSize = Math.round(minFontSize + (maxFontSize - minFontSize) * sizeNormalized);
 
       // InfraNodus style: Label color matches cluster color
@@ -518,9 +550,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     return group;
-  }, [nodeStyleMap, bloomEnabled, bloomIntensity, glowSize, createTextSprite]);
+  }, [nodeStyleMap, bloomEnabled, bloomIntensity, glowSize, createTextSprite, currentZoom, labelVisibility, calculateLabelThreshold]);
   // ⚠️ CRITICAL FIX: hoveredNode removed from dependencies to prevent full graph rebuild on hover
   // Hover effect is now handled via CSS cursor only (see container div style below)
+  // v0.7.0: Added currentZoom, labelVisibility, calculateLabelThreshold to dependencies for adaptive labels
 
   // Link width based on weight
   // UI-010 FIX: Uses edgeStyleMap for highlight state
@@ -829,6 +862,24 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         fgRef.current?.cameraPosition({ x: 0, y: 0, z: 500 });
       }, 500);
     }
+  }, []);
+
+  // v0.7.0: Track camera zoom level for adaptive labels
+  useEffect(() => {
+    if (!fgRef.current) return;
+
+    const checkCameraDistance = () => {
+      const camera = fgRef.current?.camera();
+      if (camera) {
+        const distance = camera.position.length();
+        setCurrentZoom(distance);
+      }
+    };
+
+    // Check periodically (controls event listener may not be accessible)
+    const intervalId = setInterval(checkCameraDistance, 200);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   return (
