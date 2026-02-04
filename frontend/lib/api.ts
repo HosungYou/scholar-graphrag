@@ -223,7 +223,11 @@ class ApiClient {
   async sendChatMessage(
     projectId: string,
     message: string,
-    conversationId?: string
+    conversationId?: string,
+    graphContext?: {
+      selectedNodeIds?: string[];
+      pinnedNodeIds?: string[];
+    }
   ): Promise<ChatResponse> {
     return this.request<ChatResponse>('/api/chat/query', {
       method: 'POST',
@@ -231,6 +235,8 @@ class ApiClient {
         project_id: projectId,
         message,
         conversation_id: conversationId,
+        selected_node_ids: graphContext?.selectedNodeIds,
+        pinned_node_ids: graphContext?.pinnedNodeIds,
       }),
     });
   }

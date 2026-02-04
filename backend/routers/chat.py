@@ -458,6 +458,8 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     include_trace: bool = False
+    selected_node_ids: Optional[List[str]] = None  # Currently selected nodes
+    pinned_node_ids: Optional[List[str]] = None    # User-pinned nodes for context
 
 
 class SimpleCitation(BaseModel):
@@ -608,6 +610,8 @@ async def chat_query(
             project_id=str(request.project_id),
             conversation_id=conversation_id,
             include_processing_steps=request.include_trace,
+            selected_node_ids=request.selected_node_ids,
+            pinned_node_ids=request.pinned_node_ids,
         )
 
         answer = result.content

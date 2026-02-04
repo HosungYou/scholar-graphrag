@@ -141,12 +141,45 @@ class AgentOrchestrator:
             )
         return self._contexts[conversation_id]
 
+    async def _get_node_context(self, project_id: str, node_ids: list[str]) -> str:
+        """
+        Fetch node metadata for query enhancement.
+
+        Args:
+            project_id: Project UUID
+            node_ids: List of entity UUIDs
+
+        Returns:
+            Formatted context string with node names and types
+        """
+        if not node_ids or not self.db:
+            return ""
+
+        try:
+            # Query node names from database
+            sql = """
+            SELECT id, name, entity_type
+            FROM entities
+            WHERE project_id = $1 AND id = ANY($2::uuid[])
+            """
+            rows = await self.db.fetch(sql, project_id, node_ids)
+
+            if rows:
+                concepts = [f"{row['name']} ({row['entity_type']})" for row in rows]
+                return f"[User-selected concepts: {', '.join(concepts)}]"
+        except Exception as e:
+            logger.warning(f"Failed to get node context: {e}")
+
+        return ""
+
     async def process_query(
         self,
         query: str,
         project_id: str,
         conversation_id: Optional[str] = None,
         include_processing_steps: bool = False,
+        selected_node_ids: Optional[list[str]] = None,
+        pinned_node_ids: Optional[list[str]] = None,
     ) -> OrchestratorResult:
         """
         Process a user query through the full agent pipeline.
@@ -156,6 +189,8 @@ class AgentOrchestrator:
             project_id: ID of the project/knowledge graph
             conversation_id: Optional conversation ID for context
             include_processing_steps: Whether to include detailed processing info
+            selected_node_ids: Currently selected nodes in graph view
+            pinned_node_ids: User-pinned nodes for persistent context
 
         Returns:
             OrchestratorResult with answer and metadata
@@ -163,6 +198,15 @@ class AgentOrchestrator:
         processing_steps = []
 
         try:
+            # v0.7.0: Enhance query with selected node context (Graph-to-Prompt)
+            node_context = ""
+            all_node_ids = (selected_node_ids or []) + (pinned_node_ids or [])
+            if all_node_ids:
+                node_context = await self._get_node_context(project_id, all_node_ids)
+                if node_context:
+                    query = f"{node_context}\n\n{query}"
+                    logger.info(f"Graph-to-Prompt: Enhanced query with {len(all_node_ids)} nodes")
+
             # Step 1: Intent Classification
             logger.info(f"[1/6] Classifying intent for: {query[:50]}...")
             intent_result = await self.intent_agent.classify(query)

@@ -106,6 +106,7 @@ export default function ProjectDetailPage() {
     highlightedEdges,
     selectedNode,
     filters,
+    pinnedNodes,
     setHighlightedNodes,
     setHighlightedEdges,
     setSelectedNode,
@@ -137,7 +138,15 @@ export default function ProjectDetailPage() {
   // Chat mutation
   const chatMutation = useMutation({
     mutationFn: (message: string) =>
-      api.sendChatMessage(projectId, message, conversationId || undefined),
+      api.sendChatMessage(
+        projectId,
+        message,
+        conversationId || undefined,
+        {
+          selectedNodeIds: selectedNode ? [selectedNode.id] : [],
+          pinnedNodeIds: pinnedNodes,
+        }
+      ),
     onSuccess: (data) => {
       setConversationId(data.conversation_id);
       setMessages((prev) => [

@@ -42,6 +42,9 @@ interface GraphStore {
   // View Mode State (3D vs Topic View)
   viewMode: ViewMode;
 
+  // Pinned Nodes State (Graph-to-Prompt)
+  pinnedNodes: string[];
+
   // Actions
   fetchGraphData: (projectId: string) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
@@ -65,6 +68,12 @@ interface GraphStore {
 
   // View Mode Actions
   setViewMode: (mode: ViewMode) => void;
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds: string[]) => void;
+  addPinnedNode: (nodeId: string) => void;
+  removePinnedNode: (nodeId: string) => void;
+  clearPinnedNodes: () => void;
 }
 
 // Default filters (Hybrid Mode: Paper/Author + Concept-Centric)
@@ -101,6 +110,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   // View Mode State
   viewMode: '3d' as ViewMode,
+
+  // Pinned Nodes State
+  pinnedNodes: [],
 
   // Actions
   fetchGraphData: async (projectId: string) => {
@@ -265,4 +277,19 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   setViewMode: (mode) => {
     set({ viewMode: mode });
   },
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds) => set({ pinnedNodes: nodeIds }),
+
+  addPinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.includes(nodeId)
+      ? state.pinnedNodes
+      : [...state.pinnedNodes, nodeId]
+  })),
+
+  removePinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.filter(id => id !== nodeId)
+  })),
+
+  clearPinnedNodes: () => set({ pinnedNodes: [] }),
 }));
