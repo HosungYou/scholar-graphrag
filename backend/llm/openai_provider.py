@@ -167,3 +167,20 @@ class OpenAIProvider(BaseLLMProvider):
         import re
         sanitized = re.sub(r"(sk-|api[_-]?key)[a-zA-Z0-9\-_]{10,}", "[redacted]", error, flags=re.IGNORECASE)
         return sanitized[:200] if len(sanitized) > 200 else sanitized
+
+    async def close(self) -> None:
+        """
+        PERF-011: Release client resources to free memory.
+
+        Call this during application shutdown to release HTTP connections.
+        """
+        if self._client is not None:
+            try:
+                # AsyncOpenAI has a close method
+                if hasattr(self._client, 'close'):
+                    await self._client.close()
+                logger.debug("OpenAI LLM client closed for memory optimization")
+            except Exception as e:
+                logger.debug(f"Error closing OpenAI LLM client: {e}")
+            finally:
+                self._client = None

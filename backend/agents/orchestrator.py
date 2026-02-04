@@ -13,7 +13,7 @@ Coordinates the 6-agent system for processing user queries:
 import logging
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .intent_agent import IntentAgent, IntentResult, IntentType
 from .concept_extraction_agent import ConceptExtractionAgent, ExtractionResult
@@ -70,6 +70,10 @@ class AgentOrchestrator:
     Query Execution → Reasoning → Response
     """
 
+    # PERF-011: Memory optimization - limit conversation context storage
+    MAX_CONTEXTS = 50  # Maximum number of conversations to keep in memory
+    CONTEXT_TTL_HOURS = 24  # Hours before context is eligible for cleanup
+
     def __init__(
         self,
         llm_provider=None,
@@ -93,10 +97,43 @@ class AgentOrchestrator:
         # Conversation contexts
         self._contexts: Dict[str, ConversationContext] = {}
 
+    def _cleanup_old_contexts(self) -> int:
+        """
+        PERF-011: Remove old conversation contexts to free memory.
+
+        Returns:
+            Number of contexts removed
+        """
+        cutoff = datetime.now() - timedelta(hours=self.CONTEXT_TTL_HOURS)
+        to_remove = [
+            cid for cid, ctx in self._contexts.items()
+            if ctx.last_updated < cutoff
+        ]
+
+        for cid in to_remove:
+            del self._contexts[cid]
+
+        if to_remove:
+            logger.info(f"PERF-011: Cleaned up {len(to_remove)} old conversation contexts")
+
+        return len(to_remove)
+
     def get_or_create_context(
         self, conversation_id: str, project_id: str
     ) -> ConversationContext:
         """Get existing context or create new one."""
+        # PERF-011: Cleanup old contexts if at capacity
+        if len(self._contexts) >= self.MAX_CONTEXTS:
+            cleaned = self._cleanup_old_contexts()
+            # If still at capacity after cleanup, remove oldest
+            if len(self._contexts) >= self.MAX_CONTEXTS:
+                oldest_id = min(
+                    self._contexts.keys(),
+                    key=lambda k: self._contexts[k].last_updated
+                )
+                del self._contexts[oldest_id]
+                logger.debug(f"PERF-011: Evicted oldest context {oldest_id[:8]}...")
+
         if conversation_id not in self._contexts:
             self._contexts[conversation_id] = ConversationContext(
                 conversation_id=conversation_id,

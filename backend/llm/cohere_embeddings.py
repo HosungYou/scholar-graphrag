@@ -213,14 +213,43 @@ class CohereEmbeddingProvider:
         embeddings = await self.get_embeddings([text], input_type=input_type)
         return embeddings[0] if embeddings else []
 
+    async def close(self) -> None:
+        """
+        PERF-011: Release client resources to free memory.
 
-# Singleton instance for easy access
-_embedding_provider: Optional[CohereEmbeddingProvider] = None
+        Call this after batch operations to allow garbage collection.
+        """
+        if self._client is not None:
+            try:
+                # AsyncClientV2 may have a close method
+                if hasattr(self._client, 'close'):
+                    await self._client.close()
+                elif hasattr(self._client, '_client') and hasattr(self._client._client, 'aclose'):
+                    await self._client._client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing Cohere client: {e}")
+            finally:
+                self._client = None
+                logger.debug("Cohere embedding client closed for memory optimization")
 
 
+# PERF-011: Removed singleton pattern to allow garbage collection
+# Each caller should create their own instance and close() after use
+def create_cohere_embeddings(api_key: str) -> CohereEmbeddingProvider:
+    """
+    Create a new Cohere embedding provider instance.
+
+    PERF-011: Changed from singleton to factory pattern for memory optimization.
+    Caller is responsible for calling close() after batch operations.
+    """
+    return CohereEmbeddingProvider(api_key=api_key)
+
+
+# Backwards compatibility alias (deprecated)
 def get_cohere_embeddings(api_key: str) -> CohereEmbeddingProvider:
-    """Get or create a Cohere embedding provider instance."""
-    global _embedding_provider
-    if _embedding_provider is None or _embedding_provider.api_key != api_key:
-        _embedding_provider = CohereEmbeddingProvider(api_key=api_key)
-    return _embedding_provider
+    """
+    Deprecated: Use create_cohere_embeddings() instead.
+
+    Returns a new instance each time for memory optimization.
+    """
+    return create_cohere_embeddings(api_key)

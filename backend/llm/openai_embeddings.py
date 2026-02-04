@@ -108,14 +108,41 @@ class OpenAIEmbeddingProvider:
         embeddings = await self.get_embeddings([text], input_type=input_type)
         return embeddings[0] if embeddings else []
 
+    async def close(self) -> None:
+        """
+        PERF-011: Release client resources to free memory.
 
-# Singleton instance for easy access
-_embedding_provider: Optional[OpenAIEmbeddingProvider] = None
+        Call this after batch operations to allow garbage collection.
+        """
+        if self._client is not None:
+            try:
+                # AsyncOpenAI has a close method
+                if hasattr(self._client, 'close'):
+                    await self._client.close()
+            except Exception as e:
+                logger.debug(f"Error closing OpenAI embedding client: {e}")
+            finally:
+                self._client = None
+                logger.debug("OpenAI embedding client closed for memory optimization")
 
 
+# PERF-011: Removed singleton pattern to allow garbage collection
+# Each caller should create their own instance and close() after use
+def create_openai_embeddings(api_key: str) -> OpenAIEmbeddingProvider:
+    """
+    Create a new OpenAI embedding provider instance.
+
+    PERF-011: Changed from singleton to factory pattern for memory optimization.
+    Caller is responsible for calling close() after batch operations.
+    """
+    return OpenAIEmbeddingProvider(api_key=api_key)
+
+
+# Backwards compatibility alias (deprecated)
 def get_openai_embeddings(api_key: str) -> OpenAIEmbeddingProvider:
-    """Get or create an OpenAI embedding provider instance."""
-    global _embedding_provider
-    if _embedding_provider is None or _embedding_provider.api_key != api_key:
-        _embedding_provider = OpenAIEmbeddingProvider(api_key=api_key)
-    return _embedding_provider
+    """
+    Deprecated: Use create_openai_embeddings() instead.
+
+    Returns a new instance each time for memory optimization.
+    """
+    return create_openai_embeddings(api_key)

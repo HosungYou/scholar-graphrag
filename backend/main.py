@@ -5,6 +5,7 @@ AGENTiGraph-style GraphRAG platform for visualizing and exploring
 knowledge graphs built from ScholaRAG literature review data.
 """
 
+import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -26,6 +27,29 @@ from jobs.job_store import JobStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# PERF-011: Background cleanup task handle
+_cleanup_task: asyncio.Task | None = None
+
+
+async def periodic_cache_cleanup() -> None:
+    """
+    PERF-011: Periodically clean up expired cache entries.
+
+    Runs every 5 minutes to prevent unbounded memory growth.
+    """
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            cache = get_llm_cache()
+            cleaned = cache.cleanup_expired()
+            if cleaned > 0:
+                logger.info(f"PERF-011: Cleaned {cleaned} expired cache entries")
+        except asyncio.CancelledError:
+            logger.debug("Cache cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"Error in cache cleanup: {e}")
 
 
 def _sanitize_database_url(url: str) -> str:
@@ -161,10 +185,31 @@ async def lifespan(app: FastAPI):
         # In development: allow memory-only mode for testing
         logger.warning("   Running in memory-only mode (development only)")
 
+    # PERF-011: Start periodic cache cleanup task
+    global _cleanup_task
+    _cleanup_task = asyncio.create_task(periodic_cache_cleanup())
+    logger.info("   PERF-011: Periodic cache cleanup task started")
+
     yield
 
     # Shutdown
     logger.info("ScholaRAG_Graph Backend shutting down...")
+
+    # PERF-011: Cancel cleanup task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("   PERF-011: Cache cleanup task stopped")
+
+    # PERF-011: Clean up LLM cache to free memory
+    cache = get_llm_cache()
+    cache_size = len(cache._cache)
+    cache.invalidate()
+    logger.info(f"   PERF-011: Cleared {cache_size} LLM cache entries")
+
     await close_db()
 
 
