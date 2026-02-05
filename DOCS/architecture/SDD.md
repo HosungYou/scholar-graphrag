@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.7.0
-**Last Updated**: 2026-02-04
+**Version**: 0.9.0
+**Last Updated**: 2026-02-05
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.1.0 |
-| **Project Version** | 0.7.0 |
+| **Document Version** | 1.3.0 |
+| **Project Version** | 0.9.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -59,6 +59,14 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **Node Pinning** | Pin nodes with click, multi-select with Shift+click | ✅ v0.7.0 |
 | **Adaptive Labels** | Zoom-responsive label visibility based on node importance | ✅ v0.7.0 |
 | **Graph-to-Prompt** | Export graph context as structured prompt for AI tools | ✅ v0.7.0 |
+| **InfraNodus-Style Labels** | Centrality-based visibility with dynamic font sizing and opacity gradient | ✅ v0.9.0 |
+| **Graph Physics Optimization** | Velocity decay 0.4, cooldown 1000 ticks for stable simulation | ✅ v0.9.0 |
+| **Gap Auto-Refresh** | Automatic gap re-detection when clusters exist but no gaps found | ✅ v0.9.0 |
+| **Evidence SQL Safety** | SQL LIKE escaping and classified error handling for evidence queries | ✅ v0.9.0 |
+| **Label Visibility Toggle** | Toolbar button cycles none/important/all label modes | ✅ v0.8.0 |
+| **Node Removal Preview** | Visual preview before applying centrality-based slicing | ✅ v0.8.0 |
+| **InsightHUD Repositioning** | Right-side InfraNodus-style positioning | ✅ v0.8.0 |
+| **Cluster Color Stability** | Hash-based cluster color assignment for consistent colors | ✅ v0.8.0 |
 
 ### 1.4 Success Metrics
 
@@ -404,19 +412,34 @@ interface Graph3DProps {
   onNodeClick: (node: Node) => void;
 }
 
-// Force simulation parameters
+// Force simulation parameters (v0.9.0 optimized)
 {
-  charge: -30,          // Node repulsion
-  linkDistance: 50,     // Edge length
-  gravity: 0.1,         // Center pull
-  iterations: 100       // Stabilization iterations
+  charge: -30,              // Node repulsion
+  linkDistance: 50,          // Edge length
+  gravity: 0.1,             // Center pull
+  iterations: 100,          // Stabilization iterations
+  d3VelocityDecay: 0.4,    // v0.9.0: Slower decay for natural movement
+  cooldownTicks: 1000,      // v0.9.0: Extended simulation time
+  warmupTicks: 100          // v0.9.0: Pre-stabilization
 }
 
-// Rendering
+// v0.9.0: InfraNodus-style label configuration
+LABEL_CONFIG = {
+  minFontSize: 10,                 // Smallest label font
+  maxFontSize: 28,                 // Largest label font
+  minOpacity: 0.3,                 // Least visible label
+  maxOpacity: 1.0,                 // Most visible label
+  alwaysVisiblePercentile: 0.8,    // Top 20% always show
+  hoverRevealPercentile: 0.5       // Top 50% on hover
+}
+
+// Rendering (v0.9.0 updated)
 - Node size: 5-15 (scaled by degree centrality)
-- Node color: Cluster-based (8 colors)
+- Node color: Cluster-based (12 colors, hash-assigned)
 - Edge opacity: 0.3-0.7 (scaled by weight)
 - Highlighted nodes: Yellow glow effect
+- Labels: Centrality-based visibility with shadow (no background box)
+- Drag release: Nodes float back naturally (fx/fy/fz = undefined)
 ```
 
 **Topic View Specifications**:
@@ -941,6 +964,16 @@ Response: {
   highlighted_edges: ["edge_id_1"],
   suggested_follow_ups: ["Show me papers using RCT", "Compare methods"]
 }
+
+POST /api/chat/explain/{node_id}
+Request: { node_name?: string, node_type?: string }
+Response: {
+  explanation: "Detailed explanation of the concept...",
+  related_concepts: ["concept1", "concept2"],
+  source_papers: ["paper_id_1", "paper_id_2"]
+}
+Note: v0.9.0 - Uses node_name/node_type for user-friendly explanation.
+      Falls back to DB lookup if not provided.
 ```
 
 #### Import
@@ -1102,7 +1135,43 @@ app.add_middleware(
 
 ## 7. Change Log
 
-### Version 0.5.0 (2026-02-04) - Current
+### Version 0.9.0 (2026-02-04) - Current
+
+**Major Features**:
+- InfraNodus-style labeling: centrality-based visibility (top 20% always visible), dynamic font sizing (10-28px), opacity gradient (0.3-1.0)
+- Graph physics optimization: velocity decay 0.4, cooldown 1000 ticks for stable, natural node movement
+- AI Explain uses concept names instead of raw UUIDs (node_name/node_type passed to explain endpoint)
+- Gap auto-refresh: automatic re-detection when clusters exist but no gaps found (min_gaps=3)
+- Evidence query stabilization: escape_sql_like + classified error handling (error_code field)
+- Korean tooltips for all 14 toolbar buttons
+
+**Bug Fixes**:
+- Fixed graph shrinkage after simulation (d3VelocityDecay 0.9→0.4)
+- Fixed nodes stuck after drag (fx/fy/fz = undefined on drag end)
+- Fixed "No Gaps Detected" when clusters exist
+- Fixed Evidence 500 errors from unescaped SQL LIKE patterns
+
+**Removed**:
+- Particle effects (lightning toggle and particle rendering completely removed from code, store, and UI)
+
+### Version 0.8.0 (2026-02-04)
+
+**Features**:
+- Label visibility toggle: toolbar button cycles none/important/all modes
+- Node removal preview: visual preview before applying centrality-based slicing
+- InsightHUD repositioning: moved to right-side (InfraNodus-style layout)
+- Hash-based cluster color assignment for consistent colors across refreshes
+
+**Bug Fixes**:
+- EdgeContextModal accessibility: ESC key, focus trap, ARIA attributes
+- Evidence API stability: table existence check prevents 500 errors
+- Cluster color stability: hashClusterId() for deterministic color mapping
+
+**Technical**:
+- LabelVisibility type with cycleLabelVisibility() store action
+- Dynamic panel stacking for InsightHUD positioning
+
+### Version 0.5.0 (2026-02-04)
 
 **Major Features**:
 - 6-Agent RAG pipeline (Intent → Concept → Task → Query → Reasoning → Response)
@@ -1235,6 +1304,6 @@ app.add_middleware(
 
 **Document End**
 
-**Last Updated**: 2026-02-04
+**Last Updated**: 2026-02-05
 **Next Review**: 2026-05-04
 **Maintained By**: ScholaRAG_Graph Development Team

@@ -39,6 +39,19 @@ SLOW_API_THRESHOLD = 10.0
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 0.5
 
+# v0.10.0: Type-specific minimum confidence thresholds
+# Higher thresholds for types that need stronger evidence
+ENTITY_TYPE_CONFIDENCE_THRESHOLDS = {
+    "Concept": 0.6,       # Broad extraction - lower threshold
+    "Method": 0.7,        # Needs clear methodological evidence
+    "Finding": 0.7,       # Needs clear empirical evidence
+    "Problem": 0.65,      # Research questions are often implied
+    "Dataset": 0.7,       # Must be explicitly named
+    "Metric": 0.7,        # Must be explicitly mentioned
+    "Innovation": 0.65,   # Novel contributions can be subtle
+    "Limitation": 0.6,    # Often acknowledged briefly
+}
+
 
 class EntityType(str, Enum):
     """Entity types for academic knowledge graph."""
@@ -138,6 +151,18 @@ Study limitations acknowledged or implied.
 - What are the constraints of this research?
 - What couldn't be addressed?
 
+### DATASETS
+Named datasets used in the research.
+- Include specific dataset names (e.g., "ImageNet", "GLUE benchmark")
+- Include data collection instruments if named
+- Note size and domain if mentioned
+
+### METRICS
+Evaluation metrics used to measure outcomes.
+- Include specific metric names (e.g., "accuracy", "F1 score", "Cohen's d")
+- Include statistical measures if they are central to findings
+- Note both primary and secondary metrics
+
 ## Response Format
 
 Return a JSON object with this exact structure:
@@ -183,6 +208,20 @@ Return a JSON object with this exact structure:
         {{
             "name": "limitation summary",
             "description": "details and implications",
+            "confidence": 0.7
+        }}
+    ],
+    "datasets": [
+        {{
+            "name": "dataset name",
+            "description": "domain, size, characteristics",
+            "confidence": 0.7
+        }}
+    ],
+    "metrics": [
+        {{
+            "name": "metric name",
+            "description": "what it measures and context",
             "confidence": 0.7
         }}
     ]
@@ -452,7 +491,7 @@ class EntityExtractor:
         entities = []
 
         for entity_type, entity_list in result.items():
-            if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets"):
+            if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets", "metrics"):
                 type_map = {
                     "concepts": EntityType.CONCEPT,
                     "methods": EntityType.METHOD,
@@ -461,6 +500,7 @@ class EntityExtractor:
                     "innovations": EntityType.INNOVATION,
                     "limitations": EntityType.LIMITATION,
                     "datasets": EntityType.DATASET,
+                    "metrics": EntityType.METRIC,
                 }
                 for entity_data in entity_list:
                     if isinstance(entity_data, dict):
@@ -688,7 +728,7 @@ class EntityExtractor:
             return result
 
         # v0.6.0: Validate all expected keys are present
-        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets'}
+        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets', 'metrics'}
         missing_keys = expected_keys - set(data.keys())
         if missing_keys:
             logger.warning(f"Entity extraction missing categories: {missing_keys}")
@@ -805,6 +845,31 @@ class EntityExtractor:
                         },
                     )
                 )
+
+            # v0.10.0: Parse metrics
+            for mt in data.get("metrics", [])[:3]:
+                if not mt.get("name"):
+                    continue
+                result["metrics"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.METRIC,
+                        name=mt.get("name", ""),
+                        description=mt.get("description", ""),
+                        confidence=float(mt.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # v0.10.0: Apply type-specific confidence thresholds
+            for type_key in result:
+                if isinstance(result[type_key], list):
+                    result[type_key] = [
+                        entity for entity in result[type_key]
+                        if entity.confidence >= ENTITY_TYPE_CONFIDENCE_THRESHOLDS.get(
+                            entity.entity_type.value if isinstance(entity.entity_type, EntityType) else entity.entity_type,
+                            0.5  # Default threshold if type not in map
+                        )
+                    ]
 
         except Exception as e:
             logger.error(f"Error parsing JSON data: {e}")
@@ -943,6 +1008,7 @@ class EntityExtractor:
             "innovations": [],
             "limitations": [],
             "datasets": [],
+            "metrics": [],
         }
 
     async def batch_extract(

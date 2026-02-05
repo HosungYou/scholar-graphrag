@@ -87,6 +87,23 @@ const ENTITY_TYPE_COLORS: Record<string, string> = {
   Limitation: '#F97316',
 };
 
+// v0.10.0: Entity type shape mapping for visual differentiation
+// Each type gets a distinct Three.js geometry for at-a-glance recognition
+type EntityShape = 'sphere' | 'box' | 'octahedron' | 'cone' | 'dodecahedron' | 'cylinder' | 'torus' | 'tetrahedron';
+
+const ENTITY_TYPE_SHAPES: Record<string, EntityShape> = {
+  Concept: 'sphere',          // Default - round, fundamental
+  Method: 'box',              // Structured, systematic
+  Finding: 'octahedron',      // Diamond-like, valuable
+  Problem: 'cone',            // Pointed, directional
+  Innovation: 'dodecahedron', // Complex, multifaceted
+  Limitation: 'tetrahedron',  // Simple, constrained
+  Dataset: 'cylinder',        // Container-like
+  Metric: 'torus',            // Measurement, cyclical
+  Paper: 'sphere',            // Fallback
+  Author: 'sphere',           // Fallback
+};
+
 // v0.9.0: InfraNodus-style labeling configuration
 const LABEL_CONFIG = {
   minFontSize: 10,
@@ -166,6 +183,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // v0.7.0: Adaptive labeling state
   const [labelVisibility, setLabelVisibility] = useState<'none' | 'important' | 'all'>('important');
   const [currentZoom, setCurrentZoom] = useState<number>(500);
+  const currentZoomRef = useRef<number>(500);
 
   // v0.7.0: Calculate label threshold based on zoom level
   const calculateLabelThreshold = useCallback((zoomLevel: number): number => {
@@ -520,18 +538,46 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         : 0.15 + bloomIntensity * 0.45;
     }
 
-    // Main sphere
-    const geometry = new THREE.SphereGeometry(nodeSize, 16, 16);
+    // v0.10.0: Entity type-based geometry
+    const entityShape = ENTITY_TYPE_SHAPES[node.entityType] || 'sphere';
+    let geometry: THREE.BufferGeometry;
+
+    switch (entityShape) {
+      case 'box':
+        geometry = new THREE.BoxGeometry(nodeSize * 1.6, nodeSize * 1.6, nodeSize * 1.6);
+        break;
+      case 'octahedron':
+        geometry = new THREE.OctahedronGeometry(nodeSize * 1.1);
+        break;
+      case 'cone':
+        geometry = new THREE.ConeGeometry(nodeSize, nodeSize * 2, 8);
+        break;
+      case 'dodecahedron':
+        geometry = new THREE.DodecahedronGeometry(nodeSize * 1.1);
+        break;
+      case 'tetrahedron':
+        geometry = new THREE.TetrahedronGeometry(nodeSize * 1.2);
+        break;
+      case 'cylinder':
+        geometry = new THREE.CylinderGeometry(nodeSize * 0.8, nodeSize * 0.8, nodeSize * 1.6, 8);
+        break;
+      case 'torus':
+        geometry = new THREE.TorusGeometry(nodeSize * 0.8, nodeSize * 0.35, 8, 16);
+        break;
+      default:
+        geometry = new THREE.SphereGeometry(nodeSize, 16, 16);
+    }
+
     const material = new THREE.MeshPhongMaterial({
       color: displayColor,
       emissive: displayColor,
       emissiveIntensity,
       transparent: true,
-      opacity: isHighlighted ? 1 : 0.85,  // Removed hoveredNode check to prevent jitter
+      opacity: isHighlighted ? 1 : 0.85,
       shininess: bloomEnabled ? 50 : 30,
     });
-    const sphere = new THREE.Mesh(geometry, material);
-    group.add(sphere);
+    const mainMesh = new THREE.Mesh(geometry, material);
+    group.add(mainMesh);
 
     // Bloom outer glow sphere (always show when bloom is enabled)
     if (bloomEnabled) {
@@ -971,6 +1017,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, []);
 
   // v0.7.0: Track camera zoom level for adaptive labels
+  // v0.10.0: Bucket-based updates to prevent jitter (only update state on threshold change)
   useEffect(() => {
     if (!fgRef.current) return;
 
@@ -978,7 +1025,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       const camera = fgRef.current?.camera();
       if (camera) {
         const distance = camera.position.length();
-        setCurrentZoom(distance);
+        // Only update React state when zoom crosses a 50-unit bucket boundary
+        const bucket = Math.round(distance / 50) * 50;
+        if (bucket !== currentZoomRef.current) {
+          currentZoomRef.current = bucket;
+          setCurrentZoom(bucket);
+        }
       }
     };
 

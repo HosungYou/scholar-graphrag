@@ -13,6 +13,7 @@ import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
 import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
+import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import type { GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
@@ -293,29 +294,32 @@ export function KnowledgeGraph3D({
     <div className="relative w-full h-full">
       {/* Graph View (3D, Topic, or Gaps) */}
       {viewMode === '3d' && (
-        <Graph3D
-          ref={graph3DRef}
-          nodes={displayData.nodes}
-          edges={displayData.edges}
-          clusters={clusters}
-          centralityMetrics={centralityMetrics}
-          highlightedNodes={highlightedNodes}
-          highlightedEdges={highlightedEdges}
-          selectedGap={selectedGap}
-          onNodeClick={handleNodeClick}
-          onBackgroundClick={handleBackgroundClick}
-          onEdgeClick={handleEdgeClick}  // UI-011: Relationship Evidence
-          bloomEnabled={view3D.bloom.enabled}
-          bloomIntensity={view3D.bloom.intensity}
-          glowSize={view3D.bloom.glowSize}
-          // v0.7.0: Node pinning
-          pinnedNodes={pinnedNodes}
-          onNodePin={addPinnedNode}
-          onNodeUnpin={removePinnedNode}
-          onClearPinnedNodes={clearPinnedNodes}
-          // v0.8.0: Adaptive label visibility
-          labelVisibility={view3D.labelVisibility}
-        />
+        <>
+          <EntityTypeLegend visibleTypes={Object.keys(nodeCounts)} />
+          <Graph3D
+            ref={graph3DRef}
+            nodes={displayData.nodes}
+            edges={displayData.edges}
+            clusters={clusters}
+            centralityMetrics={centralityMetrics}
+            highlightedNodes={highlightedNodes}
+            highlightedEdges={highlightedEdges}
+            selectedGap={selectedGap}
+            onNodeClick={handleNodeClick}
+            onBackgroundClick={handleBackgroundClick}
+            onEdgeClick={handleEdgeClick}  // UI-011: Relationship Evidence
+            bloomEnabled={view3D.bloom.enabled}
+            bloomIntensity={view3D.bloom.intensity}
+            glowSize={view3D.bloom.glowSize}
+            // v0.7.0: Node pinning
+            pinnedNodes={pinnedNodes}
+            onNodePin={addPinnedNode}
+            onNodeUnpin={removePinnedNode}
+            onClearPinnedNodes={clearPinnedNodes}
+            // v0.8.0: Adaptive label visibility
+            labelVisibility={view3D.labelVisibility}
+          />
+        </>
       )}
       {viewMode === 'topic' && (
         <TopicViewMode
@@ -631,12 +635,17 @@ export function KnowledgeGraph3D({
         />
       )}
 
-      {/* View Mode Badge - Hidden in Gaps mode (GapsViewMode has its own badge) */}
+      {/* v0.10.0: View Mode Badge with Active Indicator - Hidden in Gaps mode */}
       {viewMode !== 'gaps' && (
         <div className="absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
           <div className="flex items-center gap-2">
             {viewMode === '3d' && (
               <>
+                {/* Pulsing active indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-teal rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-teal rounded-full" />
+                </div>
                 <Box className="w-4 h-4 text-accent-teal" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted">
                   3D Mode
@@ -648,6 +657,11 @@ export function KnowledgeGraph3D({
             )}
             {viewMode === 'topic' && (
               <>
+                {/* Pulsing active indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-purple rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-purple rounded-full" />
+                </div>
                 <Grid2X2 className="w-4 h-4 text-accent-purple" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted">
                   Topic View

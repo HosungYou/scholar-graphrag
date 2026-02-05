@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-04
-> **Version**: 3.4.0 (v0.9.0 Graph Physics & UX Critical Fixes)
+> **Last Updated**: 2026-02-05
+> **Version**: 3.5.0 (v0.10.0 Entity Type V2, Test Infrastructure, Visual Enhancements)
 
 ## Project Overview
 
@@ -679,6 +679,33 @@ When making architectural changes:
 
 ---
 
+## 📊 v0.10.0 Release Notes
+
+> **Version**: 0.10.0 | **Date**: 2026-02-05
+> **Full Notes**: See `RELEASE_NOTES_v0.10.0.md`
+
+### Added
+- **Entity Type V2**: Type-specific confidence thresholds (0.6-0.7), enhanced DATASETS/METRICS extraction prompts, metrics parsing pipeline
+- **Entity Shape Visualization**: 8 distinct Three.js geometries per entity type (Sphere, Box, Octahedron, Cone, Dodecahedron, Tetrahedron, Cylinder, Torus)
+- **EntityTypeLegend Component**: Collapsible legend with SVG shape icons and Korean labels
+- **Convex Hull Boundaries**: D3.js `polygonHull` cluster boundaries in Topic View
+- **Test Infrastructure**: 3 backend test files (test_chat_router, test_graph_router, test_importer) + 3 frontend test files (Graph3D, useGraphStore, api)
+- **Active Mode Indicator**: Pulsing dot animation on view mode badges (teal=3D, purple=Topic)
+
+### Improved
+- **Camera Polling**: Bucket-based zoom updates (`Math.round(distance/50)*50`) via `useRef` - ~90% fewer state updates
+- **Cluster Labels**: 14px color-matched text with text shadow (was 12px white)
+- **Topic Legend**: Shows cluster color swatches with names and counts
+- **SDD Document**: Updated from v0.7.0 to v0.9.0 with full architectural alignment
+
+### Technical
+- `ENTITY_TYPE_CONFIDENCE_THRESHOLDS` constant in `entity_extractor.py`
+- `ENTITY_TYPE_SHAPES` constant in `Graph3D.tsx` with geometry switch in `nodeThreeObject`
+- `currentZoomRef` for jitter-free camera polling
+- `hullGroup` with `d3.polygonHull` in `TopicViewMode.tsx`
+
+---
+
 ## 📊 v0.9.0 Release Notes
 
 > **Version**: 0.9.0 | **Date**: 2026-02-04
@@ -698,11 +725,11 @@ When making architectural changes:
 ### Removed
 - **Particle Effects**: Lightning toggle and particle rendering completely removed
 
-### Planned (v0.10.0)
-- Entity Extraction V2 (all 8 entity types)
-- AI Chat data-based fallback
-- Semantic diversity metrics
-- Next.js 14.2+ security upgrade
+### Planned (v0.10.0) → ✅ Released
+- ✅ Entity Extraction V2 (all 8 entity types) → v0.10.0
+- AI Chat data-based fallback → moved to v0.11.0
+- Semantic diversity metrics → moved to v0.11.0
+- Next.js 14.2+ security upgrade → moved to v0.11.0
 
 ---
 
