@@ -20,6 +20,7 @@ import asyncpg.exceptions
 
 from database import db
 from graph.graph_store import GraphStore
+from graph.metrics_cache import metrics_cache
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from routers.projects import check_project_access
@@ -1208,6 +1209,19 @@ async def refresh_gap_analysis(
                 for cid in cluster.concept_ids
             ]
 
+            # Generate meaningful label from concept names
+            if cluster.name:
+                label = cluster.name
+            elif cluster_concept_names:
+                # Use top 3 concept names
+                label = ", ".join(cluster_concept_names[:3])
+                if len(cluster_concept_names) > 3:
+                    label += f" (+{len(cluster_concept_names) - 3} more)"
+            else:
+                label = f"Cluster {cluster.id + 1}"
+
+            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}")
+
             await database.execute(
                 """
                 INSERT INTO concept_clusters (project_id, cluster_id, concepts, concept_names, size, density, label)
@@ -1219,7 +1233,7 @@ async def refresh_gap_analysis(
                 cluster_concept_names,  # Derived from concept_ids
                 len(cluster.concept_ids),  # Computed size
                 0.0,  # Default density (can be calculated if needed)
-                cluster.name or f"Cluster {cluster.id + 1}",  # Use 'name' or generate label
+                label,
             )
 
         # Store gaps
@@ -1278,6 +1292,8 @@ async def refresh_gap_analysis(
                 },
                 metric.concept_id,
             )
+
+        await metrics_cache.invalidate_project(str(project_id))
 
         # Return updated analysis
         return await get_gap_analysis(project_id, database, current_user)
@@ -1736,6 +1752,11 @@ async def get_centrality(
         - centrality: dict mapping node_id to centrality score
         - top_bridges: list of (node_id, score) for top 10 nodes
     """
+    cache_key = f"centrality:{project_id}:{metric}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         from graph.centrality_analyzer import centrality_analyzer
 
@@ -1761,11 +1782,13 @@ async def get_centrality(
         )
 
         if not node_rows:
-            return {
+            payload = {
                 "metric": metric,
                 "centrality": {},
                 "top_bridges": [],
             }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format expected by analyzer
         nodes = [
@@ -1813,11 +1836,13 @@ async def get_centrality(
             for node_id, score in top_bridges
         ]
 
-        return {
+        payload = {
             "metric": metric,
             "centrality": centrality,
             "top_bridges": top_bridges_with_names,
         }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -1878,6 +1903,11 @@ async def get_diversity_metrics(
     # Verify project access
     await verify_project_access(database, project_id, current_user, "access")
 
+    cache_key = f"diversity:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         from graph.diversity_analyzer import diversity_analyzer
 
@@ -1914,16 +1944,18 @@ async def get_diversity_metrics(
         )
 
         if not node_rows:
-            return DiversityMetricsResponse(
-                shannon_entropy=0.0,
-                normalized_entropy=0.0,
-                modularity=0.0,
-                bias_score=1.0,
-                diversity_rating="low",
-                cluster_sizes=[],
-                dominant_cluster_ratio=1.0,
-                gini_coefficient=1.0,
-            )
+            payload = {
+                "shannon_entropy": 0.0,
+                "normalized_entropy": 0.0,
+                "modularity": 0.0,
+                "bias_score": 1.0,
+                "diversity_rating": "low",
+                "cluster_sizes": [],
+                "dominant_cluster_ratio": 1.0,
+                "gini_coefficient": 1.0,
+            }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format for analyzer
         nodes = [{"id": str(row["id"])} for row in node_rows]
@@ -1943,16 +1975,18 @@ async def get_diversity_metrics(
         # Compute metrics
         metrics = diversity_analyzer.analyze_from_data(nodes, edges, clusters)
 
-        return DiversityMetricsResponse(
-            shannon_entropy=metrics.shannon_entropy,
-            normalized_entropy=metrics.normalized_entropy,
-            modularity=metrics.modularity,
-            bias_score=metrics.bias_score,
-            diversity_rating=metrics.diversity_rating,
-            cluster_sizes=metrics.cluster_sizes,
-            dominant_cluster_ratio=metrics.dominant_cluster_ratio,
-            gini_coefficient=metrics.gini_coefficient,
-        )
+        payload = {
+            "shannon_entropy": metrics.shannon_entropy,
+            "normalized_entropy": metrics.normalized_entropy,
+            "modularity": metrics.modularity,
+            "bias_score": metrics.bias_score,
+            "diversity_rating": metrics.diversity_rating,
+            "cluster_sizes": metrics.cluster_sizes,
+            "dominant_cluster_ratio": metrics.dominant_cluster_ratio,
+            "gini_coefficient": metrics.gini_coefficient,
+        }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -1982,6 +2016,11 @@ async def get_graph_metrics(
     """
     # Verify project access
     await verify_project_access(database, project_id, current_user, "access")
+
+    cache_key = f"graph_metrics:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         from graph.centrality_analyzer import centrality_analyzer, ClusterResult
@@ -2020,16 +2059,18 @@ async def get_graph_metrics(
         )
 
         if not node_rows:
-            return GraphMetricsResponse(
-                modularity=0.0,
-                diversity=0.0,
-                density=0.0,
-                avg_clustering=0.0,
-                num_components=0,
-                node_count=0,
-                edge_count=0,
-                cluster_count=0,
-            )
+            payload = {
+                "modularity": 0.0,
+                "diversity": 0.0,
+                "density": 0.0,
+                "avg_clustering": 0.0,
+                "num_components": 0,
+                "node_count": 0,
+                "edge_count": 0,
+                "cluster_count": 0,
+            }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format expected by analyzer
         nodes = [
@@ -2067,16 +2108,18 @@ async def get_graph_metrics(
         # Compute graph metrics
         metrics = centrality_analyzer.compute_graph_metrics(nodes, edges, clusters)
 
-        return GraphMetricsResponse(
-            modularity=metrics["modularity"],
-            diversity=metrics["diversity"],
-            density=metrics["density"],
-            avg_clustering=metrics["avg_clustering"],
-            num_components=metrics["num_components"],
-            node_count=len(nodes),
-            edge_count=len(edges),
-            cluster_count=len(clusters),
-        )
+        payload = {
+            "modularity": metrics["modularity"],
+            "diversity": metrics["diversity"],
+            "density": metrics["density"],
+            "avg_clustering": metrics["avg_clustering"],
+            "num_components": metrics["num_components"],
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "cluster_count": len(clusters),
+        }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -2307,6 +2350,8 @@ async def recompute_clusters(
                     json.dumps({"cluster_id": cluster.cluster_id}),
                     node_id,
                 )
+
+        await metrics_cache.invalidate_project(str(project_id))
 
         return {
             "clusters": formatted_clusters,
