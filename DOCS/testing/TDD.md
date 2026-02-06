@@ -1,7 +1,7 @@
 # Test Design Document (TDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.11.1
+**Version**: 0.11.2
 **Last Updated**: 2026-02-06  
 **Status**: Active  
 **Document Type**: Test Design & Verification Specification

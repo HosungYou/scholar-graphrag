@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.11.1
+**Version**: 0.11.2
 **Last Updated**: 2026-02-06
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -13,7 +13,7 @@
 | Field | Value |
 |-------|-------|
 | **Document Version** | 1.5.0 |
-| **Project Version** | 0.11.1 |
+| **Project Version** | 0.11.2 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
