@@ -86,7 +86,7 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 ### 1.5 Runtime Stability Focus (v0.11.1)
 
 Render Starter 환경에서 관찰된 `memory limit exceeded` 이슈 대응을 위해,
-아래 5개를 단기 안정화 우선순위로 정의한다.
+아래 6개를 단기 안정화 우선순위로 정의한다.
 
 1. **Request shaping**
 - `/api/graph/visualization/{project_id}`에 edge 상한(`max_edges`)을 적용해
@@ -107,6 +107,11 @@ Render Starter 환경에서 관찰된 `memory limit exceeded` 이슈 대응을 �
 5. **TF-IDF fallback memory guard**
 - TF-IDF fallback 경로에 concept cap(1200), feature cap(64), `float32` 변환을 적용해
   임베딩 부재 환경에서의 메모리 피크를 제한한다.
+
+6. **Heavy metrics endpoint TTL cache**
+- `/api/graph/centrality/{project_id}`, `/api/graph/diversity/{project_id}`,
+  `/api/graph/metrics/{project_id}` 결과를 short TTL(30s) + bounded cache(12 entries)로
+  제공해 반복 재진입 시 CPU/메모리 재계산 부담을 줄인다.
 
 ---
 
@@ -1195,6 +1200,7 @@ app.add_middleware(
 - Gap auto-refresh single-attempt per session
 - QueryExecutionAgent DB fallback when GraphStore is unavailable
 - TF-IDF fallback guardrails (concept cap 1200, feature cap 64, float32 vectors)
+- Heavy metrics endpoint TTL cache (30s, max 12 entries, project-scoped invalidation on refresh/recluster)
 
 ### Version 0.11.0 (2026-02-06)
 

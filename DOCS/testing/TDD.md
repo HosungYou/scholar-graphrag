@@ -211,6 +211,14 @@
   - 동일 projectId에서 auto-refresh 1회만 실행되는지 검증
   - gap refresh 실패 시에도 무한 재시도되지 않는지 확인
 
+4. Metrics endpoint TTL cache
+- 대상: `backend/routers/graph.py`, `backend/tests/test_graph_router.py`
+- 목적: `/centrality`, `/diversity`, `/metrics`의 반복 계산 비용/메모리 피크 완화
+- 전략:
+  - cache set/get 동작 및 key recency 갱신 확인
+  - 만료 항목 조회 시 miss + 정리 동작 확인
+  - `project_id` 기준 invalidation 시 해당 프로젝트 key만 제거되는지 확인
+
 ---
 
 ### 5.7 v0.11.1 Production Bug Fix Regression Design
@@ -300,6 +308,7 @@ python3 -m py_compile backend/routers/graph.py backend/routers/chat.py backend/i
 
 # Backend regression tests
 pytest -q backend/tests/test_graph_router.py backend/tests/test_zotero_rdf_importer.py
+pytest -q backend/tests/test_graph_router.py -k MetricsCacheHelpers
 
 # Frontend changed-file lint (v0.11.1)
 cd frontend

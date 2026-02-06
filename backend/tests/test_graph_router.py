@@ -4,7 +4,9 @@ v0.10.0: Test coverage for escape_sql_like, gap auto-refresh, evidence error han
 """
 
 import pytest
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 
 class TestEscapeSqlLike:
@@ -136,3 +138,40 @@ class TestRelationshipEvidence:
         # Should not have unescaped % or _ that would break LIKE
         assert "100\\%" in like_pattern
         assert "effective\\_method" in like_pattern
+
+
+@pytest.mark.asyncio
+class TestMetricsCacheHelpers:
+    """Tests for in-memory metrics cache helpers."""
+
+    async def test_set_and_get_metrics_cache(self):
+        from graph.metrics_cache import MetricsTTLCache
+
+        cache = MetricsTTLCache(ttl_seconds=30.0, max_entries=12)
+        await cache.set("centrality:test-project:betweenness", {"ok": True})
+        cached = await cache.get("centrality:test-project:betweenness")
+        assert cached == {"ok": True}
+
+    async def test_expired_entry_returns_none(self):
+        from graph.metrics_cache import MetricsTTLCache
+
+        cache = MetricsTTLCache(ttl_seconds=30.0, max_entries=12)
+        async with cache._lock:
+            cache._cache["metrics:expired"] = (time.monotonic() - 1.0, {"stale": True})
+
+        cached = await cache.get("metrics:expired")
+        assert cached is None
+
+    async def test_invalidate_project_metrics_cache(self):
+        from graph.metrics_cache import MetricsTTLCache
+
+        cache = MetricsTTLCache(ttl_seconds=30.0, max_entries=12)
+        project_id = UUID("00000000-0000-0000-0000-000000000001")
+        other_project = UUID("00000000-0000-0000-0000-000000000002")
+        await cache.set(f"diversity:{project_id}", {"value": 1})
+        await cache.set(f"graph_metrics:{other_project}", {"value": 2})
+
+        await cache.invalidate_project(str(project_id))
+
+        assert await cache.get(f"diversity:{project_id}") is None
+        assert await cache.get(f"graph_metrics:{other_project}") == {"value": 2}
