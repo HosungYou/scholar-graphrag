@@ -1,7 +1,7 @@
 # ScholaRAG_Graph Documentation
 
-> **Last Updated**: 2026-01-25
-> **Version**: 0.4.0
+> **Last Updated**: 2026-02-06
+> **Version**: 0.10.2
 
 ## Quick Navigation
 
@@ -11,6 +11,7 @@
 
 ### Architecture
 - [Overview](architecture/overview.md) - System architecture and design principles
+- [SDD](architecture/SDD.md) - Software Design Document (design baseline)
 - [Multi-Agent System](architecture/multi-agent-system.md) - 6-agent RAG pipeline
 - [Graph Visualization](architecture/graph-visualization.md) - Force-directed graph rendering
 
@@ -31,8 +32,12 @@
 
 ### Development
 - [Agent Architecture](development/agent-architecture.md) - Agent pipeline design
-- [Testing](testing/testing-strategy.md) - Testing approach
+- [TDD](testing/TDD.md) - Test Design Document (quality gates + traceability)
 - [Operations](operations/deployment.md) - Deployment and operations
+
+### Release Notes
+- [v0.10.2](../RELEASE_NOTES_v0.10.2.md) - Stability/memory hardening release
+- [v0.10.1](../RELEASE_NOTES_v0.10.1.md) - Reopen flow and DB health stabilization
 
 ### Project Management
 - [Roadmap](project-management/roadmap.md) - Feature roadmap

@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-04
+> **마지막 업데이트**: 2026-02-06
 > **관리자**: Claude Code
 
 ---
@@ -27,6 +27,49 @@
 ## 🟡 Medium Priority (Short-term)
 
 *모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 v0.10.2 Release - Completed Items (2026-02-06)
+
+### PERF-013: Import Progress Backpressure & Memory Hardening
+- **Source**: 반복 재진입/Import 부하 분석 2026-02-06
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `backend/routers/import_.py` - coalesced progress updater, checkpoint queue, legacy job cleanup
+  - `backend/main.py` - periodic maintenance + shutdown cleanup
+  - `frontend/components/import/ImportProgress.tsx` - single-flight visibility-aware polling
+  - `frontend/components/graph/StatusBar.tsx` - single-flight visibility-aware polling
+  - `frontend/components/graph/Graph3D.tsx` - interval frequency reduction + hidden-tab skip
+- **Description**:
+  - Import progress callback의 무제한 `create_task()` 패턴으로 인한 task burst 위험 완화
+  - legacy in-memory import state 및 quota buffer 누적 완화
+  - 프론트 hidden tab polling 부담 경감
+- **Solution Applied**:
+  - [x] progress update coalescing worker 적용
+  - [x] checkpoint save queue 직렬화 적용
+  - [x] legacy import jobs cleanup 유틸 추가
+  - [x] periodic maintenance에 quota flush/old job cleanup 통합
+  - [x] polling loop를 single-flight timeout 기반으로 전환
+- **Completed**: 2026-02-06
+
+---
+
+### DOC-012: SDD/TDD 구조 정비 및 릴리즈 문서화
+- **Source**: 문서 체계화 요청 2026-02-06
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `RELEASE_NOTES_v0.10.2.md` - 신규 릴리즈 노트
+  - `DOCS/testing/TDD.md` - 신규 Test Design Document
+  - `DOCS/architecture/SDD.md` - v0.10.2 반영
+  - `DOCS/DOCUMENTATION_INDEX.md` - 문서 인덱스/버전 업데이트
+  - `DOCS/README.md` - TDD/릴리즈 링크 업데이트
+  - `backend/tests/README.md` - v0.10.2 회귀 테스트 실행 기준 추가
+  - `mkdocs.yml` - SDD/TDD nav 연결
+- **Description**: SDD-TDD 추적 가능성을 확보하고 release 문서 표준을 최신 상태로 정렬
+- **Completed**: 2026-02-06
 
 ---
 

@@ -72,10 +72,36 @@ export function StatusBar({ projectId }: StatusBarProps) {
   }, [projectId]);
 
   useEffect(() => {
-    fetchStatus();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchStatus, 30000);
-    return () => clearInterval(interval);
+    let timeoutId: NodeJS.Timeout | null = null;
+    let stopped = false;
+    let inFlight = false;
+
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      timeoutId = setTimeout(runFetch, delayMs);
+    };
+
+    const runFetch = async () => {
+      if (stopped || inFlight) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        scheduleNext(60000);
+        return;
+      }
+
+      inFlight = true;
+      try {
+        await fetchStatus();
+      } finally {
+        inFlight = false;
+        scheduleNext(30000);
+      }
+    };
+
+    runFetch();
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [fetchStatus]);
 
   // Get data source color and label

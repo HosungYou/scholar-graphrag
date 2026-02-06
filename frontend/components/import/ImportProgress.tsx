@@ -73,23 +73,39 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
   useEffect(() => {
     if (!jobId) return;
 
-    let intervalId: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout | null = null;
+    let stopped = false;
+    let inFlight = false;
 
-    const pollStatus = async () => {
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      timeoutId = setTimeout(runPoll, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (stopped || inFlight) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        scheduleNext(5000);
+        return;
+      }
+
+      inFlight = true;
       try {
         const status = await api.getImportStatus(jobId);
         setJob(status);
 
         if (status.status === 'completed' && status.result?.project_id) {
-          clearInterval(intervalId);
+          stopped = true;
           onComplete?.(status.result.project_id);
+          return;
         } else if (status.status === 'failed') {
-          clearInterval(intervalId);
+          stopped = true;
           setError(status.error || 'Import failed');
           onError?.(status.error || 'Import failed');
+          return;
         } else if (status.status === 'interrupted') {
           // BUG-028: Handle interrupted state (server restart killed the task)
-          clearInterval(intervalId);
+          stopped = true;
           setIsInterrupted(true);
 
           // Fetch resume info
@@ -101,19 +117,24 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           }
 
           onError?.(status.error || 'Import interrupted');
+          return;
         }
       } catch (err) {
         console.error('Failed to fetch import status:', err);
+      } finally {
+        inFlight = false;
+        if (!stopped) {
+          scheduleNext(2000);
+        }
       }
     };
 
-    // Initial fetch
-    pollStatus();
+    runPoll();
 
-    // Poll every 2 seconds
-    intervalId = setInterval(pollStatus, 2000);
-
-    return () => clearInterval(intervalId);
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [jobId, onComplete, onError]);
 
   // BUG-028 Extension: Special UI for interrupted imports with checkpoint info

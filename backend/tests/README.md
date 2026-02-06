@@ -31,6 +31,7 @@ open htmlcov/index.html
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
+| **`DOCS/testing/TDD.md`** | Project-wide test design baseline (SDD-TDD traceability, quality gates) | Developers, reviewers |
 | **ZOTERO_HYBRID_IMPORT_TEST_DESIGN.md** | Comprehensive test design with fixtures, unit/integration/e2e tests, CI/CD config | Developers implementing tests |
 | **TEST_ARCHITECTURE_DIAGRAM.md** | Visual diagrams of test structure, flow, dependencies | All team members (overview) |
 | **IMPLEMENTATION_GUIDE.md** | Step-by-step setup instructions, checklist, troubleshooting | Developers setting up tests |
@@ -172,6 +173,20 @@ pkill -f uvicorn
 # 1. Open Zotero Desktop
 # 2. Enable "Allow other applications" in Preferences
 pytest -m "requires_zotero" -v
+```
+
+### v0.10.2 Stability Regression (Recommended)
+
+```bash
+# 1) Syntax check for lifecycle/import stabilization changes
+python3 -m py_compile backend/main.py backend/routers/import_.py
+
+# 2) Importer regression tests
+pytest -q backend/tests/test_importer.py
+
+# 3) Frontend changed-file lint
+cd frontend
+npm run -s lint -- --file components/import/ImportProgress.tsx --file components/graph/StatusBar.tsx --file components/graph/Graph3D.tsx
 ```
 
 ### CI/CD (GitHub Actions)

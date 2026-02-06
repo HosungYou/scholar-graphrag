@@ -180,6 +180,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const fgRef = useRef<any>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
+  // v0.11.0: Debounced hover to prevent jitter
+  const hoveredNodeRef = useRef<string | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // v0.7.0: Adaptive labeling state
   const [labelVisibility, setLabelVisibility] = useState<'none' | 'important' | 'all'>('important');
   const [currentZoom, setCurrentZoom] = useState<number>(500);
@@ -483,6 +487,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // UI-010 FIX: Save node positions periodically to preserve across re-renders
   useEffect(() => {
     const savePositions = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       if (fgRef.current) {
         const currentNodes = fgRef.current.graphData()?.nodes;
         if (currentNodes) {
@@ -502,8 +509,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     };
 
-    // Save positions every 500ms while simulation is running
-    const intervalId = setInterval(savePositions, 500);
+    // Save positions less aggressively to reduce CPU/memory pressure.
+    const intervalId = setInterval(savePositions, 2000);
     return () => clearInterval(intervalId);
   }, []);
 
@@ -859,17 +866,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     focusCameraOnNode(node);
   }, [focusCameraOnNode]);
 
-  // Node hover handler
+  // Node hover handler - v0.11.0: debounced to prevent jitter
   const handleNodeHover = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode | null;
-    setHoveredNode(node?.id || null);
-    if (onNodeHover) {
-      if (node) {
-        const originalNode = nodes.find(n => n.id === node.id);
-        onNodeHover(originalNode || null);
-      } else {
-        onNodeHover(null);
-      }
+    const newId = node?.id || null;
+
+    // Only process if actually changed
+    if (newId !== hoveredNodeRef.current) {
+      hoveredNodeRef.current = newId;
+
+      // Debounce the state update to prevent jitter
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = setTimeout(() => {
+        setHoveredNode(newId);
+        if (onNodeHover) {
+          if (node) {
+            const originalNode = nodes.find(n => n.id === node.id);
+            onNodeHover(originalNode || null);
+          } else {
+            onNodeHover(null);
+          }
+        }
+      }, 50);
     }
   }, [nodes, onNodeHover]);
 
@@ -1022,6 +1040,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     if (!fgRef.current) return;
 
     const checkCameraDistance = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       const camera = fgRef.current?.camera();
       if (camera) {
         const distance = camera.position.length();
@@ -1035,9 +1056,16 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     };
 
     // Check periodically (controls event listener may not be accessible)
-    const intervalId = setInterval(checkCameraDistance, 200);
+    const intervalId = setInterval(checkCameraDistance, 750);
 
     return () => clearInterval(intervalId);
+  }, []);
+
+  // Cleanup hover timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
   }, []);
 
   return (

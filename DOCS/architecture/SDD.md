@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.9.0
-**Last Updated**: 2026-02-05
+**Version**: 0.10.2
+**Last Updated**: 2026-02-06
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,12 +12,12 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.3.0 |
-| **Project Version** | 0.9.0 |
+| **Document Version** | 1.4.0 |
+| **Project Version** | 0.10.2 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
-| **Related Documents** | [Architecture Overview](overview.md), [Multi-Agent System](multi-agent-system.md), [Database Schema](database-schema.md) |
+| **Related Documents** | [Architecture Overview](overview.md), [Multi-Agent System](multi-agent-system.md), [Database Schema](database-schema.md), [Test Design Document](../testing/TDD.md) |
 
 ---
 
@@ -1135,7 +1135,25 @@ app.add_middleware(
 
 ## 7. Change Log
 
-### Version 0.9.0 (2026-02-04) - Current
+### Version 0.10.2 (2026-02-06) - Current
+
+**Stability / Memory Hardening**:
+- Import progress path now uses coalesced async update workers instead of per-callback fan-out tasks
+- Zotero checkpoint persistence now uses queued, serialized writes to reduce concurrent write pressure
+- Legacy in-memory import job cleanup policy added (terminal-state + age-based cleanup)
+- Periodic maintenance loop extended to include quota buffer flush and old job cleanup
+- Shutdown lifecycle now flushes quota buffers and performs import/job cleanup before exit
+
+**Frontend Runtime Efficiency**:
+- ImportProgress polling changed from interval-based to single-flight timeout loop
+- StatusBar polling changed to visibility-aware timeout loop
+- Graph3D monitoring intervals reduced (position save and camera checks) with hidden-tab skip
+
+**Testing/Documentation Alignment**:
+- New TDD baseline document created: `DOCS/testing/TDD.md`
+- SDD-TDD traceability updated for release verification criteria
+
+### Version 0.9.0 (2026-02-04)
 
 **Major Features**:
 - InfraNodus-style labeling: centrality-based visibility (top 20% always visible), dynamic font sizing (10-28px), opacity gradient (0.3-1.0)
@@ -1304,6 +1322,6 @@ app.add_middleware(
 
 **Document End**
 
-**Last Updated**: 2026-02-05
-**Next Review**: 2026-05-04
+**Last Updated**: 2026-02-06
+**Next Review**: 2026-05-06
 **Maintained By**: ScholaRAG_Graph Development Team

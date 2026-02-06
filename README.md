@@ -164,6 +164,9 @@ psql scholarag_graph < database/migrations/004_concept_centric.sql
 - [User Guide](docs/user-guide.md)
 - [API Reference](docs/api-reference.md)
 - [Architecture Deep Dive](docs/architecture.md)
+- [Software Design Document (SDD)](DOCS/architecture/SDD.md)
+- [Test Design Document (TDD)](DOCS/testing/TDD.md)
+- [Release Notes v0.10.2](RELEASE_NOTES_v0.10.2.md)
 - [Contributing Guide](CONTRIBUTING.md)
 
 ## 🛠️ Tech Stack
