@@ -13,7 +13,7 @@
 | Field | Value |
 |-------|-------|
 | **Document Version** | 1.5.0 |
-| **Project Version** | 0.11.0 |
+| **Project Version** | 0.11.1 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |

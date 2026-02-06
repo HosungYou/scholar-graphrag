@@ -113,6 +113,7 @@ nav:
     - InfraNodus E2E Cases: testing/infranodus-e2e-test-cases.md
   - Development:
     - v0.3.0 Refactoring Plan: development/v0.3.0-refactoring-plan.md
+    - v0.11.1 Memory Stabilization Plan: development/v0.11.1-memory-stabilization-plan.md
   - Contributing: https://github.com/HosungYou/ScholaRAG_Graph/blob/main/CONTRIBUTING.md
 
 extra:

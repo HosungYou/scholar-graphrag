@@ -268,6 +268,26 @@
 
 ---
 
+### 5.8 Post-Release Consistency Review (magical-exploring-hamster.md)
+
+1. Plan-to-code consistency
+- 대상: v0.11.1 구현 변경 전체
+- 목적: 계획 대비 실제 구현 누락/과구현 식별
+- 검증 포인트:
+  - P0(이슈 4, 5) 기능 경로가 실제 런타임 코드로 연결되는지
+  - P1(이슈 1, 2) UX 변경이 시각적/행동적으로 재현되는지
+  - P2(이슈 3) 드래그 패널 위치 저장/복원이 프로젝트 단위로 동작하는지
+
+2. Residual risk checks
+- 대상: `frontend/components/graph/KnowledgeGraph3D.tsx`, `backend/agents/query_execution_agent.py`
+- 목적: 릴리즈 이후 회귀 가능성 최소화
+- 검증 포인트:
+  - 드래그 패널 default position이 클라이언트 런타임에서 안정적으로 계산되는지
+  - Gap analysis 경로에서 DB 미연결/빈 데이터 시 오류 메시지가 구체적으로 노출되는지
+  - 기존 테스트 스위트가 새 쿼리/폴백 경로를 최소 1개 이상 커버하는지
+
+---
+
 ## 6. Test Execution Policy
 
 ### Required Local Checks (for release candidates)
