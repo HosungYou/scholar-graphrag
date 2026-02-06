@@ -159,8 +159,8 @@ const polygonPaths: Record<string, (size: number) => string> = {
 // Map entity types to polygon shapes (Hybrid Mode)
 const entityShapes: Record<string, string> = {
   // Hybrid Mode entities
-  Paper: 'rectangle',      // 논문: 직사각형 (문서 형태)
-  Author: 'circle',        // 저자: 원형 (사람 노드)
+  Paper: 'rectangle',      // Paper: Rectangle (document shape)
+  Author: 'circle',        // Author: Circle (person node)
   // Concept-centric entities
   Concept: 'hexagon',
   Method: 'diamond',

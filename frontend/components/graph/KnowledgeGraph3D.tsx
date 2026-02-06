@@ -369,7 +369,7 @@ export function KnowledgeGraph3D({
       <div className="absolute top-4 right-4 flex gap-2">
         <div className="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-1 flex gap-1">
           {/* 3D Mode Indicator */}
-          <div className="p-2 bg-accent-teal text-white relative" title="3D 그래프 뷰 - 노드 드래그로 탐색, 스크롤로 줌">
+          <div className="p-2 bg-accent-teal text-white relative" title="3D Graph View - Drag nodes to explore, scroll to zoom">
             <Box className="w-4 h-4" />
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white" />
           </div>
@@ -384,7 +384,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-yellow-500/10 text-yellow-500'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title={view3D.bloom.enabled ? '노드 발광 효과 끄기' : '노드 발광 효과 켜기 (중요 노드 강조)'}
+            title={view3D.bloom.enabled ? 'Disable bloom effect' : 'Enable bloom effect (highlight important nodes)'}
           >
             {view3D.bloom.enabled ? (
               <Sun className="w-4 h-4" />
@@ -403,7 +403,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title={`라벨 표시: ${view3D.labelVisibility === 'all' ? '모든 노드' : view3D.labelVisibility === 'important' ? '상위 20% 노드' : '숨김'} (클릭하여 전환)`}
+            title={`Labels: ${view3D.labelVisibility === 'all' ? 'All nodes' : view3D.labelVisibility === 'important' ? 'Top 20% nodes' : 'Hidden'} (click to toggle)`}
           >
             {view3D.labelVisibility === 'all' ? (
               <Tags className="w-4 h-4" />
@@ -420,7 +420,7 @@ export function KnowledgeGraph3D({
           <button
             onClick={handleResetCamera}
             className="p-2 hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper transition-colors"
-            title="카메라 초기화"
+            title="Reset Camera"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
@@ -433,7 +433,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="개체 타입 범례 표시/숨김"
+            title="Toggle Entity Type Legend"
           >
             <Info className="w-4 h-4" />
           </button>
@@ -446,7 +446,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-amber/10 text-accent-amber'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="연구 갭 패널 표시/숨김 (지식 구조의 구멍)"
+            title="Toggle Research Gaps Panel"
           >
             <Sparkles className="w-4 h-4" />
           </button>
@@ -459,7 +459,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="노드 중요도 패널 표시/숨김 (고중심성 브릿지 제거)"
+            title="Toggle Centrality Panel"
           >
             <Scissors className="w-4 h-4" />
           </button>
@@ -472,7 +472,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-violet/10 text-accent-violet'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="토픽 클러스터 패널 표시/숨김 (그룹화 조정)"
+            title="Toggle Cluster Panel"
           >
             <Layers className="w-4 h-4" />
           </button>
@@ -485,7 +485,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="그래프 분석 HUD 표시/숨김 (다양성, 모듈성)"
+            title="Toggle Analysis HUD"
           >
             <BarChart3 className="w-4 h-4" />
           </button>
@@ -498,7 +498,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-violet/10 text-accent-violet'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="주요 토픽 패널 표시/숨김 (지배적 주제)"
+            title="Toggle Top Topics Panel"
           >
             <PieChart className="w-4 h-4" />
           </button>
@@ -515,7 +515,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-accent-teal text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="3D 그래프 뷰 - 물리 시뮬레이션 기반 지식 그래프"
+              title="3D Graph View - Physics-based knowledge graph"
             >
               <Box className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">3D</span>
@@ -529,7 +529,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-accent-purple text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="토픽 뷰 - 클러스터 및 커뮤니티 시각화"
+              title="Topic View - Cluster and community visualization"
             >
               <Grid2X2 className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Topics</span>
@@ -543,7 +543,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-accent-amber text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="갭 뷰 - 연구 공백 및 브릿지 가설 탐색"
+              title="Gaps View - Research gaps and bridge hypothesis exploration"
             >
               <Sparkles className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Gaps</span>

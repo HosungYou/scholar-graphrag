@@ -48,10 +48,10 @@ export class ErrorBoundary extends Component<Props, State> {
               <AlertTriangle className="w-16 h-16 text-red-500 mx-auto" />
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              문제가 발생했습니다
+              Something went wrong
             </h2>
             <p className="text-gray-600 mb-6">
-              예기치 않은 오류가 발생했습니다. 다시 시도하거나 홈으로 돌아가세요.
+              An unexpected error occurred. Please try again or return home.
             </p>
 
             {process.env.NODE_ENV === 'development' && this.state.error && (
@@ -68,14 +68,14 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 <RefreshCw className="w-4 h-4" />
-                다시 시도
+                Try Again
               </button>
               <Link
                 href="/"
                 className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 <Home className="w-4 h-4" />
-                홈으로
+                Go Home
               </Link>
             </div>
           </div>

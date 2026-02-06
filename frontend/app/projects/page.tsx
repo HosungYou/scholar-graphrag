@@ -148,7 +148,7 @@ function InterruptedImportsSection() {
     },
     onError: (error) => {
       console.error('Failed to resume import:', error);
-      alert(`Resume 실패: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      alert(`Resume failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     },
     onSettled: () => {
       setResumingJobId(null);
@@ -169,7 +169,7 @@ function InterruptedImportsSection() {
       <div className="flex items-center gap-2 mb-4">
         <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
         <h3 className="font-display text-lg text-amber-800 dark:text-amber-200">
-          중단된 Import ({interruptedJobs.length}개)
+          Interrupted Imports ({interruptedJobs.length})
         </h3>
       </div>
 
@@ -177,14 +177,14 @@ function InterruptedImportsSection() {
         {interruptedJobs.map((job) => {
           const createdDate = job.created_at ? new Date(job.created_at) : null;
           const dateStr = createdDate
-            ? createdDate.toLocaleDateString('ko-KR', {
+            ? createdDate.toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'short',
                 day: 'numeric',
               })
             : '';
           const timeStr = createdDate
-            ? createdDate.toLocaleTimeString('ko-KR', {
+            ? createdDate.toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit',
               })
@@ -208,7 +208,7 @@ function InterruptedImportsSection() {
                   {job.metadata?.project_name || 'Import Job'}
                 </div>
                 <div className="text-sm text-muted">
-                  {dateStr} {timeStr} • 진행률 {progress}%
+                  {dateStr} {timeStr} • Progress: {progress}%
                   {job.message && ` • ${job.message}`}
                 </div>
               </div>
@@ -222,7 +222,7 @@ function InterruptedImportsSection() {
                 {isResuming ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>재개 중...</span>
+                    <span>Resuming...</span>
                   </>
                 ) : (
                   <>
@@ -237,7 +237,7 @@ function InterruptedImportsSection() {
       </div>
 
       <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
-        서버 재시작으로 중단된 Import입니다. Resume 버튼을 클릭하면 중단된 지점부터 다시 시작합니다.
+        These imports were interrupted by a server restart. Click Resume to continue from where they left off.
       </p>
     </div>
   );
@@ -292,7 +292,7 @@ export default function ProjectsPage() {
   return (
     <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       <a href="#main-content" className="skip-link">
-        메인 콘텐츠로 건너뛰기
+        Skip to main content
       </a>
 
       <Header

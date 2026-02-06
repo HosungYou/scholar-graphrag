@@ -24,7 +24,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       {/* Skip Link for Accessibility */}
       <a href="#main-content" className="skip-link">
-        메인 콘텐츠로 건너뛰기
+        Skip to main content
       </a>
 
       <Header rightContent={<ThemeToggle variant="dropdown" />} />

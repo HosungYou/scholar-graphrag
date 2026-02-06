@@ -64,14 +64,14 @@ const ENTITY_TYPE_COLORS: Record<string, string> = {
 };
 
 const ENTITY_TYPE_LABELS: Record<string, string> = {
-  Concept: '개념',
-  Method: '방법',
-  Finding: '발견',
-  Problem: '문제',
-  Innovation: '혁신',
-  Limitation: '한계',
-  Dataset: '데이터',
-  Metric: '지표',
+  Concept: 'Concept',
+  Method: 'Method',
+  Finding: 'Finding',
+  Problem: 'Problem',
+  Innovation: 'Innovation',
+  Limitation: 'Limitation',
+  Dataset: 'Dataset',
+  Metric: 'Metric',
 };
 
 export default function EntityTypeLegend({ visibleTypes, className = '' }: EntityTypeLegendProps) {

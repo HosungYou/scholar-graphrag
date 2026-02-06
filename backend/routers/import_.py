@@ -941,6 +941,54 @@ async def list_import_jobs(
     ]
 
 
+@router.delete("/jobs/interrupted")
+async def delete_interrupted_jobs(
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Delete all interrupted import jobs.
+
+    This endpoint cleans up stale jobs that were interrupted by server restarts.
+    Deletes from both JobStore (persistent DB) and in-memory _import_jobs dict.
+
+    Returns:
+        Dict with count of deleted jobs
+    """
+    job_store = await get_job_store()
+
+    # Query JobStore for all interrupted jobs
+    import_job_types = ["import", "pdf_import", "pdf_import_multiple", "zotero_import"]
+    interrupted_jobs = []
+
+    for job_type in import_job_types:
+        type_jobs = await job_store.list_jobs(
+            job_type=job_type,
+            status=JobStatus.INTERRUPTED,
+            limit=1000  # High limit to catch all interrupted jobs
+        )
+        interrupted_jobs.extend(type_jobs)
+
+    deleted_count = 0
+
+    # Delete from JobStore (persistent DB)
+    for job in interrupted_jobs:
+        try:
+            await job_store.delete_job(job.id)
+            deleted_count += 1
+
+            # Also remove from in-memory dict if present
+            _import_jobs.pop(job.id, None)
+
+            logger.info(f"Deleted interrupted job: {job.id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete job {job.id}: {e}")
+
+    return {
+        "deleted_count": deleted_count,
+        "message": f"Deleted {deleted_count} interrupted import jobs"
+    }
+
+
 class PDFImportRequest(BaseModel):
     """Request model for PDF import."""
     project_name: Optional[str] = None
@@ -1650,7 +1698,7 @@ async def import_zotero_folder(
         "job_id": job.id,
         "status": ImportStatus.PENDING,
         "progress": 0.0,
-        "message": f"Zotero import 시작: {items_count}개 항목",
+        "message": f"Zotero import starting: {items_count} items",
         "project_id": None,
         "stats": None,
         "created_at": now,
@@ -1670,7 +1718,7 @@ async def import_zotero_folder(
     return ZoteroImportResponse(
         job_id=job.id,
         status=ImportStatus.PENDING,
-        message=f"Zotero import 시작: {items_count}개 항목, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])}개 PDF",
+        message=f"Zotero import starting: {items_count} items, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])} PDFs",
         items_count=items_count,
     )
 
@@ -1834,7 +1882,7 @@ async def _run_zotero_import(
 
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
-            _import_jobs[job_id]["message"] = f"Zotero import 완료: {result.get('papers_imported', 0)}개 논문"
+            _import_jobs[job_id]["message"] = f"Zotero import completed: {result.get('papers_imported', 0)} papers"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = {
                 "papers_imported": result.get("papers_imported", 0),
@@ -1857,7 +1905,7 @@ async def _run_zotero_import(
                 job_id=job_id,
                 status=JobStatus.COMPLETED,
                 progress=1.0,
-                message=f"Zotero import 완료: {result.get('papers_imported', 0)}개 논문",
+                message=f"Zotero import completed: {result.get('papers_imported', 0)} papers",
                 result={
                     "project_id": str(result.get("project_id")) if result.get("project_id") else None,
                     "stats": _import_jobs[job_id]["stats"],
@@ -1876,14 +1924,14 @@ async def _run_zotero_import(
             await progress_updater.flush_and_close()
 
             _import_jobs[job_id]["status"] = ImportStatus.FAILED
-            _import_jobs[job_id]["message"] = f"Import 실패: {sanitized_error}"
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
             _import_jobs[job_id]["updated_at"] = datetime.now()
 
             # Update JobStore with failure
             await job_store.update_job(
                 job_id=job_id,
                 status=JobStatus.FAILED,
-                message=f"Import 실패: {sanitized_error}",
+                message=f"Import failed: {sanitized_error}",
                 error=sanitized_error,
             )
 
@@ -1897,14 +1945,14 @@ async def _run_zotero_import(
         await progress_updater.flush_and_close()
 
         _import_jobs[job_id]["status"] = ImportStatus.FAILED
-        _import_jobs[job_id]["message"] = f"Import 실패: {sanitized_error}"
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
         _import_jobs[job_id]["updated_at"] = datetime.now()
 
         # Update JobStore with exception
         await job_store.update_job(
             job_id=job_id,
             status=JobStatus.FAILED,
-            message=f"Import 실패: {sanitized_error}",
+            message=f"Import failed: {sanitized_error}",
             error=sanitized_error,
         )
 

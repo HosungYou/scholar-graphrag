@@ -99,7 +99,7 @@ export function NodeDetails({
       setAiExplanation(result.explanation);
     } catch (error) {
       console.error('Failed to get AI explanation:', error);
-      setAiExplanation('AI 설명을 가져오는데 실패했습니다.');
+      setAiExplanation('Failed to fetch AI explanation.');
     } finally {
       setIsLoadingExplanation(false);
     }

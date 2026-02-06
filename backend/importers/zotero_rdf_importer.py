@@ -627,13 +627,13 @@ class ZoteroRDFImporter:
         }
 
         if not folder.exists():
-            validation["errors"].append(f"폴더가 존재하지 않습니다: {folder}")
+            validation["errors"].append(f"Folder does not exist: {folder}")
             return validation
 
         # Find RDF file (search recursively in case of nested folder structure)
         rdf_files = list(folder.glob("**/*.rdf"))
         if not rdf_files:
-            validation["errors"].append("RDF 파일을 찾을 수 없습니다. Zotero에서 RDF 형식으로 내보내기 해주세요.")
+            validation["errors"].append("RDF file not found. Please export from Zotero in RDF format.")
             return validation
 
         validation["rdf_file"] = str(rdf_files[0])
@@ -644,7 +644,7 @@ class ZoteroRDFImporter:
         validation["items_count"] = len(items)
 
         if len(items) == 0:
-            validation["errors"].append("RDF 파일에서 항목을 찾을 수 없습니다.")
+            validation["errors"].append("No items found in RDF file.")
             return validation
 
         # Check for files directory (relative to RDF file location)
@@ -653,7 +653,7 @@ class ZoteroRDFImporter:
 
         if not files_dir.exists():
             validation["warnings"].append(
-                "'files' 폴더가 없습니다. Zotero 내보내기 시 'Export Files' 옵션을 체크해주세요."
+                "'files' folder not found. Please check 'Export Files' option when exporting from Zotero."
             )
         else:
             # Count available PDFs - use rdf_parent (not folder) since files/ is relative to RDF
@@ -662,7 +662,7 @@ class ZoteroRDFImporter:
 
             if len(pdf_map) < len(items):
                 validation["warnings"].append(
-                    f"{len(items)}개 항목 중 {len(pdf_map)}개의 PDF만 발견되었습니다."
+                    f"Found only {len(pdf_map)} PDFs out of {len(items)} items."
                 )
 
         validation["valid"] = True
@@ -691,7 +691,7 @@ class ZoteroRDFImporter:
         Returns:
             Import result with project_id, statistics, errors
         """
-        self._update_progress("validating", 0.0, "폴더 검증 중...")
+        self._update_progress("validating", 0.0, "Validating folder...")
 
         # Validate folder
         folder = Path(folder_path)
@@ -703,7 +703,7 @@ class ZoteroRDFImporter:
                 "errors": validation["errors"],
             }
 
-        self._update_progress("parsing", 0.1, "RDF 메타데이터 파싱 중...")
+        self._update_progress("parsing", 0.1, "Parsing RDF metadata...")
 
         # Parse RDF
         rdf_path = Path(validation["rdf_file"])
@@ -712,17 +712,17 @@ class ZoteroRDFImporter:
         self.progress.papers_total = len(items)
 
         # Find PDFs - use rdf_parent since files/ is relative to RDF location
-        self._update_progress("scanning", 0.15, "PDF 파일 스캔 중...")
+        self._update_progress("scanning", 0.15, "Scanning PDF files...")
         pdf_map = self._find_pdf_files(rdf_parent, items)
 
         # Create or use existing project
         # BUG-028 Extension: Support resume with existing project
         if existing_project_id:
-            self._update_progress("creating_project", 0.2, "기존 프로젝트에 재개 중...")
+            self._update_progress("creating_project", 0.2, "Resuming to existing project...")
             project_id = existing_project_id
             logger.info(f"Resuming import to existing project: {project_id}")
         else:
-            self._update_progress("creating_project", 0.2, "프로젝트 생성 중...")
+            self._update_progress("creating_project", 0.2, "Creating project...")
 
             if not project_name:
                 project_name = f"Zotero Import {datetime.now().strftime('%Y-%m-%d')}"
@@ -746,7 +746,7 @@ class ZoteroRDFImporter:
                 project_id = str(uuid4())
 
         # Process items
-        self._update_progress("importing", 0.25, "논문 데이터 처리 중...")
+        self._update_progress("importing", 0.25, "Processing paper data...")
 
         results = {
             "success": True,
@@ -785,7 +785,7 @@ class ZoteroRDFImporter:
                 self._update_progress(
                     "importing",
                     progress_pct,
-                    f"논문 처리 중: {i+1}/{len(items)} - {item.title[:50]}..."
+                    f"Processing papers: {i+1}/{len(items)} - {item.title[:50]}..."
                 )
 
                 # PERF-011: Log paper processing start
@@ -906,7 +906,7 @@ class ZoteroRDFImporter:
                     )
 
             except Exception as e:
-                error_msg = f"항목 처리 실패 ({item.title}): {e}"
+                error_msg = f"Item processing failed ({item.title}): {e}"
                 logger.error(error_msg)
                 self.progress.errors.append(error_msg)
                 results["errors"].append(error_msg)
@@ -927,13 +927,13 @@ class ZoteroRDFImporter:
         # Create embeddings (optional - may fail if Cohere API unavailable)
         embeddings_created = 0
         if self.graph_store and self.progress.concepts_extracted > 0:
-            self._update_progress("embeddings", 0.85, "임베딩 생성 중...")
+            self._update_progress("embeddings", 0.85, "Creating embeddings...")
             try:
                 embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
                 logger.info(f"Created {embeddings_created} embeddings")
             except Exception as e:
                 logger.error(f"Embedding creation failed: {e}. Gap detection will use TF-IDF fallback.")
-                self._update_progress("embeddings", 0.87, "임베딩 실패 - TF-IDF 폴백 사용 예정")
+                self._update_progress("embeddings", 0.87, "Embedding failed - will use TF-IDF fallback")
 
         # Build relationships - ALWAYS build co-occurrence, optionally build semantic
         if extract_concepts and self.graph_store:
@@ -941,7 +941,7 @@ class ZoteroRDFImporter:
 
             # Step 1: Build co-occurrence relationships (NO embeddings needed)
             # Entities that appear in the same paper are related
-            self._update_progress("building_relationships", 0.90, "공출현 관계 구축 중...")
+            self._update_progress("building_relationships", 0.90, "Building co-occurrence relationships...")
             try:
                 cooccurrence_count = await self._build_cooccurrence_relationships(
                     project_id=project_id
@@ -953,7 +953,7 @@ class ZoteroRDFImporter:
 
             # Step 2: Build semantic relationships (ONLY if embeddings exist)
             if embeddings_created > 0:
-                self._update_progress("building_relationships", 0.95, "의미적 관계 구축 중...")
+                self._update_progress("building_relationships", 0.95, "Building semantic relationships...")
                 try:
                     semantic_count = await self.graph_store.build_concept_relationships(
                         project_id=project_id
@@ -970,7 +970,7 @@ class ZoteroRDFImporter:
 
         # Phase: Clustering + Gap Detection + Centrality (v0.11.0)
         if self.graph_store and results.get("concepts_extracted", 0) >= 10:
-            self._update_progress("analyzing", 0.97, "클러스터링 및 갭 분석 중...")
+            self._update_progress("analyzing", 0.97, "Clustering and gap analysis...")
             try:
                 from graph.gap_detector import GapDetector
                 import numpy as np
@@ -1176,7 +1176,7 @@ class ZoteroRDFImporter:
             except Exception as e:
                 logger.warning(f"Gap analysis failed (non-critical): {e}")
 
-        self._update_progress("complete", 1.0, "Import 완료!")
+        self._update_progress("complete", 1.0, "Import complete!")
 
         return results
 
@@ -1201,8 +1201,8 @@ class ZoteroRDFImporter:
         Returns:
             Sync result with statistics
         """
-        self._update_progress("validating", 0.0, "동기화 준비 중...")
-        
+        self._update_progress("validating", 0.0, "Preparing sync...")
+
         # Validate folder
         validation = await self.validate_folder(folder_path)
         if not validation["valid"]:
@@ -1210,13 +1210,13 @@ class ZoteroRDFImporter:
                 "success": False,
                 "errors": validation["errors"],
             }
-        
+
         # Parse RDF
         rdf_path = Path(validation["rdf_file"])
         items = self._parse_rdf_file(rdf_path)
-        
+
         # Get existing items from database
-        self._update_progress("comparing", 0.1, "기존 항목과 비교 중...")
+        self._update_progress("comparing", 0.1, "Comparing with existing items...")
         
         existing_keys = set()
         if self.db:
@@ -1239,14 +1239,14 @@ class ZoteroRDFImporter:
         new_items = [item for item in items if item.item_key not in existing_keys]
         
         if not new_items:
-            self._update_progress("complete", 1.0, "동기화 완료 - 새 항목 없음")
+            self._update_progress("complete", 1.0, "Sync complete - no new items")
             return {
                 "success": True,
                 "project_id": project_id,
                 "items_checked": len(items),
                 "items_added": 0,
                 "items_skipped": len(items),
-                "message": "모든 항목이 이미 동기화되어 있습니다.",
+                "message": "All items are already synced.",
             }
         
         logger.info(f"Found {len(new_items)} new items to sync (of {len(items)} total)")
@@ -1256,7 +1256,7 @@ class ZoteroRDFImporter:
         pdf_map = self._find_pdf_files(rdf_parent, new_items)
         
         # Process new items
-        self._update_progress("syncing", 0.2, f"새 항목 {len(new_items)}개 동기화 중...")
+        self._update_progress("syncing", 0.2, f"Syncing {len(new_items)} new items...")
         
         results = {
             "success": True,
@@ -1276,7 +1276,7 @@ class ZoteroRDFImporter:
                 self._update_progress(
                     "syncing",
                     progress_pct,
-                    f"동기화 중: {i+1}/{len(new_items)} - {item.title[:40]}..."
+                    f"Syncing: {i+1}/{len(new_items)} - {item.title[:40]}..."
                 )
                 
                 # Get PDF text if available
@@ -1345,14 +1345,14 @@ class ZoteroRDFImporter:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
 
             except Exception as e:
-                error_msg = f"동기화 실패 ({item.title}): {e}"
+                error_msg = f"Sync failed ({item.title}): {e}"
                 logger.error(error_msg)
                 results["errors"].append(error_msg)
 
         # Create embeddings for new entities (optional - may fail)
         embeddings_created = 0
         if self.graph_store and results["concepts_extracted"] > 0:
-            self._update_progress("embeddings", 0.90, "새 항목 임베딩 생성 중...")
+            self._update_progress("embeddings", 0.90, "Creating embeddings for new items...")
             try:
                 embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
             except Exception as e:
@@ -1360,7 +1360,7 @@ class ZoteroRDFImporter:
 
         # Build co-occurrence relationships (works without embeddings)
         if self.graph_store and results["concepts_extracted"] > 0:
-            self._update_progress("building_relationships", 0.95, "관계 구축 중...")
+            self._update_progress("building_relationships", 0.95, "Building relationships...")
             try:
                 cooccurrence_count = await self._build_cooccurrence_relationships(
                     project_id=project_id
@@ -1370,7 +1370,7 @@ class ZoteroRDFImporter:
             except Exception as e:
                 logger.warning(f"Co-occurrence relationship building failed: {e}")
 
-        self._update_progress("complete", 1.0, "동기화 완료!")
+        self._update_progress("complete", 1.0, "Sync complete!")
         
         return results
 

@@ -151,7 +151,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           <div>
             <h3 className="font-medium text-ink dark:text-paper">Import Interrupted</h3>
             <p className="text-sm text-muted">
-              서버 재시작으로 인해 Import가 중단되었습니다.
+              Import was interrupted by a server restart.
             </p>
           </div>
         </div>
@@ -159,7 +159,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         {checkpoint && (
           <div className="mb-4 p-4 bg-surface rounded-sm border border-ink/10 dark:border-paper/10">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted">진행 상황</span>
+              <span className="text-sm text-muted">Progress</span>
               <span className="font-mono text-sm text-accent-amber">{progressPct}%</span>
             </div>
             <div className="h-2 bg-ink/10 dark:bg-paper/10 rounded-full overflow-hidden mb-3">
@@ -170,14 +170,14 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             </div>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted">처리 완료</span>
+                <span className="text-muted">Processed</span>
                 <span className="font-mono text-ink dark:text-paper">
-                  {checkpoint.processed_count} / {checkpoint.total_papers} 논문
+                  {checkpoint.processed_count} / {checkpoint.total_papers} papers
                 </span>
               </div>
               {checkpoint.project_id && (
                 <div className="flex justify-between">
-                  <span className="text-muted">프로젝트 ID</span>
+                  <span className="text-muted">Project ID</span>
                   <span className="font-mono text-xs text-muted truncate max-w-[200px]">
                     {checkpoint.project_id}
                   </span>
@@ -185,7 +185,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
               )}
               {checkpoint.stage && (
                 <div className="flex justify-between">
-                  <span className="text-muted">중단 단계</span>
+                  <span className="text-muted">Interrupted at</span>
                   <span className="text-ink dark:text-paper capitalize">{checkpoint.stage}</span>
                 </div>
               )}
@@ -196,9 +196,9 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         <div className="space-y-3">
           <div className="p-3 bg-accent-teal/5 border border-accent-teal/20 rounded-sm">
             <p className="text-sm text-ink dark:text-paper">
-              <strong>재개 방법:</strong> 동일한 파일을 다시 업로드하면, 이미 처리된{' '}
-              <span className="font-mono text-accent-teal">{checkpoint?.processed_count || 0}</span>개의
-              논문은 자동으로 건너뛰고 나머지만 처리됩니다.
+              <strong>How to resume:</strong> Re-upload the same file. The{' '}
+              <span className="font-mono text-accent-teal">{checkpoint?.processed_count || 0}</span>{' '}
+              already processed papers will be skipped automatically.
             </p>
           </div>
 
@@ -218,12 +218,12 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
               {isResuming ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  재개 중...
+                  Resuming...
                 </>
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Import 재개
+                  Resume Import
                 </>
               )}
             </button>
@@ -234,7 +234,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
               className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              새로 업로드
+              Upload New
             </button>
 
             {/* View partial results */}
@@ -244,7 +244,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
                 className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
               >
                 <ArrowRight className="w-4 h-4" />
-                부분 결과
+                Partial Results
               </button>
             )}
           </div>
