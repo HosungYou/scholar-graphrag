@@ -918,7 +918,8 @@ Return ONLY the research questions, one per line, without numbering or bullets.
     async def _generate_cluster_label(self, keywords: list[str]) -> str:
         """LLM으로 클러스터 키워드를 3-5 단어 토픽 레이블로 요약."""
         if not self.llm or not keywords:
-            return " / ".join(keywords[:3])
+            filtered = [k for k in keywords[:3] if k and k.strip()]
+            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
 
         try:
             prompt = (
@@ -932,8 +933,10 @@ Return ONLY the research questions, one per line, without numbering or bullets.
             )
             result = label.strip().strip('"').strip("'")
             if len(result) < 3 or len(result) > 60:
-                return " / ".join(keywords[:3])
+                filtered = [k for k in keywords[:3] if k and k.strip()]
+                return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
             return result
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"LLM label generation failed: {e}")
-            return " / ".join(keywords[:3])
+            filtered = [k for k in keywords[:3] if k and k.strip()]
+            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"

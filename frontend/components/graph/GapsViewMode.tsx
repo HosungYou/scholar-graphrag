@@ -142,7 +142,9 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
   // Get cluster names for display
   const getClusterName = useCallback((clusterId: number) => {
     const cluster = clusters.find(c => c.cluster_id === clusterId);
-    return cluster?.label || `Cluster ${clusterId + 1}`;
+    const label = cluster?.label;
+    if (label && label.replace(/[\s/,]+/g, '').length > 0) return label;
+    return `Cluster ${clusterId + 1}`;
   }, [clusters]);
 
   return (
@@ -237,7 +239,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
 
       {/* Gap List Sidebar */}
       {showGapList && gaps.length > 0 && (
-        <div className="absolute bottom-20 left-4 w-72 bg-[#161b22]/95 backdrop-blur-sm border border-white/10 rounded-lg overflow-hidden">
+        <div className="absolute bottom-20 left-4 w-80 bg-[#161b22]/95 backdrop-blur-sm border border-white/10 rounded-lg overflow-hidden">
           <div className="p-3 border-b border-white/10 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent-amber" />
@@ -264,12 +266,12 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-muted">Gap #{index + 1}</span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
                     gap.gap_strength > 0.7
-                      ? 'bg-red-500/20 text-red-400'
+                      ? 'bg-red-500/25 text-red-300'
                       : gap.gap_strength > 0.4
-                        ? 'bg-amber-500/20 text-amber-400'
-                        : 'bg-green-500/20 text-green-400'
+                        ? 'bg-amber-500/25 text-amber-300'
+                        : 'bg-green-500/25 text-green-300'
                   }`}>
                     {(gap.gap_strength * 100).toFixed(0)}%
                   </span>

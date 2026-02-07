@@ -20,6 +20,7 @@ import {
   Zap,
   BookOpen,
   Download,
+  Search,
 } from 'lucide-react';
 import type { StructuralGap, ConceptCluster, GraphEntity, BridgeHypothesis, BridgeGenerationResult } from '@/types';
 import { api } from '@/lib/api';
@@ -94,6 +95,8 @@ export function GapPanel({
     query_used: string;
   }>>({});
   const [loadingRecsFor, setLoadingRecsFor] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
 
   // v0.11.0: Resizable panel
   const [panelWidth, setPanelWidth] = useState(320);
@@ -141,7 +144,8 @@ export function GapPanel({
       return cluster.label;
     }
     if (cluster?.concept_names && cluster.concept_names.length > 0) {
-      return cluster.concept_names.slice(0, 3).join(' / ');
+      const filtered = cluster.concept_names.filter((n: string) => n && n.trim());
+      if (filtered.length > 0) return filtered.slice(0, 3).join(' / ');
     }
     return `Cluster ${clusterId + 1}`;
   }, [clusters]);
@@ -428,6 +432,34 @@ export function GapPanel({
                         }`}>
                           {formatGapStrength(gap.gap_strength)}
                         </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLoadingRecsFor(gap.id);
+                            (async () => {
+                              try {
+                                const result = await api.getGapRecommendations(projectId, gap.id, 5);
+                                setRecommendations(prev => ({
+                                  ...prev,
+                                  [gap.id]: { papers: result.papers, query_used: result.query_used },
+                                }));
+                              } catch (err) {
+                                console.error('Failed to fetch recommendations:', err);
+                              } finally {
+                                setLoadingRecsFor(null);
+                              }
+                            })();
+                          }}
+                          disabled={loadingRecsFor === gap.id}
+                          className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal rounded transition-colors disabled:opacity-50"
+                          title="Find related papers from Semantic Scholar"
+                        >
+                          {loadingRecsFor === gap.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Search className="w-3 h-3" />
+                          )}
+                        </button>
                       </div>
 
                       {/* Gap Preview */}
@@ -772,16 +804,29 @@ export function GapPanel({
           <div className="p-4 border-t border-ink/10 dark:border-paper/10">
             <button
               onClick={async () => {
+                setIsExporting(true);
+                setExportSuccess(false);
                 try {
                   await api.exportGapReport(projectId);
+                  setExportSuccess(true);
+                  setTimeout(() => setExportSuccess(false), 3000);
                 } catch (err) {
                   console.error('Failed to export report:', err);
+                } finally {
+                  setIsExporting(false);
                 }
               }}
-              className="w-full py-2.5 px-3 bg-accent-teal/10 hover:bg-accent-teal/20 font-mono text-xs text-accent-teal uppercase tracking-wider transition-colors flex items-center justify-center gap-2"
+              disabled={isExporting}
+              className="w-full py-2.5 px-3 bg-accent-teal/10 hover:bg-accent-teal/20 font-mono text-xs text-accent-teal uppercase tracking-wider transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Download className="w-4 h-4" />
-              Export Report
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : exportSuccess ? (
+                <Check className="w-4 h-4" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {isExporting ? 'Exporting...' : exportSuccess ? 'Downloaded!' : 'Export Report'}
             </button>
           </div>
         </div>

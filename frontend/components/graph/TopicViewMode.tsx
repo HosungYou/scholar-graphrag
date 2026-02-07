@@ -50,7 +50,9 @@ export function TopicViewMode({
     const nodes: TopicNode[] = clusters.map((cluster, index) => ({
       id: `cluster-${cluster.cluster_id}`,
       clusterId: cluster.cluster_id,
-      label: cluster.label || `Cluster ${cluster.cluster_id + 1}`,
+      label: (cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+        ? cluster.label
+        : `Cluster ${cluster.cluster_id + 1}`,
       size: cluster.size,
       color: CLUSTER_COLORS[index % CLUSTER_COLORS.length],
       conceptIds: cluster.concepts,
@@ -238,11 +240,11 @@ export function TopicViewMode({
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .attr('fill', (d) => d.color)
-      .attr('font-size', '14px')
+      .attr('font-size', '16px')
       .attr('font-weight', 'bold')
-      .attr('font-family', 'monospace')
-      .style('text-shadow', '0 1px 3px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5)')
-      .text((d) => d.label.length > 20 ? d.label.slice(0, 20) + '...' : d.label);
+      .attr('font-family', 'system-ui, -apple-system, sans-serif')
+      .style('text-shadow', '0 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,1)')
+      .text((d) => d.label.length > 30 ? d.label.slice(0, 30) + '...' : d.label);
 
     // Add size indicator
     node
@@ -262,22 +264,26 @@ export function TopicViewMode({
       })
       .on('mouseenter', (event, d) => {
         onClusterHover?.(d.clusterId);
-        // Highlight node
+        d3.select(event.currentTarget)
+          .transition()
+          .duration(150)
+          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1.02)`);
         d3.select(event.currentTarget)
           .select('rect')
           .transition()
           .duration(150)
-          .attr('fill-opacity', 0.3)
           .attr('stroke-width', 3);
       })
       .on('mouseleave', (event, d) => {
         onClusterHover?.(null);
-        // Reset node
+        d3.select(event.currentTarget)
+          .transition()
+          .duration(150)
+          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1)`);
         d3.select(event.currentTarget)
           .select('rect')
           .transition()
           .duration(150)
-          .attr('fill-opacity', 0.15)
           .attr('stroke-width', 2);
       });
 
@@ -395,7 +401,9 @@ export function TopicViewMode({
                   style={{ backgroundColor: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }}
                 />
                 <span className="text-xs text-[#c9d1d9] truncate">
-                  {cluster.label || `Cluster ${cluster.cluster_id + 1}`}
+                  {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+                    ? cluster.label
+                    : `Cluster ${cluster.cluster_id + 1}`}
                 </span>
                 <span className="text-xs text-[#484f58] flex-shrink-0">
                   ({cluster.size})

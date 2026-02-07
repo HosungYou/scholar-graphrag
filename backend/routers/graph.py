@@ -27,6 +27,7 @@ from graph.metrics_cache import metrics_cache
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from routers.projects import check_project_access
+from routers.integrations import get_effective_api_key
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -1219,7 +1220,8 @@ async def refresh_gap_analysis(
             if cluster.keywords:
                 label = await gap_detector._generate_cluster_label(cluster.keywords)
             elif cluster_concept_names:
-                label = ", ".join(cluster_concept_names[:3])
+                filtered_names = [n for n in cluster_concept_names if n and n.strip()]
+                label = ", ".join(filtered_names[:3]) if filtered_names else f"Cluster {cluster.id + 1}"
             else:
                 label = f"Cluster {cluster.id + 1}"
 
@@ -1759,7 +1761,8 @@ async def get_gap_recommendations(
 
         papers = []
         try:
-            async with SemanticScholarClient(api_key=settings.semantic_scholar_api_key or None) as client:
+            s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+            async with SemanticScholarClient(api_key=s2_key or None) as client:
                 results = await asyncio.wait_for(
                     client.search_papers(query=query, limit=limit),
                     timeout=15.0,
