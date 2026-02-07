@@ -14,9 +14,12 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from enum import Enum
 import asyncpg.exceptions
+from datetime import datetime
+import io
 
 from database import db
 from graph.graph_store import GraphStore
@@ -1793,6 +1796,144 @@ async def get_gap_recommendations(
     except Exception as e:
         logger.error(f"Failed to get gap recommendations: {e}")
         raise HTTPException(status_code=500, detail="Failed to get recommendations")
+
+
+# ============================================================
+# Gap Analysis Report Export
+# ============================================================
+
+@router.get("/gaps/{project_id}/export")
+async def export_gap_report(
+    project_id: UUID,
+    format: str = Query("markdown", pattern="^(markdown)$"),
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Export gap analysis as a Markdown report."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    try:
+        # Get project info
+        project_row = await database.fetchrow(
+            "SELECT name, research_question FROM projects WHERE id = $1",
+            str(project_id),
+        )
+        project_name = project_row["name"] if project_row else "Unknown Project"
+        research_question = project_row.get("research_question", "") if project_row else ""
+
+        # Get clusters
+        cluster_rows = await database.fetch(
+            """
+            SELECT cluster_id, label, size, concept_names
+            FROM concept_clusters
+            WHERE project_id = $1
+            ORDER BY cluster_id
+            """,
+            str(project_id),
+        )
+
+        # Get gaps
+        gap_rows = await database.fetch(
+            """
+            SELECT gap_strength, bridge_candidates, research_questions,
+                   cluster_a_names, cluster_b_names
+            FROM structural_gaps
+            WHERE project_id = $1
+            ORDER BY gap_strength DESC
+            """,
+            str(project_id),
+        )
+
+        if not cluster_rows and not gap_rows:
+            raise HTTPException(
+                status_code=404,
+                detail="No gap analysis data. Run gap detection first."
+            )
+
+        # Build Markdown
+        lines = [
+            f"# Gap Analysis Report: {project_name}",
+            f"",
+            f"**Generated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            "",
+        ]
+
+        if research_question:
+            lines.extend([
+                f"**Research Question**: {research_question}",
+                "",
+            ])
+
+        # Clusters table
+        if cluster_rows:
+            lines.extend([
+                "## Concept Clusters",
+                "",
+                "| Cluster | Label | Size | Top Concepts |",
+                "|---------|-------|------|-------------|",
+            ])
+            for row in cluster_rows:
+                names = row["concept_names"] or []
+                top_concepts = ", ".join(names[:5])
+                if len(names) > 5:
+                    top_concepts += f" (+{len(names) - 5})"
+                lines.append(
+                    f"| {row['cluster_id']} | {row['label'] or 'N/A'} | {row['size']} | {top_concepts} |"
+                )
+            lines.append("")
+
+        # Gaps section
+        if gap_rows:
+            lines.extend([
+                "## Structural Gaps",
+                "",
+            ])
+            for i, row in enumerate(gap_rows, 1):
+                a_names = row["cluster_a_names"] or []
+                b_names = row["cluster_b_names"] or []
+                bridge = row["bridge_candidates"] or []
+                questions = row["research_questions"] or []
+
+                lines.extend([
+                    f"### Gap {i} (Strength: {row['gap_strength']:.1%})",
+                    "",
+                    f"- **Cluster A**: {', '.join(a_names[:3])}",
+                    f"- **Cluster B**: {', '.join(b_names[:3])}",
+                ])
+
+                if bridge:
+                    lines.append(f"- **Bridge Candidates**: {', '.join(bridge[:5])}")
+
+                if questions:
+                    lines.extend(["", "**Research Questions**:", ""])
+                    for q in questions:
+                        lines.append(f"1. {q}")
+
+                lines.append("")
+
+        # Summary stats
+        total_concepts = sum(row["size"] for row in cluster_rows)
+        lines.extend([
+            "---",
+            "",
+            f"*{total_concepts} concepts across {len(cluster_rows)} clusters, {len(gap_rows)} structural gaps identified.*",
+        ])
+
+        content = "\n".join(lines)
+        buffer = io.BytesIO(content.encode("utf-8"))
+
+        filename = f"gap_report_{project_name.replace(' ', '_')}.md"
+        return StreamingResponse(
+            buffer,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export gap report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export report")
 
 
 # ============================================================

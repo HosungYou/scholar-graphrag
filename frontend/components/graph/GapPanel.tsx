@@ -19,6 +19,7 @@ import {
   Hexagon,
   Zap,
   BookOpen,
+  Download,
 } from 'lucide-react';
 import type { StructuralGap, ConceptCluster, GraphEntity, BridgeHypothesis, BridgeGenerationResult } from '@/types';
 import { api } from '@/lib/api';
@@ -766,6 +767,23 @@ export function GapPanel({
               </p>
             </div>
           )}
+
+          {/* Export Report (v0.12.0) */}
+          <div className="p-4 border-t border-ink/10 dark:border-paper/10">
+            <button
+              onClick={async () => {
+                try {
+                  await api.exportGapReport(projectId);
+                } catch (err) {
+                  console.error('Failed to export report:', err);
+                }
+              }}
+              className="w-full py-2.5 px-3 bg-accent-teal/10 hover:bg-accent-teal/20 font-mono text-xs text-accent-teal uppercase tracking-wider transition-colors flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Export Report
+            </button>
+          </div>
         </div>
       )}
         </>

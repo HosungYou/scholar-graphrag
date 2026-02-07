@@ -555,6 +555,28 @@ class ApiClient {
     );
   }
 
+  // Gap Analysis Report Export (v0.12.0)
+  async exportGapReport(projectId: string): Promise<void> {
+    const authHeaders = await this.getAuthHeaders();
+    const response = await fetch(
+      `${this.baseUrl}/api/graph/gaps/${projectId}/export?format=markdown`,
+      { headers: { ...authHeaders } }
+    );
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw new Error(error.detail || 'Export failed');
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gap_report.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }
+
   // Centrality Analysis
   async getCentrality(
     projectId: string,
