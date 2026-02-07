@@ -252,9 +252,24 @@ export function TopicViewMode({
       .attr('text-anchor', 'middle')
       .attr('y', 18)
       .attr('fill', 'rgba(255, 255, 255, 0.6)')
-      .attr('font-size', '10px')
+      .attr('font-size', '11px')
       .attr('font-family', 'monospace')
       .text((d) => `${d.size} concepts`);
+
+    // v0.14.0: Add concept preview on hover (shows top concept names)
+    node
+      .append('text')
+      .attr('class', 'concept-preview')
+      .attr('text-anchor', 'middle')
+      .attr('y', 32)
+      .attr('fill', 'rgba(255, 255, 255, 0.4)')
+      .attr('font-size', '9px')
+      .attr('font-family', 'monospace')
+      .attr('opacity', 0)
+      .text((d) => {
+        const names = d.conceptNames?.filter((n: string) => n && n.trim()).slice(0, 3) || [];
+        return names.length > 0 ? names.join(', ') : '';
+      });
 
     // Interaction handlers
     node
@@ -273,6 +288,11 @@ export function TopicViewMode({
           .transition()
           .duration(150)
           .attr('stroke-width', 3);
+        d3.select(event.currentTarget)
+          .select('.concept-preview')
+          .transition()
+          .duration(200)
+          .attr('opacity', 1);
       })
       .on('mouseleave', (event, d) => {
         onClusterHover?.(null);
@@ -285,6 +305,11 @@ export function TopicViewMode({
           .transition()
           .duration(150)
           .attr('stroke-width', 2);
+        d3.select(event.currentTarget)
+          .select('.concept-preview')
+          .transition()
+          .duration(200)
+          .attr('opacity', 0);
       });
 
     // Update positions on tick
@@ -390,7 +415,7 @@ export function TopicViewMode({
 
       {/* v0.10.0: Enhanced Legend with cluster colors */}
       <div className="absolute bottom-4 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-[#30363d] rounded-lg p-3 max-w-[200px]">
-        <div className="text-xs font-mono text-[#8b949e] mb-2 uppercase tracking-wider">Legend</div>
+        <div className="text-xs font-mono text-[#8b949e] mb-2 uppercase tracking-wider">Topic Clusters</div>
         {/* Cluster colors */}
         {clusters.length > 0 && (
           <div className="mb-2 space-y-1">

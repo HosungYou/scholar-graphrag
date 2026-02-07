@@ -246,6 +246,9 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               <span className="font-mono text-xs uppercase tracking-wider text-white">
                 Structural Gaps
               </span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 bg-accent-amber/20 text-accent-amber rounded">
+                {gaps.length}
+              </span>
             </div>
             <button
               onClick={() => setShowGapList(false)}
@@ -260,7 +263,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               <button
                 key={gap.id}
                 onClick={() => handleSelectGap(gap, index)}
-                className={`w-full p-3 text-left border-b border-white/5 hover:bg-white/5 transition-colors ${
+                className={`w-full p-3 text-left border-b border-white/5 hover:bg-white/8 hover:border-l-2 hover:border-l-amber-500/50 transition-all ${
                   selectedGap?.id === gap.id ? 'bg-amber-500/10 border-l-2 border-l-amber-500' : ''
                 }`}
               >
@@ -285,6 +288,17 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               </button>
             ))}
           </div>
+          <div className="px-3 py-2 border-t border-white/5 flex items-center justify-center gap-1">
+            <span className="text-[10px] text-muted/50 font-mono">Click a gap to highlight in graph</span>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state when no gaps */}
+      {showGapList && gaps.length === 0 && (
+        <div className="absolute bottom-20 left-4 w-80 bg-[#161b22]/95 backdrop-blur-sm border border-white/10 rounded-lg p-6 text-center">
+          <Sparkles className="w-6 h-6 text-accent-amber/40 mx-auto mb-2" />
+          <p className="font-mono text-xs text-muted">No structural gaps detected in this graph</p>
         </div>
       )}
 
