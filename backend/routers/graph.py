@@ -27,6 +27,7 @@ from graph.metrics_cache import metrics_cache
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from routers.projects import check_project_access
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -1758,7 +1759,7 @@ async def get_gap_recommendations(
 
         papers = []
         try:
-            async with SemanticScholarClient() as client:
+            async with SemanticScholarClient(api_key=settings.semantic_scholar_api_key or None) as client:
                 results = await asyncio.wait_for(
                     client.search_papers(query=query, limit=limit),
                     timeout=15.0,
