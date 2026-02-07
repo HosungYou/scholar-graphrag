@@ -178,6 +178,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   onClearPinnedNodes,
 }, ref) => {
   const fgRef = useRef<any>(null);
+  const textureCache = useRef(new Map<string, THREE.CanvasTexture>());
+  const nodeObjectCache = useRef(new Map<string, THREE.Group>());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
   // v0.11.0: Debounced hover to prevent jitter
@@ -518,7 +520,15 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // UI-010 FIX: Uses nodeStyleMap instead of node.isHighlighted to prevent stale renders
   const nodeThreeObject = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode;
+
+    // v0.14.0: Return cached object to prevent recreation on every render
+    const cached = nodeObjectCache.current.get(node.id);
+    if (cached) {
+      return cached;
+    }
+
     const group = new THREE.Group();
+    group.userData.nodeId = node.id;
     const nodeSize = node.val || 5;
 
     // UI-010 FIX: Get highlight state from style map, not from node object
@@ -685,11 +695,43 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     }
 
+    nodeObjectCache.current.set(node.id, group);
     return group;
-  }, [nodeStyleMap, bloomEnabled, bloomIntensity, glowSize, createTextSprite, labelVisibility, centralityPercentileMap]);
+  }, [bloomEnabled, bloomIntensity, glowSize, createTextSprite, labelVisibility, centralityPercentileMap]);
   // ⚠️ CRITICAL FIX: hoveredNode removed from dependencies to prevent full graph rebuild on hover
   // Hover effect is now handled via CSS cursor only (see container div style below)
   // v0.9.0: Replaced currentZoom/calculateLabelThreshold with centralityPercentileMap for InfraNodus-style labeling
+
+  // v0.14.0: Update highlights without recreating node objects (prevents simulation reheat)
+  useEffect(() => {
+    if (!fgRef.current) return;
+    const scene = fgRef.current.scene();
+    if (!scene) return;
+
+    scene.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh && obj.parent?.userData?.nodeId) {
+        const nodeId = obj.parent.userData.nodeId;
+        const style = nodeStyleMap.get(nodeId);
+        if (!style) return;
+
+        const mat = obj.material as THREE.MeshStandardMaterial;
+        if (!mat || !mat.color) return;
+
+        let targetColor: string;
+        if (style.isHighlighted) {
+          targetColor = '#FFD700';
+        } else if (style.isPinned) {
+          targetColor = '#00E5FF';
+        } else {
+          targetColor = style.baseColor || '#888888';
+        }
+
+        mat.color.set(targetColor);
+        mat.emissive.set(targetColor);
+        mat.emissiveIntensity = style.isHighlighted ? 0.6 : 0.2;
+      }
+    });
+  }, [nodeStyleMap]);
 
   // Link width based on weight
   // UI-010 FIX: Uses edgeStyleMap for highlight state
@@ -1065,6 +1107,64 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   useEffect(() => {
     return () => {
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
+  // v0.14.0: Dispose Three.js resources on unmount to prevent WebGL context exhaustion
+  useEffect(() => {
+    return () => {
+      // Dispose all cached textures
+      textureCache.current.forEach((texture) => {
+        texture.dispose();
+      });
+      textureCache.current.clear();
+
+      // Dispose all cached node objects
+      nodeObjectCache.current.forEach((group) => {
+        group.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry?.dispose();
+            if (child.material instanceof THREE.Material) {
+              child.material.dispose();
+            } else if (Array.isArray(child.material)) {
+              child.material.forEach((m) => m.dispose());
+            }
+          }
+          if (child instanceof THREE.Sprite) {
+            child.material.map?.dispose();
+            child.material.dispose();
+          }
+        });
+      });
+      nodeObjectCache.current.clear();
+
+      // Dispose scene resources
+      if (fgRef.current) {
+        const scene = fgRef.current.scene();
+        if (scene) {
+          scene.traverse((obj: THREE.Object3D) => {
+            if (obj instanceof THREE.Mesh) {
+              obj.geometry?.dispose();
+              if (obj.material instanceof THREE.Material) {
+                (obj.material as THREE.MeshStandardMaterial).map?.dispose();
+                obj.material.dispose();
+              } else if (Array.isArray(obj.material)) {
+                obj.material.forEach((m: THREE.Material) => {
+                  (m as THREE.MeshStandardMaterial).map?.dispose();
+                  m.dispose();
+                });
+              }
+            }
+            if (obj instanceof THREE.Sprite) {
+              obj.material.map?.dispose();
+              obj.material.dispose();
+            }
+          });
+        }
+      }
+
+      // Clear position cache
+      nodePositionsRef.current.clear();
     };
   }, []);
 

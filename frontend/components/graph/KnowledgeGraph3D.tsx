@@ -300,6 +300,7 @@ export function KnowledgeGraph3D({
         <>
           <EntityTypeLegend visibleTypes={Object.keys(nodeCounts)} />
           <Graph3D
+            key={`graph3d-${viewMode}-${projectId}`}
             ref={graph3DRef}
             nodes={displayData.nodes}
             edges={displayData.edges}
@@ -638,7 +639,7 @@ export function KnowledgeGraph3D({
           panelId="insight-hud"
           projectId={projectId}
           defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 220 : 900, y: showCentralityPanel || showClusterPanel ? 400 : 80 }}
-          zIndex={15}
+          zIndex={20}
         >
         <InsightHUD
           projectId={projectId}
@@ -648,13 +649,18 @@ export function KnowledgeGraph3D({
 
       {/* Main Topics Panel - Bottom Left (InsightHUD moved to right side) */}
       {showMainTopics && (
-        <MainTopicsPanel
-          clusters={clusters}
-          onFocusCluster={handleFocusCluster}
-          onHighlightCluster={setHighlightedNodes}
-          onClearHighlight={clearHighlights}
-          className="absolute z-20 bottom-4 left-4"
-        />
+        <DraggablePanel
+          panelId="main-topics"
+          projectId={projectId}
+          defaultPosition={{ x: 16, y: typeof window !== 'undefined' ? window.innerHeight - 200 : 600 }}
+        >
+          <MainTopicsPanel
+            clusters={clusters}
+            onFocusCluster={handleFocusCluster}
+            onHighlightCluster={setHighlightedNodes}
+            onClearHighlight={clearHighlights}
+          />
+        </DraggablePanel>
       )}
 
       {/* v0.10.0: View Mode Badge with Active Indicator - Hidden in Gaps mode */}
