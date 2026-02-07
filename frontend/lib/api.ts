@@ -668,6 +668,48 @@ class ApiClient {
   }
 
   // ============================================
+  // Citation Network (v0.13.0)
+  // ============================================
+
+  async buildCitationNetwork(projectId: string): Promise<{
+    message: string;
+    state: string;
+    total_papers: number;
+  }> {
+    return this.request(`/api/graph/citation/${projectId}/build`, {
+      method: 'POST',
+    });
+  }
+
+  async getCitationBuildStatus(projectId: string): Promise<{
+    state: string;
+    progress: number;
+    total: number;
+    phase: string;
+    error: string | null;
+  }> {
+    return this.request(`/api/graph/citation/${projectId}/status`);
+  }
+
+  async getCitationNetwork(projectId: string): Promise<{
+    nodes: Array<{
+      paper_id: string;
+      local_id: string | null;
+      title: string;
+      year: number | null;
+      citation_count: number;
+      doi: string | null;
+      is_local: boolean;
+    }>;
+    edges: Array<{ source_id: string; target_id: string }>;
+    papers_matched: number;
+    papers_total: number;
+    build_time_seconds: number;
+  }> {
+    return this.request(`/api/graph/citation/${projectId}/network`);
+  }
+
+  // ============================================
   // Bridge Hypothesis Generation
   // ============================================
 

@@ -12,6 +12,7 @@ import { InsightHUD } from './InsightHUD';
 import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
 import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
+import { CitationView } from './CitationView';  // v0.13.0: Citation Network
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
@@ -32,6 +33,7 @@ import {
   PieChart,
   Sun,
   SunDim,
+  GitBranch,  // v0.13.0
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -343,6 +345,9 @@ export function KnowledgeGraph3D({
           glowSize={view3D.bloom.glowSize}
         />
       )}
+      {viewMode === 'citations' && (
+        <CitationView projectId={projectId} />
+      )}
 
       {/* Top Controls */}
       <div className="absolute top-4 right-4 flex gap-2">
@@ -523,12 +528,26 @@ export function KnowledgeGraph3D({
               <Sparkles className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Gaps</span>
             </button>
+
+            {/* Citation Network - v0.13.0 */}
+            <button
+              onClick={() => setViewMode('citations')}
+              className={`flex items-center gap-1.5 px-2 py-2 transition-all ${
+                viewMode === 'citations'
+                  ? 'bg-[#457B9D] text-white'
+                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Citation Network (Semantic Scholar)"
+            >
+              <GitBranch className="w-4 h-4" />
+              <span className="font-mono text-xs uppercase tracking-wider">Citations</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Gap Panel - Hidden in Gaps mode (GapsViewMode has integrated gap list) */}
-      {showGapPanel && viewMode !== 'gaps' && (
+      {showGapPanel && viewMode !== 'gaps' && viewMode !== 'citations' && (
         <GapPanel
           projectId={projectId}
           gaps={gaps}
@@ -598,7 +617,7 @@ export function KnowledgeGraph3D({
       )}
 
       {/* View Mode Badge - Hidden in Gaps mode (GapsViewMode has its own badge) */}
-      {viewMode !== 'gaps' && (
+      {viewMode !== 'gaps' && viewMode !== 'citations' && (
         <div className="absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
           <div className="flex items-center gap-2">
             {viewMode === '3d' && (
