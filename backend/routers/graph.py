@@ -13,7 +13,7 @@ import json
 import logging
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
 from pydantic import BaseModel
 from enum import Enum
 
@@ -2655,6 +2655,155 @@ async def migrate_temporal_data(
                 detail="Temporal migration function not found. Please run database migration 013_entity_temporal.sql first."
             )
         raise HTTPException(status_code=500, detail="Failed to migrate temporal data")
+
+
+# ============================================
+# Paper Citation Network (v0.13.0: On-Demand)
+# ============================================
+
+class CitationNodeResponse(BaseModel):
+    paper_id: str
+    local_id: Optional[str] = None
+    title: str
+    year: Optional[int] = None
+    citation_count: int = 0
+    doi: Optional[str] = None
+    is_local: bool = False
+
+class CitationEdgeResponse(BaseModel):
+    source_id: str
+    target_id: str
+
+class CitationNetworkResponse(BaseModel):
+    nodes: List[CitationNodeResponse]
+    edges: List[CitationEdgeResponse]
+    papers_matched: int
+    papers_total: int
+    build_time_seconds: float
+
+class CitationBuildStatusResponse(BaseModel):
+    state: str  # idle, building, completed, failed
+    progress: int
+    total: int
+    phase: str = ""  # matching | references
+    error: Optional[str] = None
+
+
+@router.post("/citation/{project_id}/build")
+async def build_citation_network_endpoint(
+    project_id: UUID,
+    background_tasks: BackgroundTasks,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Start building citation network from Semantic Scholar."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    from graph.citation_builder import (
+        get_build_status,
+        build_citation_network as do_build,
+        MAX_PAPERS_FOR_BUILD,
+    )
+
+    status = get_build_status(str(project_id))
+    if status.state == "building":
+        return {"message": "Build already in progress", "state": "building"}
+
+    paper_rows = await database.fetch(
+        """
+        SELECT pm.id, pm.title, pm.doi, pm.year
+        FROM paper_metadata pm
+        WHERE pm.project_id = $1
+        AND pm.doi IS NOT NULL
+        """,
+        str(project_id),
+    )
+
+    if not paper_rows:
+        raise HTTPException(
+            404, "No papers with DOIs found. Import papers with DOI metadata first."
+        )
+
+    papers = [
+        {
+            "local_id": str(row["id"]),
+            "title": row["title"],
+            "doi": row["doi"],
+            "year": row["year"],
+        }
+        for row in paper_rows
+    ]
+
+    # Large project guard
+    if len(papers) > MAX_PAPERS_FOR_BUILD:
+        papers = papers[:MAX_PAPERS_FOR_BUILD]
+
+    background_tasks.add_task(do_build, str(project_id), papers)
+
+    return {
+        "message": f"Building citation network for {len(papers)} papers",
+        "state": "building",
+        "total_papers": len(papers),
+    }
+
+
+@router.get("/citation/{project_id}/status",
+            response_model=CitationBuildStatusResponse)
+async def get_citation_build_status(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Get citation network build status."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    from graph.citation_builder import get_build_status
+
+    status = get_build_status(str(project_id))
+    return CitationBuildStatusResponse(
+        state=status.state,
+        progress=status.progress,
+        total=status.total,
+        phase=status.phase,
+        error=status.error,
+    )
+
+
+@router.get("/citation/{project_id}/network",
+            response_model=CitationNetworkResponse)
+async def get_citation_network_endpoint(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Get cached citation network."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    from graph.citation_builder import get_cached_network
+
+    network = get_cached_network(str(project_id))
+    if not network:
+        raise HTTPException(
+            404, "Citation network not built. Click 'Build Citation Network' first."
+        )
+
+    return CitationNetworkResponse(
+        nodes=[
+            CitationNodeResponse(
+                paper_id=n.paper_id, local_id=n.local_id, title=n.title,
+                year=n.year, citation_count=n.citation_count,
+                doi=n.doi, is_local=n.is_local,
+            )
+            for n in network.nodes
+        ],
+        edges=[
+            CitationEdgeResponse(source_id=e.source_id, target_id=e.target_id)
+            for e in network.edges
+        ],
+        papers_matched=network.papers_matched,
+        papers_total=network.papers_total,
+        build_time_seconds=network.build_time_seconds,
+    )
 
 
 # ============================================
