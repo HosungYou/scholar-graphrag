@@ -80,9 +80,9 @@ export function DraggablePanel({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      // Only drag from the handle area (data-drag-handle attribute)
+      // Drag from handle or any header element (data-drag-handle or data-drag-header)
       const target = e.target as HTMLElement;
-      if (!target.closest('[data-drag-handle]')) return;
+      if (!target.closest('[data-drag-handle]') && !target.closest('[data-drag-header]')) return;
 
       e.preventDefault();
       setIsDragging(true);
@@ -148,15 +148,15 @@ export function DraggablePanel({
   );
 }
 
-/** Small drag handle bar to add at the top of panels */
+/** Drag handle bar to add at the top of panels */
 export function DragHandle({ className = '' }: { className?: string }) {
   return (
     <div
       data-drag-handle
-      className={`flex items-center justify-center py-1 cursor-grab active:cursor-grabbing ${className}`}
+      className={`flex items-center justify-center py-1.5 cursor-grab active:cursor-grabbing hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors ${className}`}
       title="Drag to move panel"
     >
-      <div className="w-8 h-1 rounded-full bg-ink/20 dark:bg-paper/20" />
+      <div className="w-12 h-1.5 rounded-full bg-ink/30 dark:bg-paper/30 hover:bg-ink/50 dark:hover:bg-paper/50 transition-colors" />
     </div>
   );
 }

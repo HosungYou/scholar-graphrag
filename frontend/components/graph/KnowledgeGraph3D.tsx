@@ -595,6 +595,7 @@ export function KnowledgeGraph3D({
       {(showCentralityPanel || showClusterPanel) && (
         <DraggablePanel panelId="right-stack" projectId={projectId} defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 300 : 900, y: 80 }}>
         <div className="flex flex-col gap-2 max-h-[calc(100vh-120px)] overflow-y-auto">
+          <DragHandle />
           {showCentralityPanel && (
             <CentralityPanel
               projectId={projectId}
@@ -641,6 +642,7 @@ export function KnowledgeGraph3D({
           defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 220 : 900, y: showCentralityPanel || showClusterPanel ? 400 : 80 }}
           zIndex={20}
         >
+        <DragHandle />
         <InsightHUD
           projectId={projectId}
         />
@@ -654,6 +656,7 @@ export function KnowledgeGraph3D({
           projectId={projectId}
           defaultPosition={{ x: 16, y: typeof window !== 'undefined' ? window.innerHeight - 200 : 600 }}
         >
+          <DragHandle />
           <MainTopicsPanel
             clusters={clusters}
             onFocusCluster={handleFocusCluster}
