@@ -2842,6 +2842,130 @@ async def migrate_temporal_data(
 
 
 # ============================================
+# Temporal Timeline API (v0.12.1)
+# ============================================
+
+class YearBucket(BaseModel):
+    year: int
+    new_concepts: int
+    total_concepts: int
+    top_concepts: List[str]
+
+
+class TemporalTimelineResponse(BaseModel):
+    min_year: Optional[int] = None
+    max_year: Optional[int] = None
+    buckets: List[YearBucket]
+    total_with_year: int
+    total_without_year: int
+
+
+@router.get("/temporal/{project_id}/timeline", response_model=TemporalTimelineResponse)
+async def get_temporal_timeline(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Get aggregated timeline data for temporal visualization."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    # TTL cache reuse (metrics_cache singleton)
+    cache_key = f"timeline:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        year_rows = await database.fetch(
+            """
+            SELECT
+                first_seen_year as year,
+                COUNT(*) as concept_count,
+                (ARRAY_AGG(name ORDER BY
+                    CASE WHEN properties->>'centrality_pagerank' ~ '^-?\\d+(\\.\\d+)?$'
+                         THEN (properties->>'centrality_pagerank')::float
+                         ELSE 0 END
+                    DESC NULLS LAST
+                ))[1:5] as top_names
+            FROM entities
+            WHERE project_id = $1
+              AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                  'Dataset', 'Metric', 'Innovation', 'Limitation')
+              AND first_seen_year IS NOT NULL
+            GROUP BY first_seen_year
+            ORDER BY first_seen_year
+            """,
+            str(project_id),
+        )
+
+        if not year_rows:
+            # Fallback to source_year
+            year_rows = await database.fetch(
+                """
+                SELECT
+                    source_year as year,
+                    COUNT(*) as concept_count,
+                    (ARRAY_AGG(name ORDER BY name))[1:5] as top_names
+                FROM entities
+                WHERE project_id = $1
+                  AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                      'Dataset', 'Metric', 'Innovation', 'Limitation')
+                  AND source_year IS NOT NULL
+                GROUP BY source_year
+                ORDER BY source_year
+                """,
+                str(project_id),
+            )
+
+        total_without = await database.fetchval(
+            """
+            SELECT COUNT(*) FROM entities
+            WHERE project_id = $1
+              AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                  'Dataset', 'Metric', 'Innovation', 'Limitation')
+              AND first_seen_year IS NULL AND source_year IS NULL
+            """,
+            str(project_id),
+        )
+
+        if not year_rows:
+            result = TemporalTimelineResponse(
+                min_year=None, max_year=None,
+                buckets=[], total_with_year=0,
+                total_without_year=total_without or 0,
+            )
+            await metrics_cache.set(cache_key, result)
+            return result
+
+        buckets = []
+        cumulative = 0
+        for row in year_rows:
+            cumulative += row["concept_count"]
+            buckets.append(YearBucket(
+                year=row["year"],
+                new_concepts=row["concept_count"],
+                total_concepts=cumulative,
+                top_concepts=(row["top_names"] or [])[:5],
+            ))
+
+        result = TemporalTimelineResponse(
+            min_year=year_rows[0]["year"],
+            max_year=year_rows[-1]["year"],
+            buckets=buckets,
+            total_with_year=cumulative,
+            total_without_year=total_without or 0,
+        )
+        await metrics_cache.set(cache_key, result)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get temporal timeline: {e}")
+        raise HTTPException(500, "Failed to get temporal timeline data")
+
+
+# ============================================
 # Relationship Evidence API (Phase 1: Contextual Edge Exploration)
 # ============================================
 
