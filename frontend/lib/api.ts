@@ -680,6 +680,25 @@ class ApiClient {
   }
 
   // ============================================
+  // Temporal Timeline (v0.12.1)
+  // ============================================
+
+  async getTemporalTimeline(projectId: string): Promise<{
+    min_year: number | null;
+    max_year: number | null;
+    buckets: Array<{
+      year: number;
+      new_concepts: number;
+      total_concepts: number;
+      top_concepts: string[];
+    }>;
+    total_with_year: number;
+    total_without_year: number;
+  }> {
+    return this.request(`/api/graph/temporal/${projectId}/timeline`);
+  }
+
+  // ============================================
   // Bridge Hypothesis Generation
   // ============================================
 

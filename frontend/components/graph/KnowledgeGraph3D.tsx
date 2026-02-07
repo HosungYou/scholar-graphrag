@@ -13,6 +13,7 @@ import { InsightHUD } from './InsightHUD';
 import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
 import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
+import { TemporalView } from './TemporalView';  // v0.12.1: Temporal Timeline
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
 import { useGraphStore } from '@/hooks/useGraphStore';
@@ -35,6 +36,7 @@ import {
   Tag,
   Tags,
   Type,
+  Calendar,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -364,6 +366,9 @@ export function KnowledgeGraph3D({
           onClearPinnedNodes={clearPinnedNodes}
         />
       )}
+      {viewMode === 'temporal' && (
+        <TemporalView projectId={projectId} />
+      )}
 
       {/* Top Controls */}
       <div className="absolute top-4 right-4 flex gap-2">
@@ -548,6 +553,20 @@ export function KnowledgeGraph3D({
               <Sparkles className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Gaps</span>
             </button>
+
+            {/* Temporal Mode - v0.12.1 */}
+            <button
+              onClick={() => setViewMode('temporal')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                viewMode === 'temporal'
+                  ? 'bg-accent-orange text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
+              }`}
+              title="시간축 시각화 (Temporal)"
+            >
+              <Calendar className="w-4 h-4" />
+              <span className="font-mono text-xs uppercase tracking-wider">Temporal</span>
+            </button>
           </div>
         </div>
       </div>
@@ -671,6 +690,18 @@ export function KnowledgeGraph3D({
                 </span>
                 <span className="text-xs text-muted">
                   • {clusters.length} clusters
+                </span>
+              </>
+            )}
+            {viewMode === 'temporal' && (
+              <>
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-orange rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-orange rounded-full" />
+                </div>
+                <Calendar className="w-4 h-4 text-accent-orange" />
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Temporal
                 </span>
               </>
             )}

@@ -23,6 +23,8 @@ module.exports = {
         'accent-red': 'rgb(var(--color-accent-red) / <alpha-value>)',
         'accent-teal': 'rgb(var(--color-accent-teal) / <alpha-value>)',
         'accent-amber': 'rgb(var(--color-accent-amber) / <alpha-value>)',
+        'accent-purple': 'rgb(var(--color-accent-purple) / <alpha-value>)',
+        'accent-orange': 'rgb(var(--color-accent-orange) / <alpha-value>)',
 
         // Semantic
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
