@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.11.2
-**Last Updated**: 2026-02-06
+**Version**: 0.13.1
+**Last Updated**: 2026-02-07
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.5.0 |
-| **Project Version** | 0.11.2 |
+| **Document Version** | 1.6.0 |
+| **Project Version** | 0.13.1 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -414,6 +414,38 @@ async def get_llm_response(prompt: str) -> str:
 
 **Full Details**: See [`DOCS/development/LLM_CONFIGURATION.md`](../development/LLM_CONFIGURATION.md)
 
+#### 3.1.5 User Preferences & API Key Management (v0.13.1)
+
+**Purpose**: Per-user API key storage and LLM provider configuration.
+
+**Router**: `backend/routers/settings.py`
+
+**Storage**: `user_profiles.preferences` JSONB column (migration 005)
+
+**Key Priority**: User keys > Server environment variable keys
+
+**Supported Providers**:
+
+| Provider ID | Display Name | Usage | Validation |
+|-------------|-------------|-------|------------|
+| `groq` | Groq | LLM (default) | Prefix `gsk_` |
+| `anthropic` | Anthropic (Claude) | LLM | Prefix `sk-ant-` |
+| `openai` | OpenAI | LLM + Embeddings | Prefix `sk-` |
+| `google` | Google (Gemini) | LLM | Length > 20 |
+| `semantic_scholar` | Semantic Scholar | Citation Network | Live API test |
+| `cohere` | Cohere | Embeddings | Length > 20 |
+
+**Key Masking**: `gsk_1234567890abc` → `gsk_****abc` (first 4 + **** + last 3)
+
+**Preferences JSON Structure**:
+```json
+{
+  "api_keys": { "semantic_scholar": "au65...", "groq": "gsk_..." },
+  "llm_provider": "groq",
+  "llm_model": "llama-3.3-70b-versatile"
+}
+```
+
 ### 3.2 Frontend Components
 
 #### 3.2.1 Pages
@@ -427,6 +459,7 @@ async def get_llm_response(prompt: str) -> str:
 | **Import** | `/import` | Upload papers (ScholaRAG/PDF/Zotero) |
 | **Team Management** | `/teams` | Manage teams and project sharing |
 | **Login** | `/login` | Supabase authentication |
+| **Settings** | `/settings` | API key management, LLM provider selection, preferences |
 
 #### 3.2.2 Graph Visualization
 
@@ -1054,6 +1087,25 @@ Response: {
 }
 ```
 
+#### Settings (v0.13.1)
+
+```
+GET /api/settings/api-keys
+Response: [{
+  provider: "groq", display_name: "Groq", is_set: true,
+  masked_key: "gsk_****abc", source: "server", usage: "LLM (기본 provider)"
+}]
+
+PUT /api/settings/api-keys
+Request: { "semantic_scholar": "au65...", "llm_provider": "groq", "llm_model": "llama-3.3-70b-versatile" }
+Response: { status: "success", message: "API keys updated successfully" }
+Note: Flat JSON format. Empty string deletes key. Requires authentication.
+
+POST /api/settings/api-keys/validate
+Request: { "provider": "semantic_scholar", "key": "au65..." }
+Response: { "valid": true, "message": "Semantic Scholar API key is valid" }
+```
+
 #### Health Check
 
 ```
@@ -1196,7 +1248,17 @@ app.add_middleware(
 
 ## 7. Change Log
 
-### Version 0.12.1 (2026-02-07) - Current
+### Version 0.13.1 (2026-02-07) - Current
+
+**API Key Settings UI Release (1 feature)**:
+
+- **Settings API Router**: `backend/routers/settings.py` with GET/PUT/POST endpoints for per-user API key management. Keys stored in `user_profiles.preferences` JSONB with user keys taking priority over server environment variables. Supports 6 providers (Groq, Anthropic, OpenAI, Google, Semantic Scholar, Cohere).
+- **Functional Settings Page**: `frontend/app/settings/page.tsx` rewritten with LLM provider selection, inline API key editing with validation/save/delete, masked key display, and Korean labels.
+- **S2 API Key Integration**: All `SemanticScholarClient` instances in `integrations.py` and `graph.py` now receive configured `semantic_scholar_api_key`.
+
+Files changed: `backend/routers/settings.py` (new), `backend/main.py`, `backend/routers/__init__.py`, `backend/routers/integrations.py`, `backend/routers/graph.py`, `frontend/app/settings/page.tsx`, `frontend/lib/api.ts`
+
+### Version 0.12.1 (2026-02-07)
 
 **Temporal Timeline View Release (1 feature)**:
 
