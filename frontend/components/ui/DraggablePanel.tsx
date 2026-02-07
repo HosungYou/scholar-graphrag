@@ -17,6 +17,9 @@ interface DraggablePanelProps {
   zIndex?: number;
 }
 
+// v0.14.0: Global z-index counter for bring-to-front behavior
+let globalMaxZ = 20;
+
 function getStorageKey(panelId: string, projectId?: string): string {
   return projectId ? `panel-pos-${projectId}-${panelId}` : `panel-pos-${panelId}`;
 }
@@ -31,8 +34,14 @@ export function DraggablePanel({
 }: DraggablePanelProps) {
   const [position, setPosition] = useState(defaultPosition);
   const [isDragging, setIsDragging] = useState(false);
+  const [currentZ, setCurrentZ] = useState(zIndex);
   const dragOffset = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const bringToFront = useCallback(() => {
+    globalMaxZ += 1;
+    setCurrentZ(globalMaxZ);
+  }, []);
 
   // Load saved position from localStorage
   useEffect(() => {
@@ -122,14 +131,17 @@ export function DraggablePanel({
     <div
       ref={panelRef}
       className={`absolute ${className}`}
+      onMouseDown={(e) => {
+        bringToFront();
+        handleMouseDown(e);
+      }}
       style={{
         left: position.x,
         top: position.y,
-        zIndex,
+        zIndex: currentZ,
         cursor: isDragging ? 'grabbing' : undefined,
         userSelect: isDragging ? 'none' : undefined,
       }}
-      onMouseDown={handleMouseDown}
     >
       {children}
     </div>
