@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-06
+> **마지막 업데이트**: 2026-02-07
 > **관리자**: Claude Code
 
 ---
@@ -12,9 +12,9 @@
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
 | 🔴 High | 19 | 19 | 0 | 0 |
-| 🟡 Medium | 20 | 20 | 0 | 0 |
+| 🟡 Medium | 21 | 21 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **44** | **44** | **0** | **0** |
+| **Total** | **45** | **45** | **0** | **0** |
 
 ---
 
@@ -27,6 +27,33 @@
 ## 🟡 Medium Priority (Short-term)
 
 *모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 v0.13.1 Release - Completed Items (2026-02-07)
+
+### FUNC-015: API Key Settings UI
+- **Source**: v0.13.1 Plan
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `backend/routers/settings.py` - New settings router (GET/PUT/POST)
+  - `backend/main.py` - Router registration
+  - `backend/routers/__init__.py` - Module export
+  - `backend/routers/integrations.py` - S2 API key wiring
+  - `backend/routers/graph.py` - S2 API key wiring
+  - `frontend/lib/api.ts` - 3 new API methods
+  - `frontend/app/settings/page.tsx` - Complete rewrite with functional API key management
+- **Description**:
+  - 사용자가 프론트엔드에서 직접 API 키를 관리할 수 있는 Settings 페이지 기능화
+  - `user_profiles.preferences` JSONB 컬럼 활용 (기존 migration 005)
+  - Semantic Scholar API 키를 SemanticScholarClient에 연결
+  - LLM provider 선택 및 저장 기능
+- **Solution Applied**:
+  - [x] Backend settings router 생성 (3 endpoints)
+  - [x] Frontend settings page 완전 기능화
+  - [x] S2 API key integration
+  - [x] Release notes 및 세션 로그 작성
 
 ---
 
