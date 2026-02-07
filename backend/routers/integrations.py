@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from config import get_settings, Settings, settings
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
-from database import database as db
+from database import db
 from integrations.semantic_scholar import SemanticScholarClient, SemanticScholarPaper
 from integrations.openalex import OpenAlexClient, OpenAlexWork
 from integrations.zotero import ZoteroClient, ZoteroItem, ZoteroCollection
