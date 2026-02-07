@@ -807,6 +807,41 @@ class ApiClient {
   }> {
     return this.request(`/api/graph/compare/${projectAId}/${projectBId}`);
   }
+
+  // ============================================
+  // Settings - API Key Management (v0.13.1)
+  // ============================================
+
+  async getApiKeys(): Promise<Array<{
+    provider: string;
+    display_name: string;
+    is_set: boolean;
+    masked_key: string | null;
+    source: 'user' | 'server' | null;
+    usage: string;
+  }>> {
+    return this.request('/api/settings/api-keys');
+  }
+
+  async updateApiKeys(keys: Record<string, string>, options?: {
+    llm_provider?: string;
+    llm_model?: string;
+  }): Promise<{ success: boolean; updated: string[] }> {
+    return this.request('/api/settings/api-keys', {
+      method: 'PUT',
+      body: JSON.stringify({ ...keys, ...options }),
+    });
+  }
+
+  async validateApiKey(provider: string, key: string): Promise<{
+    valid: boolean;
+    message: string;
+  }> {
+    return this.request('/api/settings/api-keys/validate', {
+      method: 'POST',
+      body: JSON.stringify({ provider, key }),
+    });
+  }
 }
 
 export const api = new ApiClient(API_URL);
