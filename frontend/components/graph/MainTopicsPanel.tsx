@@ -137,9 +137,10 @@ export function MainTopicsPanel({
 
   return (
     <div className={`bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg overflow-hidden w-56 ${className}`}>
-      {/* Header */}
+      {/* Header - also serves as drag handle for DraggablePanel */}
       <button
-        className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
+        data-drag-header
+        className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors cursor-grab active:cursor-grabbing"
         onClick={() => setIsCollapsed(!isCollapsed)}
       >
         <div className="flex items-center gap-2">

@@ -434,24 +434,26 @@ export function GapPanel({
                       onClick={() => handleGapClick(gap)}
                       className="w-full p-4 pt-3 text-left"
                     >
+                      {/* Row 1: Cluster labels */}
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        <div
+                          className="w-3 h-3 flex-shrink-0"
+                          style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }}
+                        />
+                        <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_a_id)}>
+                          {getClusterLabel(gap.cluster_a_id)}
+                        </span>
+                        <ArrowRight className="w-3 h-3 text-muted flex-shrink-0" />
+                        <div
+                          className="w-3 h-3 flex-shrink-0"
+                          style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }}
+                        />
+                        <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_b_id)}>
+                          {getClusterLabel(gap.cluster_b_id)}
+                        </span>
+                      </div>
+                      {/* Row 2: Strength badge + Find Papers */}
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div
-                            className="w-3 h-3"
-                            style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }}
-                          />
-                          <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_a_id)}>
-                            {getClusterLabel(gap.cluster_a_id)}
-                          </span>
-                          <ArrowRight className="w-3 h-3 text-muted" />
-                          <div
-                            className="w-3 h-3"
-                            style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }}
-                          />
-                          <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_b_id)}>
-                            {getClusterLabel(gap.cluster_b_id)}
-                          </span>
-                        </div>
                         <span className={`font-mono text-xs px-2 py-0.5 ${
                           gap.gap_strength > 0.7
                             ? 'bg-accent-red/10 text-accent-red'
@@ -486,7 +488,7 @@ export function GapPanel({
                             })();
                           }}
                           disabled={loadingRecsFor === gap.id}
-                          className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal rounded transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal rounded transition-colors disabled:opacity-50"
                           title="Find related papers from Semantic Scholar"
                         >
                           {loadingRecsFor === gap.id ? (
@@ -494,6 +496,7 @@ export function GapPanel({
                           ) : (
                             <Search className="w-3 h-3" />
                           )}
+                          <span>Find Papers</span>
                         </button>
                       </div>
 

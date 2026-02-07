@@ -36,6 +36,7 @@ export function DraggablePanel({
   const [isDragging, setIsDragging] = useState(false);
   const [currentZ, setCurrentZ] = useState(zIndex);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const latestPosition = useRef(defaultPosition);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const bringToFront = useCallback(() => {
@@ -54,10 +55,12 @@ export function DraggablePanel({
           // Validate position is within viewport
           const maxX = window.innerWidth - 100;
           const maxY = window.innerHeight - 50;
-          setPosition({
+          const restored = {
             x: Math.max(0, Math.min(parsed.x, maxX)),
             y: Math.max(0, Math.min(parsed.y, maxY)),
-          });
+          };
+          latestPosition.current = restored;
+          setPosition(restored);
         }
       }
     } catch {
@@ -110,12 +113,13 @@ export function DraggablePanel({
         y: Math.max(0, Math.min(newY, maxY)),
       };
 
+      latestPosition.current = clampedPos;
       setPosition(clampedPos);
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
-      savePosition(position);
+      savePosition(latestPosition.current);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -125,7 +129,7 @@ export function DraggablePanel({
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, savePosition, position]);
+  }, [isDragging, savePosition]);
 
   return (
     <div
