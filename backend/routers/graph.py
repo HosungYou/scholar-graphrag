@@ -1184,7 +1184,9 @@ async def refresh_gap_analysis(
         ]
 
         # Run gap detection
-        gap_detector = GapDetector()
+        from dependencies import get_llm_provider
+        llm = get_llm_provider()
+        gap_detector = GapDetector(llm_provider=llm)
         analysis = await gap_detector.analyze_graph(concepts, relationships)
 
         # Store results
@@ -1209,14 +1211,11 @@ async def refresh_gap_analysis(
                 for cid in cluster.concept_ids
             ]
 
-            # Generate meaningful label from concept names
-            if cluster.name:
-                label = cluster.name
+            # Generate meaningful label using LLM (with fallback)
+            if cluster.keywords:
+                label = await gap_detector._generate_cluster_label(cluster.keywords)
             elif cluster_concept_names:
-                # Use top 3 concept names
                 label = ", ".join(cluster_concept_names[:3])
-                if len(cluster_concept_names) > 3:
-                    label += f" (+{len(cluster_concept_names) - 3} more)"
             else:
                 label = f"Cluster {cluster.id + 1}"
 

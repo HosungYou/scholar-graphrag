@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
+import asyncio
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
@@ -913,3 +914,26 @@ Return ONLY the research questions, one per line, without numbering or bullets.
                 ])
 
         return "\n".join(lines)
+
+    async def _generate_cluster_label(self, keywords: list[str]) -> str:
+        """LLM으로 클러스터 키워드를 3-5 단어 토픽 레이블로 요약."""
+        if not self.llm or not keywords:
+            return " / ".join(keywords[:3])
+
+        try:
+            prompt = (
+                "Summarize these academic concepts into a 3-5 word topic label:\n"
+                f"{', '.join(keywords[:10])}\n\n"
+                "Respond with ONLY the label, nothing else."
+            )
+            label = await asyncio.wait_for(
+                self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
+                timeout=5.0
+            )
+            result = label.strip().strip('"').strip("'")
+            if len(result) < 3 or len(result) > 60:
+                return " / ".join(keywords[:3])
+            return result
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"LLM label generation failed: {e}")
+            return " / ".join(keywords[:3])
