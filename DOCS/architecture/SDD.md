@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.13.1
+**Version**: 0.14.1
 **Last Updated**: 2026-02-07
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.6.0 |
-| **Project Version** | 0.13.1 |
+| **Document Version** | 1.7.0 |
+| **Project Version** | 0.14.1 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -72,6 +72,11 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **Dynamic Chat Questions** | Context-aware suggested questions based on graph data | ✅ v0.11.0 |
 | **Hover Debounce** | 50ms debounced node hover to eliminate jitter | ✅ v0.11.0 |
 | **Zotero Gap Detection** | Full gap detection parity in Zotero importer | ✅ v0.11.0 |
+| **DraggablePanel Reset** | Double-click reset, collapse animation, touch device support | ✅ v0.14.1 |
+| **GapPanel Keyboard Nav** | Arrow key navigation, color chip clusters, gradient progress bar | ✅ v0.14.1 |
+| **GapsView Minimap** | Canvas minimap with cluster layout and gap visualization | ✅ v0.14.1 |
+| **Gap-to-Chat Integration** | Research questions pre-fill chat input with view switch | ✅ v0.14.1 |
+| **S2 429 Auto-Retry** | Automatic retry with countdown on Semantic Scholar rate limiting | ✅ v0.14.1 |
 
 ### 1.4 Success Metrics
 
@@ -1247,6 +1252,20 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### Version 0.14.1 (2026-02-07) — UX Enhancement + Gap-to-Chat
+
+**UX Enhancement Release (6 improvements + 1 new feature)**:
+
+- **DraggablePanel**: Double-click reset with flash feedback, `CollapsibleContent` animated wrapper, touch event support (touchstart/touchmove/touchend), `useDraggablePanelReset()` context hook
+- **GapPanel**: Arrow key navigation (up/down/enter/escape), pill-style color chip clusters with inline dots, gradient progress bar (teal→amber→red), S2 429 auto-retry with 60s countdown, `MessageSquare` gap-to-chat button
+- **GapsViewMode**: 160×120 canvas minimap with circular cluster layout, dashed gap lines, selected gap highlighting (#FFD166), legend panel, stats footer
+- **Settings Page**: Full Editorial Research theme redesign (monospace labels, border sections, accent-teal selection)
+- **Interrupted Imports**: Clear All button with confirmation, editorial layout with amber accent bar, progress display
+- **Gap-to-Chat**: `onAskQuestion` callback threaded from project page → KnowledgeGraph3D → GapPanel; sets chat input and switches to split view
+- **API Client**: `deleteInterruptedJobs()` for batch clearing interrupted import jobs
+
+Files changed: 9 total — `DraggablePanel.tsx`, `GapPanel.tsx`, `GapsViewMode.tsx`, `KnowledgeGraph3D.tsx`, `settings/page.tsx`, `projects/page.tsx`, `projects/[id]/page.tsx`, `api.ts`, `tsconfig.tsbuildinfo`
 
 ### Version 0.14.0 (2026-02-07) — Stability Hotfix + Gap Analysis UX
 

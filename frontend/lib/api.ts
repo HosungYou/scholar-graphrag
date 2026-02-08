@@ -506,6 +506,14 @@ class ApiClient {
     });
   }
 
+  /**
+   * Delete all interrupted import jobs.
+   * Clears jobs that were interrupted by server restarts.
+   */
+  async deleteInterruptedJobs(): Promise<{ deleted_count: number; message: string }> {
+    return this.request('/api/import/jobs/interrupted', { method: 'DELETE' });
+  }
+
   // Gap Detection
   async getGapAnalysis(projectId: string): Promise<GapAnalysisResult> {
     return this.request<GapAnalysisResult>(`/api/graph/gaps/${projectId}/analysis`);

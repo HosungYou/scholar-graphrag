@@ -1,7 +1,7 @@
 # Test Design Document (TDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.13.1
+**Version**: 0.14.1
 **Last Updated**: 2026-02-07
 **Status**: Active
 **Related**: [SDD](../architecture/SDD.md)
@@ -156,6 +156,69 @@ Tests for UUID fallback in explain endpoint — see `test_chat_router.py`.
 
 Graph visualization, gap analysis, temporal timeline — see `test_graph_router.py`, `test_infranodus_api.py`.
 
+### 4.4 DraggablePanel Enhancements (v0.14.1)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| Double-click drag handle resets position to default | Unit |
+| Reset clears localStorage entry | Unit |
+| CollapsibleContent animates height on open/close | Component |
+| Touch events trigger drag on mobile | Component |
+| useDraggablePanelReset returns reset function | Unit |
+
+### 4.5 GapPanel Enhancements (v0.14.1)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| ArrowDown moves focus to next gap | Unit |
+| ArrowUp moves focus to previous gap | Unit |
+| Enter key selects focused gap | Unit |
+| Escape key clears selection and focus | Unit |
+| Color chip renders with correct cluster color | Component |
+| Gradient bar reflects gap_strength value | Component |
+| S2 429 response starts 60s countdown | Integration |
+| Auto-retry fires after countdown reaches 0 | Integration |
+| MessageSquare button calls onAskQuestion with question text | Unit |
+
+### 4.6 GapsViewMode Minimap (v0.14.1)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| Canvas renders with correct dimensions (160x120) | Component |
+| Nodes are positioned by cluster in circular layout | Component |
+| Selected gap nodes highlighted in gold | Component |
+| Dashed lines drawn between gap clusters | Component |
+| Stats footer shows correct node and gap counts | Component |
+
+### 4.7 Gap-to-Chat Integration (v0.14.1)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| onAskQuestion prop threaded from page to GapPanel | Integration |
+| Clicking MessageSquare calls onAskQuestion | Unit |
+| handleAskAboutGap sets chatInput to question | Unit |
+| handleAskAboutGap switches viewMode to split | Unit |
+| handleAskAboutGap sets mobileView to chat | Unit |
+
+### 4.8 Interrupted Imports Clear All (v0.14.1)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| Clear All button shows confirmation dialog | Component |
+| Confirming clear calls deleteInterruptedJobs API | Integration |
+| Successful clear refreshes interrupted jobs query | Integration |
+| deleteInterruptedJobs sends DELETE to correct URL | Unit |
+
 ---
 
 ## 5. Mocking Strategy
@@ -227,4 +290,5 @@ jest.mock('@/lib/supabase', () => ({
 | Date | Version | Changes |
 |------|---------|---------|
 | 2026-02-07 | 1.0.0 | Initial TDD document for v0.13.1 |
+| 2026-02-07 | 1.1.0 | Add v0.14.1 test specs (DraggablePanel, GapPanel, Minimap, Gap-to-Chat, Clear All) |
 

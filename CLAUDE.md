@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-07
-> **Version**: 3.7.0 (v0.12.1 Gap Analysis Enhancement)
+> **Version**: 3.8.0 (v0.14.1 UX Enhancement + Gap-to-Chat)
 
 ## Project Overview
 
@@ -678,6 +678,28 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.14.1 Release Notes
+
+> **Version**: 0.14.1 | **Date**: 2026-02-07
+> **Full Notes**: See `RELEASE_NOTES_v0.14.1.md`
+
+### UX Enhancements
+- **DraggablePanel**: Double-click reset, `CollapsibleContent` animation, touch device support, `useDraggablePanelReset()` hook
+- **GapPanel**: Arrow key navigation, color chip clusters, gradient progress bar, S2 429 auto-retry with 60s countdown
+- **GapsViewMode Minimap**: 160x120 canvas with circular cluster layout, dashed gap lines, selected gap highlighting
+- **Settings Page**: Full Editorial Research theme redesign (monospace labels, accent-teal selections)
+- **Interrupted Imports**: Clear All button with confirmation, editorial layout, progress display
+
+### New Feature
+- **Gap-to-Chat Integration**: MessageSquare button on research questions pre-fills chat input + switches to split view. Threaded via `onAskQuestion` callback through KnowledgeGraph3D → GapPanel
+
+### Technical
+- 9 files changed, +607/-159 lines (frontend only)
+- `deleteInterruptedJobs()` API client method
+- No database migrations, no new env vars
 
 ---
 

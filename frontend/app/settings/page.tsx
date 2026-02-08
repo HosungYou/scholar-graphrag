@@ -181,7 +181,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       <a href="#main-content" className="skip-link">
         메인 콘텐츠로 건너뛰기
       </a>
@@ -193,24 +193,25 @@ export default function SettingsPage() {
 
       <main id="main-content" className="flex-1 max-w-3xl mx-auto px-4 py-6 sm:py-8 w-full">
         <ErrorBoundary>
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-3">
-            <Settings className="w-6 h-6" />
-            설정
-          </h2>
+          {/* Page Header */}
+          <div className="mb-8">
+            <span className="text-accent-teal font-mono text-sm tracking-widest uppercase">Configuration</span>
+            <h1 className="font-display text-3xl md:text-4xl text-ink dark:text-paper mt-2">Settings</h1>
+          </div>
 
           {/* Save Message Toast */}
           {saveMessage && (
-            <div className="mb-4 p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 flex items-center gap-2">
-              <Check className="w-5 h-5" />
-              {saveMessage}
+            <div className="mb-4 border-l-2 border-accent-teal bg-accent-teal/10 p-3 flex items-center gap-2">
+              <Check className="w-5 h-5 text-accent-teal" />
+              <span className="font-mono text-sm text-accent-teal">{saveMessage}</span>
             </div>
           )}
 
           <div className="space-y-6">
             {/* Theme Settings */}
-            <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Sun className="w-5 h-5 text-yellow-500" />
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <Sun className="w-5 h-5 text-accent-amber" />
                 테마 설정
               </h3>
               <div className="grid sm:grid-cols-3 gap-3">
@@ -222,21 +223,21 @@ export default function SettingsPage() {
                       key={option.value}
                       onClick={() => setTheme(option.value)}
                       className={`
-                        p-4 rounded-lg border-2 text-left transition-all touch-target
+                        p-4 border-2 text-left transition-all touch-target
                         ${isSelected
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-accent-teal bg-accent-teal/5'
+                          : 'border-ink/10 dark:border-paper/10 hover:border-accent-teal/50'
                         }
                       `}
                       aria-pressed={isSelected}
                     >
                       <div className="flex items-center gap-3 mb-2">
-                        <Icon className={`w-5 h-5 ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
-                        <span className={`font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-white'}`}>
+                        <Icon className={`w-5 h-5 ${isSelected ? 'text-accent-teal' : 'text-muted'}`} />
+                        <span className={`font-medium ${isSelected ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
                           {option.label}
                         </span>
                       </div>
-                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                      <p className="text-xs sm:text-sm text-muted">
                         {option.description}
                       </p>
                     </button>
@@ -246,15 +247,15 @@ export default function SettingsPage() {
             </section>
 
             {/* AI Model Settings */}
-            <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Cpu className="w-5 h-5 text-purple-500" />
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-accent-violet" />
                 AI 모델 설정
               </h3>
 
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                  <Loader2 className="w-6 h-6 animate-spin text-muted" />
                 </div>
               ) : (
                 <>
@@ -267,25 +268,25 @@ export default function SettingsPage() {
                           onClick={() => handleLlmProviderChange(option.value)}
                           disabled={providerSaving}
                           className={`
-                            w-full p-4 rounded-lg border-2 text-left transition-all flex items-center justify-between touch-target
+                            w-full p-4 border-2 text-left transition-all flex items-center justify-between touch-target
                             ${isSelected
-                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                              : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                              ? 'border-accent-teal bg-accent-teal/5'
+                              : 'border-ink/10 dark:border-paper/10 hover:border-accent-teal/50'
                             }
                             ${providerSaving ? 'opacity-50 cursor-not-allowed' : ''}
                           `}
                           aria-pressed={isSelected}
                         >
                           <div>
-                            <span className={`font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-white'}`}>
+                            <span className={`font-medium ${isSelected ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
                               {option.label}
                             </span>
-                            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">
+                            <p className="text-xs sm:text-sm text-muted mt-1">
                               {option.description}
                             </p>
                           </div>
                           {isSelected && (
-                            <span className="text-blue-600 dark:text-blue-400 text-lg">✓</span>
+                            <span className="text-accent-teal text-lg">✓</span>
                           )}
                         </button>
                       );
@@ -294,17 +295,17 @@ export default function SettingsPage() {
 
                   {/* LLM Provider API Key Status */}
                   {llmProvider && (
-                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border dark:border-gray-700">
+                    <div className="mt-4 border-l-2 border-accent-teal bg-surface/5 p-4">
                       <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        <span className="font-mono text-sm text-ink dark:text-paper">
                           {llmOptions.find(o => o.value === llmProvider)?.label} API 키
                         </span>
                         {getLlmProviderKey()?.is_set ? (
-                          <span className="px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                          <span className="px-2 py-1 bg-accent-teal/10 text-accent-teal font-mono text-xs">
                             설정됨
                           </span>
                         ) : (
-                          <span className="px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                          <span className="px-2 py-1 bg-surface/10 text-muted font-mono text-xs">
                             미설정
                           </span>
                         )}
@@ -318,18 +319,18 @@ export default function SettingsPage() {
                               value={keyInput}
                               onChange={(e) => setKeyInput(e.target.value)}
                               placeholder="API 키를 입력하세요"
-                              className="w-full px-3 py-2 pr-10 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg text-sm"
+                              className="w-full px-3 py-2 pr-10 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 font-mono text-sm focus:outline-none focus:border-accent-teal"
                             />
                             <button
                               onClick={() => setShowKey(!showKey)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-accent-teal"
                             >
                               {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                           </div>
 
                           {validationResult && (
-                            <div className={`flex items-center gap-2 text-sm ${validationResult.valid ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            <div className={`flex items-center gap-2 text-sm font-mono ${validationResult.valid ? 'text-accent-teal' : 'text-accent-red'}`}>
                               {validationResult.valid ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
                               {validationResult.message}
                             </div>
@@ -339,7 +340,7 @@ export default function SettingsPage() {
                             <button
                               onClick={() => handleValidateKey(llmProvider)}
                               disabled={validating || !keyInput.trim()}
-                              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 flex items-center gap-2"
+                              className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm disabled:opacity-50 flex items-center gap-2"
                             >
                               {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
                               검증
@@ -347,14 +348,14 @@ export default function SettingsPage() {
                             <button
                               onClick={() => handleSaveKey(llmProvider)}
                               disabled={saving || !keyInput.trim()}
-                              className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                              className="flex-1 px-3 py-2 bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal font-mono text-sm uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                               저장
                             </button>
                             <button
                               onClick={handleCancelEdit}
-                              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                              className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
                               취소
                             </button>
@@ -363,25 +364,25 @@ export default function SettingsPage() {
                       ) : (
                         <div className="flex items-center justify-between">
                           {getLlmProviderKey()?.is_set ? (
-                            <span className="text-sm font-mono text-gray-600 dark:text-gray-400">
+                            <span className="text-sm font-mono text-muted">
                               {getLlmProviderKey()?.masked_key}
                             </span>
                           ) : (
-                            <span className="text-sm text-gray-500 dark:text-gray-400">
+                            <span className="text-sm font-mono text-muted">
                               API 키가 설정되지 않았습니다
                             </span>
                           )}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleEditKey(llmProvider)}
-                              className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                              className="px-3 py-1.5 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
                               {getLlmProviderKey()?.is_set ? '수정' : '설정'}
                             </button>
                             {getLlmProviderKey()?.is_set && (
                               <button
                                 onClick={() => handleDeleteKey(llmProvider)}
-                                className="px-3 py-1.5 text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50"
+                                className="px-3 py-1.5 bg-accent-red/10 hover:bg-accent-red/20 text-accent-red font-mono text-sm"
                               >
                                 삭제
                               </button>
@@ -392,7 +393,7 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  <p className="mt-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                  <p className="mt-4 text-xs sm:text-sm font-mono text-muted">
                     선택한 AI 모델은 채팅 및 엔티티 추출에 사용됩니다.
                   </p>
                 </>
@@ -400,35 +401,35 @@ export default function SettingsPage() {
             </section>
 
             {/* External API Keys */}
-            <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Key className="w-5 h-5 text-orange-500" />
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <Key className="w-5 h-5 text-accent-amber" />
                 외부 API 키
               </h3>
 
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                  <Loader2 className="w-6 h-6 animate-spin text-muted" />
                 </div>
               ) : (
                 <div className="space-y-4">
                   {getExternalKeys().map((keyData) => (
-                    <div key={keyData.provider} className="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border dark:border-gray-700">
+                    <div key={keyData.provider} className="border-l-2 border-accent-teal bg-surface/5 p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div>
-                          <span className="text-sm font-medium text-gray-900 dark:text-white">
+                          <span className="text-sm font-mono text-ink dark:text-paper">
                             {keyData.display_name}
                           </span>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          <p className="text-xs text-muted mt-1 font-mono">
                             {keyData.usage}
                           </p>
                         </div>
                         {keyData.is_set ? (
-                          <span className="px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                          <span className="px-2 py-1 bg-accent-teal/10 text-accent-teal font-mono text-xs">
                             설정됨
                           </span>
                         ) : (
-                          <span className="px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                          <span className="px-2 py-1 bg-surface/10 text-muted font-mono text-xs">
                             미설정
                           </span>
                         )}
@@ -442,18 +443,18 @@ export default function SettingsPage() {
                               value={keyInput}
                               onChange={(e) => setKeyInput(e.target.value)}
                               placeholder="API 키를 입력하세요"
-                              className="w-full px-3 py-2 pr-10 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg text-sm"
+                              className="w-full px-3 py-2 pr-10 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 font-mono text-sm focus:outline-none focus:border-accent-teal"
                             />
                             <button
                               onClick={() => setShowKey(!showKey)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-accent-teal"
                             >
                               {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                           </div>
 
                           {validationResult && (
-                            <div className={`flex items-center gap-2 text-sm ${validationResult.valid ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            <div className={`flex items-center gap-2 text-sm font-mono ${validationResult.valid ? 'text-accent-teal' : 'text-accent-red'}`}>
                               {validationResult.valid ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
                               {validationResult.message}
                             </div>
@@ -463,7 +464,7 @@ export default function SettingsPage() {
                             <button
                               onClick={() => handleValidateKey(keyData.provider)}
                               disabled={validating || !keyInput.trim()}
-                              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 flex items-center gap-2"
+                              className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm disabled:opacity-50 flex items-center gap-2"
                             >
                               {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
                               검증
@@ -471,14 +472,14 @@ export default function SettingsPage() {
                             <button
                               onClick={() => handleSaveKey(keyData.provider)}
                               disabled={saving || !keyInput.trim()}
-                              className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                              className="flex-1 px-3 py-2 bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal font-mono text-sm uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                               저장
                             </button>
                             <button
                               onClick={handleCancelEdit}
-                              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                              className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
                               취소
                             </button>
@@ -487,25 +488,25 @@ export default function SettingsPage() {
                       ) : (
                         <div className="flex items-center justify-between">
                           {keyData.is_set ? (
-                            <span className="text-sm font-mono text-gray-600 dark:text-gray-400">
+                            <span className="text-sm font-mono text-muted">
                               {keyData.masked_key}
                             </span>
                           ) : (
-                            <span className="text-sm text-gray-500 dark:text-gray-400">
+                            <span className="text-sm font-mono text-muted">
                               미설정
                             </span>
                           )}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleEditKey(keyData.provider)}
-                              className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+                              className="px-3 py-1.5 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
                               {keyData.is_set ? '수정' : '설정'}
                             </button>
                             {keyData.is_set && (
                               <button
                                 onClick={() => handleDeleteKey(keyData.provider)}
-                                className="px-3 py-1.5 text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50"
+                                className="px-3 py-1.5 bg-accent-red/10 hover:bg-accent-red/20 text-accent-red font-mono text-sm"
                               >
                                 삭제
                               </button>
@@ -517,7 +518,7 @@ export default function SettingsPage() {
                   ))}
 
                   {getExternalKeys().length === 0 && (
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                    <p className="text-sm font-mono text-muted text-center py-4">
                       설정 가능한 외부 API 키가 없습니다
                     </p>
                   )}
@@ -526,9 +527,9 @@ export default function SettingsPage() {
             </section>
 
             {/* Language Settings */}
-            <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Globe className="w-5 h-5 text-green-500" />
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <Globe className="w-5 h-5 text-accent-teal" />
                 언어 설정
               </h3>
               <div className="flex gap-3">
@@ -539,16 +540,16 @@ export default function SettingsPage() {
                       key={option.value}
                       onClick={() => setLanguage(option.value)}
                       className={`
-                        flex-1 p-4 rounded-lg border-2 text-center transition-all touch-target
+                        flex-1 p-4 border-2 text-center transition-all touch-target
                         ${isSelected
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                          ? 'border-accent-teal bg-accent-teal/5'
+                          : 'border-ink/10 dark:border-paper/10 hover:border-accent-teal/50'
                         }
                       `}
                       aria-pressed={isSelected}
                     >
                       <span className="text-2xl mb-2 block">{option.flag}</span>
-                      <span className={`font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-white'}`}>
+                      <span className={`font-medium ${isSelected ? 'text-accent-teal' : 'text-ink dark:text-paper'}`}>
                         {option.label}
                       </span>
                     </button>
@@ -558,23 +559,25 @@ export default function SettingsPage() {
             </section>
 
             {/* Database Info */}
-            <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-5 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Database className="w-5 h-5 text-blue-500" />
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <Database className="w-5 h-5 text-accent-violet" />
                 데이터베이스 정보
               </h3>
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between items-center py-2 border-b dark:border-gray-700">
-                  <span className="text-gray-500 dark:text-gray-400">데이터베이스</span>
-                  <span className="text-gray-900 dark:text-white font-mono">PostgreSQL + pgvector</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b dark:border-gray-700">
-                  <span className="text-gray-500 dark:text-gray-400">호스팅</span>
-                  <span className="text-gray-900 dark:text-white font-mono">Supabase</span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-gray-500 dark:text-gray-400">벡터 차원</span>
-                  <span className="text-gray-900 dark:text-white font-mono">1536</span>
+              <div className="border-l-2 border-accent-violet bg-surface/5 p-4">
+                <div className="space-y-3 text-sm font-mono">
+                  <div className="flex justify-between items-center py-2 border-b border-ink/10 dark:border-paper/10">
+                    <span className="text-muted">데이터베이스</span>
+                    <span className="text-ink dark:text-paper">PostgreSQL + pgvector</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-ink/10 dark:border-paper/10">
+                    <span className="text-muted">호스팅</span>
+                    <span className="text-ink dark:text-paper">Supabase</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2">
+                    <span className="text-muted">벡터 차원</span>
+                    <span className="text-ink dark:text-paper">1536</span>
+                  </div>
                 </div>
               </div>
             </section>

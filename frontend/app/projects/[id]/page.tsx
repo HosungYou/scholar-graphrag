@@ -267,6 +267,16 @@ export default function ProjectDetailPage() {
     []
   );
 
+  // Handle asking about a gap in chat
+  const handleAskAboutGap = useCallback(
+    (question: string) => {
+      setChatInput(question);
+      setViewMode('split');
+      setMobileView('chat');
+    },
+    []
+  );
+
   // Handle showing node connections
   const handleShowConnections = useCallback(
     (nodeId: string) => {
@@ -660,6 +670,7 @@ export default function ProjectDetailPage() {
             <KnowledgeGraph3D
               projectId={projectId}
               onNodeClick={handleNodeClick}
+              onAskQuestion={handleAskAboutGap}
             />
 
             {/* Filter Panel */}

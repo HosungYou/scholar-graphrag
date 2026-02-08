@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 interface DraggablePanelProps {
   /** Unique key for localStorage persistence */
@@ -24,6 +24,9 @@ function getStorageKey(panelId: string, projectId?: string): string {
   return projectId ? `panel-pos-${projectId}-${panelId}` : `panel-pos-${panelId}`;
 }
 
+// v0.14.1: Context for reset functionality
+const DraggablePanelContext = React.createContext<{ resetPosition?: () => void }>({});
+
 export function DraggablePanel({
   panelId,
   projectId,
@@ -43,6 +46,18 @@ export function DraggablePanel({
     globalMaxZ += 1;
     setCurrentZ(globalMaxZ);
   }, []);
+
+  // v0.14.1: Reset position to default
+  const resetPosition = useCallback(() => {
+    setPosition(defaultPosition);
+    latestPosition.current = defaultPosition;
+    try {
+      const key = getStorageKey(panelId, projectId);
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [defaultPosition, panelId, projectId]);
 
   // Load saved position from localStorage
   useEffect(() => {
@@ -89,12 +104,30 @@ export function DraggablePanel({
 
       e.preventDefault();
       setIsDragging(true);
+      bringToFront();
       dragOffset.current = {
         x: e.clientX - position.x,
         y: e.clientY - position.y,
       };
     },
-    [position]
+    [position, bringToFront]
+  );
+
+  // v0.14.1: Touch device support
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-drag-handle]') && !target.closest('[data-drag-header]')) return;
+
+      const touch = e.touches[0];
+      setIsDragging(true);
+      bringToFront();
+      dragOffset.current = {
+        x: touch.clientX - position.x,
+        y: touch.clientY - position.y,
+      };
+    },
+    [position, bringToFront]
   );
 
   useEffect(() => {
@@ -122,45 +155,136 @@ export function DraggablePanel({
       savePosition(latestPosition.current);
     };
 
+    // v0.14.1: Touch event handlers
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault(); // Prevent scrolling while dragging
+      const touch = e.touches[0];
+      const newX = touch.clientX - dragOffset.current.x;
+      const newY = touch.clientY - dragOffset.current.y;
+
+      // Clamp to viewport bounds
+      const maxX = window.innerWidth - (panelRef.current?.offsetWidth || 200);
+      const maxY = window.innerHeight - 50;
+
+      const clampedPos = {
+        x: Math.max(0, Math.min(newX, maxX)),
+        y: Math.max(0, Math.min(newY, maxY)),
+      };
+
+      latestPosition.current = clampedPos;
+      setPosition(clampedPos);
+    };
+
+    const handleTouchEnd = () => {
+      setIsDragging(false);
+      savePosition(latestPosition.current);
+    };
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
     };
   }, [isDragging, savePosition]);
 
   return (
-    <div
-      ref={panelRef}
-      className={`absolute ${className}`}
-      onMouseDown={(e) => {
-        bringToFront();
-        handleMouseDown(e);
-      }}
-      style={{
-        left: position.x,
-        top: position.y,
-        zIndex: currentZ,
-        cursor: isDragging ? 'grabbing' : undefined,
-        userSelect: isDragging ? 'none' : undefined,
-      }}
-    >
-      {children}
-    </div>
+    <DraggablePanelContext.Provider value={{ resetPosition }}>
+      <div
+        ref={panelRef}
+        className={`absolute ${className}`}
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        style={{
+          left: position.x,
+          top: position.y,
+          zIndex: currentZ,
+          cursor: isDragging ? 'grabbing' : undefined,
+          userSelect: isDragging ? 'none' : undefined,
+        }}
+      >
+        {children}
+      </div>
+    </DraggablePanelContext.Provider>
   );
+}
+
+/** Hook to access reset position function from within DraggablePanel children */
+export function useDraggablePanelReset() {
+  return React.useContext(DraggablePanelContext).resetPosition;
 }
 
 /** Drag handle bar to add at the top of panels */
 export function DragHandle({ className = '' }: { className?: string }) {
+  const resetPosition = useDraggablePanelReset();
+  const [flashReset, setFlashReset] = useState(false);
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (resetPosition) {
+      resetPosition();
+      setFlashReset(true);
+      setTimeout(() => setFlashReset(false), 300);
+    }
+  };
+
   return (
     <div
       data-drag-handle
       className={`flex items-center justify-center py-1.5 cursor-grab active:cursor-grabbing hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors ${className}`}
-      title="Drag to move panel"
+      title="Drag to move • Double-click to reset"
+      onDoubleClick={handleDoubleClick}
     >
-      <div className="w-12 h-1.5 rounded-full bg-ink/30 dark:bg-paper/30 hover:bg-ink/50 dark:hover:bg-paper/50 transition-colors" />
+      <div
+        className={`w-12 h-1.5 rounded-full transition-colors ${
+          flashReset
+            ? 'bg-accent-teal'
+            : 'bg-ink/30 dark:bg-paper/30 hover:bg-ink/50 dark:hover:bg-paper/50'
+        }`}
+      />
+    </div>
+  );
+}
+
+/** Collapsible content wrapper with smooth height animation */
+export function CollapsibleContent({
+  isOpen,
+  children,
+}: {
+  isOpen: boolean;
+  children: ReactNode;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | 'auto'>('auto');
+
+  useEffect(() => {
+    if (contentRef.current) {
+      if (isOpen) {
+        const h = contentRef.current.scrollHeight;
+        setHeight(h);
+        // After transition, set to auto for dynamic content
+        const timer = setTimeout(() => setHeight('auto'), 300);
+        return () => clearTimeout(timer);
+      } else {
+        // Set explicit height first, then collapse
+        setHeight(contentRef.current.scrollHeight);
+        requestAnimationFrame(() => setHeight(0));
+      }
+    }
+  }, [isOpen]);
+
+  return (
+    <div
+      ref={contentRef}
+      className="overflow-hidden transition-[height] duration-300 ease-in-out"
+      style={{ height: isOpen ? (height === 'auto' ? 'auto' : height) : 0 }}
+    >
+      {children}
     </div>
   );
 }

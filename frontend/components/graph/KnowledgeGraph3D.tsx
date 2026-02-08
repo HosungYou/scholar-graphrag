@@ -42,11 +42,13 @@ import {
 interface KnowledgeGraph3DProps {
   projectId: string;
   onNodeClick?: (nodeId: string, nodeData: GraphEntity) => void;
+  onAskQuestion?: (question: string) => void;
 }
 
 export function KnowledgeGraph3D({
   projectId,
   onNodeClick,
+  onAskQuestion,
 }: KnowledgeGraph3DProps) {
   const graph3DRef = useRef<Graph3DRef>(null);
   const [selectedNode, setSelectedNode] = useState<GraphEntity | null>(null);
@@ -587,6 +589,7 @@ export function KnowledgeGraph3D({
           onRefresh={handleRefreshGaps}
           isMinimized={isGapPanelMinimized}
           onToggleMinimize={() => setIsGapPanelMinimized(!isGapPanelMinimized)}
+          onAskQuestion={onAskQuestion}
         />
         </DraggablePanel>
       )}

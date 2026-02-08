@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -21,6 +21,7 @@ import {
   BookOpen,
   Download,
   Search,
+  MessageSquare,
 } from 'lucide-react';
 import type { StructuralGap, ConceptCluster, GraphEntity, BridgeHypothesis, BridgeGenerationResult } from '@/types';
 import { api } from '@/lib/api';
@@ -60,6 +61,7 @@ interface GapPanelProps {
   // Minimize toggle - controlled by parent for MiniMap offset coordination
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
+  onAskQuestion?: (question: string) => void;
 }
 
 export function GapPanel({
@@ -74,6 +76,7 @@ export function GapPanel({
   onRefresh,
   isMinimized = false,
   onToggleMinimize,
+  onAskQuestion,
 }: GapPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedGap, setSelectedGap] = useState<StructuralGap | null>(null);
@@ -101,6 +104,14 @@ export function GapPanel({
 
   // v0.14.0: Toast notifications
   const { showToast } = useToast();
+
+  // Improvement B: Keyboard navigation
+  const [focusedGapIndex, setFocusedGapIndex] = useState<number>(-1);
+  const gapListRef = useRef<HTMLDivElement>(null);
+
+  // Improvement C: S2 429 auto-retry with countdown
+  const [retryCountdown, setRetryCountdown] = useState<Record<string, number>>({});
+  const retryTimers = useRef<Record<string, NodeJS.Timeout>>({});
 
   // v0.11.0: Resizable panel
   const [panelWidth, setPanelWidth] = useState(320);
@@ -199,8 +210,36 @@ export function GapPanel({
   const handleClearHighlights = useCallback(() => {
     setSelectedGap(null);
     setExpandedGapId(null);
+    setFocusedGapIndex(-1);
     onClearHighlights();
   }, [onClearHighlights]);
+
+  // Improvement B: Keyboard navigation handler
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!displayedGaps.length) return;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusedGapIndex(prev => Math.min(prev + 1, displayedGaps.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusedGapIndex(prev => Math.max(prev - 1, 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (focusedGapIndex >= 0 && focusedGapIndex < displayedGaps.length) {
+          handleGapClick(displayedGaps[focusedGapIndex]);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        handleClearHighlights();
+        setFocusedGapIndex(-1);
+        break;
+    }
+  }, [displayedGaps, focusedGapIndex, handleGapClick, handleClearHighlights]);
 
   // Handle copy question
   const handleCopyQuestion = useCallback(async (question: string, gapId: string, qIndex: number) => {
@@ -243,6 +282,13 @@ export function GapPanel({
     success: boolean;
     message: string;
   } | null>(null);
+
+  // Improvement C: Clean up retry timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(retryTimers.current).forEach(clearInterval);
+    };
+  }, []);
 
   // Handle accepting a bridge hypothesis
   const handleAcceptBridge = useCallback(async (hypothesis: BridgeHypothesis) => {
@@ -410,7 +456,12 @@ export function GapPanel({
               )}
             </div>
           ) : (
-            <div className="p-3 space-y-2">
+            <div
+              className="p-3 space-y-2"
+              tabIndex={0}
+              onKeyDown={handleKeyDown}
+              ref={gapListRef}
+            >
               {displayedGaps.map((gap, gapIndex) => {
                 const isSelected = selectedGap?.id === gap.id;
                 const isExpandedItem = expandedGapId === gap.id;
@@ -419,6 +470,8 @@ export function GapPanel({
                   <div
                     key={gap.id}
                     className={`border transition-all relative ${
+                      focusedGapIndex === gapIndex ? 'ring-1 ring-accent-teal/50' : ''
+                    } ${
                       isSelected
                         ? 'border-accent-amber/50 bg-accent-amber/5'
                         : 'border-ink/10 dark:border-paper/10 hover:border-ink/20 dark:hover:border-paper/20'
@@ -434,35 +487,59 @@ export function GapPanel({
                       onClick={() => handleGapClick(gap)}
                       className="w-full p-4 pt-3 text-left"
                     >
-                      {/* Row 1: Cluster labels */}
+                      {/* Row 1: Cluster labels (Improvement F: Pill-style chips) */}
                       <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                        <div
-                          className="w-3 h-3 flex-shrink-0"
-                          style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }}
-                        />
-                        <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_a_id)}>
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+                          style={{
+                            backgroundColor: `${getClusterColor(gap.cluster_a_id)}15`,
+                            color: getClusterColor(gap.cluster_a_id),
+                            border: `1px solid ${getClusterColor(gap.cluster_a_id)}30`,
+                          }}
+                          title={getClusterLabel(gap.cluster_a_id)}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }} />
                           {getClusterLabel(gap.cluster_a_id)}
                         </span>
                         <ArrowRight className="w-3 h-3 text-muted flex-shrink-0" />
-                        <div
-                          className="w-3 h-3 flex-shrink-0"
-                          style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }}
-                        />
-                        <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[120px]" title={getClusterLabel(gap.cluster_b_id)}>
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+                          style={{
+                            backgroundColor: `${getClusterColor(gap.cluster_b_id)}15`,
+                            color: getClusterColor(gap.cluster_b_id),
+                            border: `1px solid ${getClusterColor(gap.cluster_b_id)}30`,
+                          }}
+                          title={getClusterLabel(gap.cluster_b_id)}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }} />
                           {getClusterLabel(gap.cluster_b_id)}
                         </span>
                       </div>
-                      {/* Row 2: Strength badge + Find Papers */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`font-mono text-xs px-2 py-0.5 ${
-                          gap.gap_strength > 0.7
-                            ? 'bg-accent-red/10 text-accent-red'
-                            : gap.gap_strength > 0.4
-                            ? 'bg-accent-amber/10 text-accent-amber'
-                            : 'bg-accent-teal/10 text-accent-teal'
+                      {/* Row 2: Strength gradient + percentage + Find Papers (Improvement G) */}
+                      <div className="flex items-center gap-2 mb-2">
+                        {/* Gradient progress bar */}
+                        <div className="flex-1 h-1.5 bg-surface/10 overflow-hidden">
+                          <div
+                            className="h-full transition-all duration-500"
+                            style={{
+                              width: `${Math.round(gap.gap_strength * 100)}%`,
+                              background: gap.gap_strength > 0.7
+                                ? 'linear-gradient(90deg, #F59E0B, #EF4444)'
+                                : gap.gap_strength > 0.4
+                                ? 'linear-gradient(90deg, #14B8A6, #F59E0B)'
+                                : 'linear-gradient(90deg, #14B8A6, #06B6D4)',
+                            }}
+                          />
+                        </div>
+                        {/* Strength percentage */}
+                        <span className={`font-mono text-xs flex-shrink-0 ${
+                          gap.gap_strength > 0.7 ? 'text-accent-red'
+                          : gap.gap_strength > 0.4 ? 'text-accent-amber'
+                          : 'text-accent-teal'
                         }`}>
                           {formatGapStrength(gap.gap_strength)}
                         </span>
+                        {/* Find Papers button (Improvement C: Retry countdown) */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -478,7 +555,38 @@ export function GapPanel({
                                 console.error('Failed to fetch recommendations:', err);
                                 const status = err?.response?.status || err?.status;
                                 if (status === 429) {
-                                  showToast('Semantic Scholar rate limited. Please wait 60s and try again.', 'error');
+                                  showToast('Semantic Scholar rate limited. Auto-retrying in 60s...', 'error');
+                                  // Start countdown
+                                  const gapId = gap.id;
+                                  setRetryCountdown(prev => ({ ...prev, [gapId]: 60 }));
+
+                                  const interval = setInterval(() => {
+                                    setRetryCountdown(prev => {
+                                      const remaining = (prev[gapId] || 0) - 1;
+                                      if (remaining <= 0) {
+                                        clearInterval(interval);
+                                        delete retryTimers.current[gapId];
+                                        // Auto-retry
+                                        setLoadingRecsFor(gapId);
+                                        api.getGapRecommendations(projectId, gapId, 5)
+                                          .then(result => {
+                                            setRecommendations(p => ({
+                                              ...p,
+                                              [gapId]: { papers: result.papers, query_used: result.query_used },
+                                            }));
+                                            showToast('Papers loaded successfully', 'success');
+                                          })
+                                          .catch(e => {
+                                            console.error('Retry failed:', e);
+                                            showToast('Retry failed. Please try again later.', 'error');
+                                          })
+                                          .finally(() => setLoadingRecsFor(null));
+                                        return { ...prev, [gapId]: 0 };
+                                      }
+                                      return { ...prev, [gapId]: remaining };
+                                    });
+                                  }, 1000);
+                                  retryTimers.current[gapId] = interval;
                                 } else {
                                   showToast('Failed to find papers. Check your connection.', 'error');
                                 }
@@ -487,16 +595,20 @@ export function GapPanel({
                               }
                             })();
                           }}
-                          disabled={loadingRecsFor === gap.id}
+                          disabled={loadingRecsFor === gap.id || retryCountdown[gap.id] > 0}
                           className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal rounded transition-colors disabled:opacity-50"
                           title="Find related papers from Semantic Scholar"
                         >
-                          {loadingRecsFor === gap.id ? (
+                          {retryCountdown[gap.id] > 0 ? (
+                            <span className="font-mono text-xs text-accent-amber">
+                              Retry in {retryCountdown[gap.id]}s
+                            </span>
+                          ) : loadingRecsFor === gap.id ? (
                             <Loader2 className="w-3 h-3 animate-spin" />
                           ) : (
                             <Search className="w-3 h-3" />
                           )}
-                          <span>Find Papers</span>
+                          {retryCountdown[gap.id] <= 0 && <span>Find Papers</span>}
                         </button>
                       </div>
 
@@ -628,20 +740,31 @@ export function GapPanel({
                                   className="relative bg-surface/5 p-3 group border-l-2 border-accent-teal/50"
                                 >
                                   <div className="flex items-start justify-between gap-2">
-                                    <p className="text-xs text-ink dark:text-paper leading-relaxed pr-6">
+                                    <p className="text-xs text-ink dark:text-paper leading-relaxed pr-14">
                                       {question}
                                     </p>
-                                    <button
-                                      onClick={() => handleCopyQuestion(question, gap.id, qIdx)}
-                                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-surface/10"
-                                      title="Copy question"
-                                    >
-                                      {copiedQuestionId === `${gap.id}-${qIdx}` ? (
-                                        <Check className="w-3 h-3 text-accent-teal" />
-                                      ) : (
-                                        <Copy className="w-3 h-3 text-muted hover:text-ink dark:hover:text-paper" />
+                                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => handleCopyQuestion(question, gap.id, qIdx)}
+                                        className="p-1 hover:bg-surface/10"
+                                        title="Copy question"
+                                      >
+                                        {copiedQuestionId === `${gap.id}-${qIdx}` ? (
+                                          <Check className="w-3 h-3 text-accent-teal" />
+                                        ) : (
+                                          <Copy className="w-3 h-3 text-muted hover:text-ink dark:hover:text-paper" />
+                                        )}
+                                      </button>
+                                      {onAskQuestion && (
+                                        <button
+                                          onClick={() => onAskQuestion(question)}
+                                          className="p-1 hover:bg-surface/10"
+                                          title="Ask in Chat"
+                                        >
+                                          <MessageSquare className="w-3 h-3 text-accent-teal hover:text-accent-teal/80" />
+                                        </button>
                                       )}
-                                    </button>
+                                    </div>
                                   </div>
                                 </div>
                               ))}

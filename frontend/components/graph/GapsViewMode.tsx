@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { Graph3D, Graph3DRef } from './Graph3D';
 import { GapQueryPanel } from './GapQueryPanel';
 import type {
@@ -14,6 +14,132 @@ import type {
 } from '@/types';
 import { Sparkles, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { forwardRef } from 'react';
+
+// Minimap Component
+function GapsMinimap({
+  nodes,
+  clusters,
+  gaps,
+  selectedGap,
+}: {
+  nodes: GraphEntity[];
+  clusters: ConceptCluster[];
+  gaps: StructuralGap[];
+  selectedGap: StructuralGap | null;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Cluster colors (same as gap panel)
+  const clusterColors = [
+    '#E63946', '#2EC4B6', '#F4A261', '#457B9D', '#A8DADC',
+    '#9D4EDD', '#06D6A0', '#118AB2', '#EF476F', '#FFD166',
+    '#073B4C', '#7209B7',
+  ];
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || nodes.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Clear
+    ctx.clearRect(0, 0, width, height);
+
+    // Background
+    ctx.fillStyle = 'rgba(22, 27, 34, 0.9)';
+    ctx.fillRect(0, 0, width, height);
+
+    // Map nodes to clusters
+    const nodeClusterMap = new Map<string, number>();
+    clusters.forEach(cluster => {
+      cluster.concepts.forEach(conceptId => {
+        nodeClusterMap.set(conceptId, cluster.cluster_id);
+      });
+    });
+
+    // Create 2D positions for minimap (arrange clusters in a circle)
+    const clusterCount = Math.max(clusters.length, 1);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) * 0.35;
+
+    // Draw nodes
+    nodes.forEach((node, i) => {
+      const clusterId = nodeClusterMap.get(node.id) ?? 0;
+      const clusterAngle = (clusterId / clusterCount) * Math.PI * 2 - Math.PI / 2;
+
+      // Spread nodes within cluster area with some randomness based on index
+      const spreadX = (Math.sin(i * 0.7) * radius * 0.3);
+      const spreadY = (Math.cos(i * 1.1) * radius * 0.3);
+
+      const x = centerX + Math.cos(clusterAngle) * radius + spreadX;
+      const y = centerY + Math.sin(clusterAngle) * radius + spreadY;
+
+      const color = clusterColors[clusterId % clusterColors.length];
+      const isInSelectedGap = selectedGap && (
+        selectedGap.cluster_a_concepts.includes(node.id) ||
+        selectedGap.cluster_b_concepts.includes(node.id)
+      );
+
+      ctx.beginPath();
+      ctx.arc(x, y, isInSelectedGap ? 3 : 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = isInSelectedGap ? '#FFD166' : color;
+      ctx.globalAlpha = isInSelectedGap ? 1 : 0.6;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+
+    // Draw gap connections as dashed lines
+    gaps.forEach(gap => {
+      const aAngle = (gap.cluster_a_id / clusterCount) * Math.PI * 2 - Math.PI / 2;
+      const bAngle = (gap.cluster_b_id / clusterCount) * Math.PI * 2 - Math.PI / 2;
+
+      const ax = centerX + Math.cos(aAngle) * radius;
+      const ay = centerY + Math.sin(aAngle) * radius;
+      const bx = centerX + Math.cos(bAngle) * radius;
+      const by = centerY + Math.sin(bAngle) * radius;
+
+      const isSelected = selectedGap?.id === gap.id;
+
+      ctx.beginPath();
+      ctx.setLineDash([2, 2]);
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.strokeStyle = isSelected ? '#FFD166' : 'rgba(255, 209, 102, 0.3)';
+      ctx.lineWidth = isSelected ? 1.5 : 0.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0, 0, width, height);
+
+  }, [nodes, clusters, gaps, selectedGap]);
+
+  return (
+    <div className="absolute bottom-4 right-4 z-20">
+      <div className="bg-[#161b22]/90 backdrop-blur-sm border border-white/10 p-1">
+        <canvas
+          ref={canvasRef}
+          width={160}
+          height={120}
+          className="block"
+        />
+        <div className="flex items-center justify-between px-1 py-0.5">
+          <span className="font-mono text-[9px] text-muted">
+            {nodes.length} nodes • {gaps.length} gaps
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface GapsViewModeProps {
   nodes: GraphEntity[];
@@ -322,8 +448,16 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
         </button>
       )}
 
+      {/* Minimap */}
+      <GapsMinimap
+        nodes={nodes}
+        clusters={clusters}
+        gaps={gaps}
+        selectedGap={selectedGap}
+      />
+
       {/* Legend */}
-      <div className="absolute bottom-4 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg p-3">
+      <div className="absolute bottom-4 right-[188px] bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg p-3">
         <div className="text-xs font-mono text-muted mb-2">Gaps View Legend</div>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">

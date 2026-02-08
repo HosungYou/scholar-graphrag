@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Network, Plus, ArrowRight, FileText, Users, Hexagon, AlertTriangle, Play, RefreshCw, Clock, CheckCircle } from 'lucide-react';
+import { Network, Plus, ArrowRight, FileText, Users, Hexagon, AlertTriangle, Play, RefreshCw, Clock, CheckCircle, Trash2, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Header, Footer } from '@/components/layout';
 import {
@@ -133,6 +133,7 @@ function EmptyState() {
 function InterruptedImportsSection() {
   const queryClient = useQueryClient();
   const [resumingJobId, setResumingJobId] = useState<string | null>(null);
+  const [clearingAll, setClearingAll] = useState(false);
 
   const { data: interruptedJobs, isLoading } = useQuery({
     queryKey: ['interruptedJobs'],
@@ -155,9 +156,32 @@ function InterruptedImportsSection() {
     },
   });
 
+  const clearAllMutation = useMutation({
+    mutationFn: () => api.deleteInterruptedJobs(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['interruptedJobs'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (error) => {
+      console.error('Failed to clear interrupted jobs:', error);
+      alert(`Clear failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    },
+    onSettled: () => {
+      setClearingAll(false);
+    },
+  });
+
   const handleResume = async (jobId: string) => {
     setResumingJobId(jobId);
     resumeMutation.mutate(jobId);
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm('Are you sure you want to clear all interrupted imports? This cannot be undone.')) {
+      return;
+    }
+    setClearingAll(true);
+    clearAllMutation.mutate();
   };
 
   if (isLoading || !interruptedJobs || interruptedJobs.length === 0) {
@@ -165,15 +189,32 @@ function InterruptedImportsSection() {
   }
 
   return (
-    <div className="mb-8 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
-      <div className="flex items-center gap-2 mb-4">
-        <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-        <h3 className="font-display text-lg text-amber-800 dark:text-amber-200">
-          Interrupted Imports ({interruptedJobs.length})
-        </h3>
+    <div className="mb-8 border border-ink/10 dark:border-paper/10 relative">
+      <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-amber/50" />
+
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-ink/10 dark:border-paper/10">
+        <div className="flex items-center gap-2 pl-3">
+          <AlertTriangle className="w-4 h-4 text-accent-amber" />
+          <span className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper">
+            Interrupted Imports
+          </span>
+          <span className="font-mono text-xs text-accent-amber">
+            ({interruptedJobs.length})
+          </span>
+        </div>
+        <button
+          onClick={handleClearAll}
+          disabled={clearingAll}
+          className="flex items-center gap-1 px-2 py-1 font-mono text-xs bg-accent-red/10 hover:bg-accent-red/20 text-accent-red transition-colors disabled:opacity-50"
+        >
+          {clearingAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+          Clear All
+        </button>
       </div>
 
-      <div className="space-y-3">
+      {/* Job List */}
+      <div>
         {interruptedJobs.map((job) => {
           const createdDate = job.created_at ? new Date(job.created_at) : null;
           const dateStr = createdDate
@@ -195,11 +236,11 @@ function InterruptedImportsSection() {
           return (
             <div
               key={job.job_id}
-              className="flex items-center gap-4 p-3 bg-white dark:bg-ink/50 rounded border border-amber-100 dark:border-amber-900"
+              className="flex items-center gap-4 p-3 border-b border-ink/5 dark:border-paper/5 last:border-b-0 hover:bg-surface/5 transition-colors"
             >
               {/* Status Icon */}
-              <div className="flex-shrink-0">
-                <Clock className="w-5 h-5 text-amber-500" />
+              <div className="flex-shrink-0 pl-3">
+                <Clock className="w-5 h-5 text-accent-amber" />
               </div>
 
               {/* Job Info */}
@@ -207,8 +248,8 @@ function InterruptedImportsSection() {
                 <div className="font-medium text-ink dark:text-paper truncate">
                   {job.metadata?.project_name || 'Import Job'}
                 </div>
-                <div className="text-sm text-muted">
-                  {dateStr} {timeStr} • Progress: {progress}%
+                <div className="text-sm text-muted font-mono">
+                  {dateStr} {timeStr} • Progress: <span className="font-mono text-xs text-accent-amber">{progress}%</span>
                   {job.message && ` • ${job.message}`}
                 </div>
               </div>
@@ -217,7 +258,7 @@ function InterruptedImportsSection() {
               <button
                 onClick={() => handleResume(job.job_id)}
                 disabled={isResuming}
-                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white rounded-lg transition-colors"
+                className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 font-mono text-xs bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal transition-colors disabled:opacity-50"
               >
                 {isResuming ? (
                   <>
@@ -236,7 +277,8 @@ function InterruptedImportsSection() {
         })}
       </div>
 
-      <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+      {/* Footer */}
+      <p className="p-3 text-xs text-muted font-mono border-t border-ink/5 dark:border-paper/5">
         These imports were interrupted by a server restart. Click Resume to continue from where they left off.
       </p>
     </div>
