@@ -1,0 +1,53 @@
+{
+    "domain": "AI in Education",
+    "source_review": {
+        "title": "Artificial Intelligence in Education: A Systematic Review",
+        "doi": "example_review_doi",
+        "year": 2023
+    },
+    "ground_truth_gaps": [
+        {
+            "gap_id": "GAP-001",
+            "description": "Limited research on AI chatbot effectiveness for low-resource languages",
+            "cluster_a_concepts": ["ai chatbot", "conversational agent", "dialogue system"],
+            "cluster_b_concepts": ["low-resource languages", "minority languages", "language diversity"],
+            "severity": "high",
+            "annotator": "manual"
+        },
+        {
+            "gap_id": "GAP-002",
+            "description": "Lack of longitudinal studies on AI-assisted learning outcomes",
+            "cluster_a_concepts": ["ai assisted learning", "intelligent tutoring", "adaptive learning"],
+            "cluster_b_concepts": ["longitudinal study", "long-term outcomes", "retention"],
+            "severity": "high",
+            "annotator": "manual"
+        },
+        {
+            "gap_id": "GAP-003",
+            "description": "Insufficient research on ethical implications of AI grading systems",
+            "cluster_a_concepts": ["automated grading", "ai assessment", "scoring system"],
+            "cluster_b_concepts": ["ethics", "fairness", "bias", "equity"],
+            "severity": "medium",
+            "annotator": "manual"
+        },
+        {
+            "gap_id": "GAP-004",
+            "description": "Missing connection between AI personalization and cognitive load theory",
+            "cluster_a_concepts": ["personalized learning", "adaptive system", "recommendation"],
+            "cluster_b_concepts": ["cognitive load", "working memory", "information processing"],
+            "severity": "medium",
+            "annotator": "manual"
+        },
+        {
+            "gap_id": "GAP-005",
+            "description": "Gap between AI writing assistants and academic integrity frameworks",
+            "cluster_a_concepts": ["writing assistant", "text generation", "language model"],
+            "cluster_b_concepts": ["academic integrity", "plagiarism", "authorship"],
+            "severity": "high",
+            "annotator": "manual"
+        }
+    ],
+    "cited_papers_count": 85,
+    "annotation_date": "2026-02-08",
+    "notes": "Ground truth gaps manually identified from review paper's discussion and future research sections"
+}

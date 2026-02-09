@@ -7,12 +7,16 @@ all importers (ScholaRAG, PDF, Zotero) apply the same rules.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine_similarity
 
 from graph.entity_extractor import ExtractedEntity, create_default_disambiguator
 
@@ -31,6 +35,8 @@ class EntityResolutionStats:
     llm_pairs_confirmed: int = 0
     potential_false_merge_count: int = 0
     potential_false_merge_samples: List[Dict[str, Any]] = field(default_factory=list)
+    embedding_candidates_found: int = 0
+    string_candidates_found: int = 0
 
 
 class EntityResolutionService:
@@ -354,6 +360,94 @@ class EntityResolutionService:
             return candidates[:max_pairs]
         return candidates
 
+    def _generate_embedding_candidate_pairs(
+        self,
+        entities_with_embeddings: List[Dict[str, Any]],
+        embedding_auto_merge_threshold: float = 0.95,
+        embedding_review_threshold: float = 0.88,
+        max_pairs: Optional[int] = None,
+    ) -> List[Tuple[Tuple[str, str, str], Tuple[str, str, str], float]]:
+        """
+        Generate candidate merge pairs using embedding cosine similarity.
+
+        This method is designed for re-resolution of entities that already have
+        embeddings (e.g., cross-paper resolution of stored entities). It
+        complements the string-based ``_generate_candidate_pairs`` by capturing
+        semantic similarity that surface-form heuristics may miss.
+
+        Args:
+            entities_with_embeddings: List of dicts, each containing:
+                - ``entity_type`` (str)
+                - ``context_bucket`` (str)
+                - ``canonical_name`` (str)
+                - ``embedding`` (list[float] | np.ndarray) – 1-D vector
+            embedding_auto_merge_threshold: Cosine similarity above which pairs
+                are considered auto-merge candidates (default 0.95).
+            embedding_review_threshold: Cosine similarity above which pairs
+                are surfaced for LLM review (default 0.88).
+            max_pairs: Optional cap on returned pairs.
+
+        Returns:
+            List of ``(left_key, right_key, cosine_similarity)`` tuples sorted
+            by similarity descending.  Only pairs with similarity >=
+            *embedding_review_threshold* are included.
+        """
+        if len(entities_with_embeddings) < 2:
+            return []
+
+        # Group by (entity_type, context_bucket) – same blocking as string-based.
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for rec in entities_with_embeddings:
+            emb = rec.get("embedding")
+            if emb is None:
+                continue
+            bucket_key = (rec["entity_type"], rec["context_bucket"])
+            grouped.setdefault(bucket_key, []).append(rec)
+
+        candidates: List[Tuple[Tuple[str, str, str], Tuple[str, str, str], float]] = []
+
+        for bucket_recs in grouped.values():
+            if len(bucket_recs) < 2:
+                continue
+
+            # Build matrix of embeddings for efficient pairwise computation.
+            keys: List[Tuple[str, str, str]] = []
+            vectors: List[np.ndarray] = []
+            for rec in bucket_recs:
+                keys.append((rec["entity_type"], rec["context_bucket"], rec["canonical_name"]))
+                vec = rec["embedding"]
+                if not isinstance(vec, np.ndarray):
+                    vec = np.asarray(vec, dtype=np.float64)
+                vectors.append(vec)
+
+            # De-duplicate keys within this bucket – keep first occurrence.
+            seen_keys: Dict[Tuple[str, str, str], int] = {}
+            unique_indices: List[int] = []
+            for idx, key in enumerate(keys):
+                if key not in seen_keys:
+                    seen_keys[key] = idx
+                    unique_indices.append(idx)
+
+            if len(unique_indices) < 2:
+                continue
+
+            unique_keys = [keys[i] for i in unique_indices]
+            matrix = np.vstack([vectors[i].reshape(1, -1) for i in unique_indices])
+
+            # Compute pairwise cosine similarity in one pass.
+            sim_matrix = sklearn_cosine_similarity(matrix)
+
+            for i in range(len(unique_keys)):
+                for j in range(i + 1, len(unique_keys)):
+                    score = float(sim_matrix[i, j])
+                    if score >= embedding_review_threshold:
+                        candidates.append((unique_keys[i], unique_keys[j], score))
+
+        candidates.sort(key=lambda item: item[2], reverse=True)
+        if max_pairs is not None:
+            return candidates[:max_pairs]
+        return candidates
+
     def _select_cluster_canonical(
         self,
         cluster_keys: List[Tuple[str, str, str]],
@@ -636,14 +730,32 @@ class EntityResolutionService:
         self,
         entities: List[ExtractedEntity],
         use_llm_confirmation: bool = True,
+        embeddings: Optional[Dict[str, List[float]]] = None,
     ) -> Tuple[List[ExtractedEntity], EntityResolutionStats]:
         """
         Resolve entities with optional LLM-based confirmation for uncertain candidate pairs.
 
         This is the recommended path for batch ingestion pipelines.
+
+        Args:
+            entities: Extracted entities to resolve.
+            use_llm_confirmation: Whether to use LLM for uncertain pairs.
+            embeddings: Optional dict mapping entity canonical_name to embedding
+                vector.  When provided, embedding-based candidate pairs are
+                generated and unioned with string-based candidates before LLM
+                review.  This is useful for re-resolution of entities that
+                already have stored embeddings.
         """
         if not entities:
             return self.resolve_entities(entities)
+
+        # If embeddings provided, delegate to the enhanced method.
+        if embeddings:
+            return await self.resolve_entities_with_embeddings(
+                entities=entities,
+                embeddings=embeddings,
+                use_llm_confirmation=use_llm_confirmation,
+            )
 
         records = self._build_records(entities)
         name_stats = self._build_name_stats(records)
@@ -651,12 +763,14 @@ class EntityResolutionService:
 
         confirmed_pairs: Set[Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = set()
         uncertain_pairs: List[Tuple[Tuple[str, str, str], Tuple[str, str, str], float]] = []
+        string_candidates_found = 0
         if use_llm_confirmation and self.llm and len(name_keys) >= 2:
             review_candidates = self._generate_candidate_pairs(
                 name_keys=name_keys,
                 min_similarity=self.llm_review_threshold,
                 max_pairs=self.max_llm_pair_checks,
             )
+            string_candidates_found = len(review_candidates)
             uncertain_pairs = [
                 pair for pair in review_candidates if pair[2] < self.auto_merge_threshold
             ]
@@ -694,6 +808,322 @@ class EntityResolutionService:
             llm_pairs_confirmed=len(confirmed_pairs),
             potential_false_merge_count=potential_false_merge_count,
             potential_false_merge_samples=potential_false_merge_samples,
+            embedding_candidates_found=0,
+            string_candidates_found=string_candidates_found,
         )
 
         return resolved, stats
+
+    async def resolve_entities_with_embeddings(
+        self,
+        entities: List[ExtractedEntity],
+        embeddings: Optional[Dict[str, List[float]]] = None,
+        use_llm_confirmation: bool = True,
+    ) -> Tuple[List[ExtractedEntity], EntityResolutionStats]:
+        """
+        Enhanced resolution that combines string similarity with embedding similarity.
+
+        This method is designed for re-resolution of entities that already have
+        stored embeddings (e.g., cross-paper resolution after initial import).
+        It generates candidate pairs from both string-based and embedding-based
+        similarity, unions them, and sends uncertain pairs to LLM review.
+
+        For the initial import pipeline where embeddings are not yet available,
+        use ``resolve_entities_async`` without the *embeddings* parameter.
+
+        Args:
+            entities: Extracted entities to resolve.
+            embeddings: Dict mapping entity canonical_name to embedding vector
+                (list[float]).  If None or empty, falls back to string-only
+                resolution via ``resolve_entities_async``.
+            use_llm_confirmation: Whether to use LLM for uncertain pairs.
+
+        Returns:
+            Tuple of (resolved_entities, stats).
+        """
+        if not entities:
+            return self.resolve_entities(entities)
+
+        # Fall back to string-only when no embeddings available.
+        if not embeddings:
+            return await self.resolve_entities_async(
+                entities=entities,
+                use_llm_confirmation=use_llm_confirmation,
+            )
+
+        records = self._build_records(entities)
+        name_stats = self._build_name_stats(records)
+        name_keys = list(name_stats.keys())
+
+        # --- Step 1: String-based candidate pairs ---
+        string_candidates: List[Tuple[Tuple[str, str, str], Tuple[str, str, str], float]] = []
+        if len(name_keys) >= 2:
+            string_candidates = self._generate_candidate_pairs(
+                name_keys=name_keys,
+                min_similarity=self.llm_review_threshold,
+                max_pairs=None,  # No cap yet; we union before capping.
+            )
+
+        # --- Step 2: Embedding-based candidate pairs ---
+        # Build embedding records by attaching vectors to canonicalized records.
+        entities_with_emb: List[Dict[str, Any]] = []
+        for key in name_keys:
+            canonical_name = key[2]
+            emb = embeddings.get(canonical_name)
+            if emb is not None:
+                entities_with_emb.append(
+                    {
+                        "entity_type": key[0],
+                        "context_bucket": key[1],
+                        "canonical_name": canonical_name,
+                        "embedding": emb,
+                    }
+                )
+
+        embedding_candidates: List[Tuple[Tuple[str, str, str], Tuple[str, str, str], float]] = []
+        if len(entities_with_emb) >= 2:
+            embedding_candidates = self._generate_embedding_candidate_pairs(
+                entities_with_embeddings=entities_with_emb,
+                embedding_review_threshold=self.llm_review_threshold,
+                embedding_auto_merge_threshold=self.auto_merge_threshold,
+                max_pairs=None,
+            )
+
+        # --- Step 3: Union candidate sets ---
+        # Use a dict keyed by (left_key, right_key) to keep highest similarity
+        # from either source.
+        pair_best_score: Dict[
+            Tuple[Tuple[str, str, str], Tuple[str, str, str]], float
+        ] = {}
+        for left, right, score in string_candidates:
+            pair_key = (left, right) if left <= right else (right, left)
+            if score > pair_best_score.get(pair_key, 0.0):
+                pair_best_score[pair_key] = score
+        for left, right, score in embedding_candidates:
+            pair_key = (left, right) if left <= right else (right, left)
+            if score > pair_best_score.get(pair_key, 0.0):
+                pair_best_score[pair_key] = score
+
+        combined_candidates = [
+            (left, right, score) for (left, right), score in pair_best_score.items()
+        ]
+        combined_candidates.sort(key=lambda item: item[2], reverse=True)
+
+        # Cap total pairs sent to LLM.
+        if self.max_llm_pair_checks is not None:
+            combined_candidates = combined_candidates[: self.max_llm_pair_checks]
+
+        # --- Step 4: LLM confirmation for uncertain pairs ---
+        confirmed_pairs: Set[Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = set()
+        uncertain_pairs = [
+            pair for pair in combined_candidates if pair[2] < self.auto_merge_threshold
+        ]
+        if use_llm_confirmation and self.llm and uncertain_pairs:
+            confirmed_pairs = await self._confirm_candidate_pairs_with_llm(uncertain_pairs)
+
+        # --- Step 5: Build alias map and resolve ---
+        alias_map = self._build_alias_map(
+            name_keys=name_keys,
+            name_stats=name_stats,
+            confirmed_pairs=confirmed_pairs,
+        )
+        resolved = self._resolve_with_alias_map(records, alias_map)
+
+        # --- Step 6: Build stats ---
+        raw_count = len(entities)
+        resolved_count = len(resolved)
+        merged_count = max(0, raw_count - resolved_count)
+        rate = (merged_count / raw_count) if raw_count else 0.0
+        potential_false_merge_samples = self._build_potential_false_merge_samples(
+            uncertain_pairs=uncertain_pairs,
+            confirmed_pairs=confirmed_pairs,
+        )
+        score_map: Dict[Tuple[Tuple[str, str, str], Tuple[str, str, str]], float] = {}
+        for left, right, score in uncertain_pairs:
+            score_map[(left, right)] = score
+            score_map[(right, left)] = score
+        potential_false_merge_count = sum(
+            1 for left, right in confirmed_pairs if (left, right) in score_map
+        )
+
+        stats = EntityResolutionStats(
+            raw_entities=raw_count,
+            resolved_entities=resolved_count,
+            merged_entities=merged_count,
+            canonicalization_rate=rate,
+            llm_pairs_reviewed=len(uncertain_pairs),
+            llm_pairs_confirmed=len(confirmed_pairs),
+            potential_false_merge_count=potential_false_merge_count,
+            potential_false_merge_samples=potential_false_merge_samples,
+            embedding_candidates_found=len(embedding_candidates),
+            string_candidates_found=len(string_candidates),
+        )
+
+        return resolved, stats
+
+    # ------------------------------------------------------------------
+    # Phase 10B: Cross-Paper Entity Linking (SAME_AS relationships)
+    # ------------------------------------------------------------------
+
+    async def cross_paper_entity_linking(
+        self,
+        project_id: str,
+        db,
+        entity_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Second-pass entity linking: find entities with the same canonical_name
+        across different source papers and create SAME_AS relationships.
+
+        This runs *after* standard entity resolution.  It queries the persisted
+        ``entities`` table, groups rows by ``(entity_type, name)`` where the
+        entities originate from more than one source paper, and inserts
+        ``SAME_AS`` relationship rows for each cross-paper pair.
+
+        Args:
+            project_id: UUID string of the project.
+            db: Database connection (asyncpg-compatible with ``fetch`` /
+                ``fetchval`` / ``execute`` helpers).
+            entity_types: Entity types to consider.  Defaults to
+                ``["Method", "Dataset", "Concept"]``.
+
+        Returns:
+            Dict with keys ``groups_found``, ``links_created``,
+            ``entity_types``, and ``skipped_existing``.
+        """
+        if entity_types is None:
+            entity_types = ["Method", "Dataset", "Concept"]
+
+        # -----------------------------------------------------------------
+        # Step 1: Find entities grouped by (entity_type, name) that appear
+        #         in more than one distinct source paper.
+        # -----------------------------------------------------------------
+        # ``properties->>'source_paper_id'`` stores the originating paper for
+        # each entity row.  We aggregate entity ids and distinct paper ids.
+        type_placeholders = ", ".join(
+            f"${i + 2}" for i in range(len(entity_types))
+        )
+        query = f"""
+            SELECT
+                entity_type::text AS entity_type,
+                name,
+                array_agg(id) AS entity_ids,
+                array_agg(DISTINCT properties->>'source_paper_id')
+                    FILTER (WHERE properties->>'source_paper_id' IS NOT NULL)
+                    AS paper_ids
+            FROM entities
+            WHERE project_id = $1
+              AND entity_type::text IN ({type_placeholders})
+              AND properties->>'source_paper_id' IS NOT NULL
+            GROUP BY entity_type, name
+            HAVING COUNT(DISTINCT properties->>'source_paper_id') > 1
+        """
+
+        params: list = [project_id] + entity_types
+        groups = await db.fetch(query, *params)
+
+        groups_found = len(groups)
+        links_created = 0
+        skipped_existing = 0
+
+        logger.info(
+            "Cross-paper linking for project %s: %d groups across types %s",
+            project_id,
+            groups_found,
+            entity_types,
+        )
+
+        # -----------------------------------------------------------------
+        # Step 2: For each group, create SAME_AS relationships between all
+        #         pairs of entities from *different* papers.
+        # -----------------------------------------------------------------
+        for row in groups:
+            entity_ids = list(row["entity_ids"])
+            canonical_name = row["name"]
+            etype = row["entity_type"]
+
+            if len(entity_ids) < 2:
+                continue
+
+            # Build a mapping of entity_id -> source_paper_id so we only
+            # link entities from different papers.
+            id_paper_query = """
+                SELECT id, properties->>'source_paper_id' AS paper_id
+                FROM entities
+                WHERE id = ANY($1::uuid[])
+            """
+            id_rows = await db.fetch(id_paper_query, entity_ids)
+            id_to_paper: Dict[str, Optional[str]] = {
+                str(r["id"]): r["paper_id"] for r in id_rows
+            }
+
+            for left_id, right_id in itertools.combinations(
+                [str(eid) for eid in entity_ids], 2
+            ):
+                left_paper = id_to_paper.get(left_id)
+                right_paper = id_to_paper.get(right_id)
+
+                # Only link across different papers
+                if left_paper == right_paper:
+                    continue
+
+                # Normalise direction so (left, right) is deterministic
+                if left_id > right_id:
+                    left_id, right_id = right_id, left_id
+
+                # Check if SAME_AS relationship already exists
+                existing = await db.fetchval(
+                    """
+                    SELECT 1 FROM relationships
+                    WHERE project_id = $1
+                      AND source_id = $2::uuid
+                      AND target_id = $3::uuid
+                      AND relationship_type = 'SAME_AS'
+                    LIMIT 1
+                    """,
+                    project_id,
+                    left_id,
+                    right_id,
+                )
+
+                if existing:
+                    skipped_existing += 1
+                    continue
+
+                properties = json.dumps({
+                    "auto_generated": True,
+                    "link_type": "cross_paper",
+                    "canonical_name": canonical_name,
+                    "entity_type": etype,
+                })
+
+                await db.execute(
+                    """
+                    INSERT INTO relationships
+                        (project_id, source_id, target_id,
+                         relationship_type, weight, properties)
+                    VALUES ($1, $2::uuid, $3::uuid, 'SAME_AS', 1.0, $4)
+                    ON CONFLICT (source_id, target_id, relationship_type)
+                    DO NOTHING
+                    """,
+                    project_id,
+                    left_id,
+                    right_id,
+                    properties,
+                )
+                links_created += 1
+
+        logger.info(
+            "Cross-paper linking complete: %d groups, %d links created, "
+            "%d skipped (already exist)",
+            groups_found,
+            links_created,
+            skipped_existing,
+        )
+
+        return {
+            "groups_found": groups_found,
+            "links_created": links_created,
+            "skipped_existing": skipped_existing,
+            "entity_types": entity_types,
+        }

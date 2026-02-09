@@ -18,6 +18,7 @@ from graph.persistence.entity_dao import Node, Edge, EntityDAO
 from graph.persistence.chunk_dao import ChunkDAO
 from graph.embedding.embedding_pipeline import EmbeddingPipeline
 from graph.analytics.graph_analytics import GraphAnalytics
+from graph.query_metrics import timed_query
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,7 @@ class GraphStore:
         """Create embeddings for all entities in a project."""
         return await self._embedding_pipeline.create_embeddings(project_id, embedding_provider)
 
+    @timed_query("vector_search")
     async def find_similar_entities(
         self,
         embedding: list[float],
@@ -191,6 +193,24 @@ class GraphStore:
     # Analytics Operations (delegated to GraphAnalytics)
     # =========================================================================
 
+    async def multi_hop_traversal(
+        self,
+        project_id: str,
+        start_entity_ids: list[str],
+        max_hops: int = 2,
+        relationship_types: list[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """
+        Perform multi-hop graph traversal using PostgreSQL recursive CTE.
+        Returns nodes and edges within max_hops of start entities,
+        along with hop distance for each node.
+        """
+        return await self._analytics.multi_hop_traversal(
+            project_id, start_entity_ids, max_hops, relationship_types, limit
+        )
+
+    @timed_query("subgraph", hop_count=1)
     async def get_subgraph(
         self,
         node_id: str,
@@ -200,6 +220,7 @@ class GraphStore:
         """Get subgraph centered on a node."""
         return await self._analytics.get_subgraph(node_id, depth, max_nodes)
 
+    @timed_query("entity_search")
     async def search_entities(
         self,
         query: str,
@@ -210,6 +231,7 @@ class GraphStore:
         """Search entities by text (fuzzy matching)."""
         return await self._analytics.search_entities(query, project_id, entity_types, limit)
 
+    @timed_query("gap_analysis")
     async def find_research_gaps(
         self,
         project_id: str,
@@ -218,6 +240,7 @@ class GraphStore:
         """Find research gaps - concepts with few connected papers."""
         return await self._analytics.find_research_gaps(project_id, min_papers)
 
+    @timed_query("visualization")
     async def get_visualization_data(
         self,
         project_id: str,
@@ -271,6 +294,7 @@ class GraphStore:
             project_id, embedding_provider, batch_size, use_specter
         )
 
+    @timed_query("chunk_search")
     async def search_chunks(
         self,
         project_id: str,

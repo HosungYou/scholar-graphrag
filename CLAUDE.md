@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-07
-> **Version**: 3.8.0 (v0.14.1 UX Enhancement + Gap-to-Chat)
+> **Last Updated**: 2026-02-08
+> **Version**: 3.9.0 (v0.15.0 Core-Preserving Reliability Track Extension)
 
 ## Project Overview
 
@@ -529,6 +529,12 @@ GET  /api/graph/gaps/{project_id}/recommendations   # Gap-based paper recommenda
 GET  /api/graph/gaps/{project_id}/export            # Export gap report as Markdown (v0.12.1)
 GET  /api/graph/diversity/{project_id}              # Diversity metrics
 GET  /api/graph/compare/{a}/{b}                     # Project comparison
+
+# Reliability Track Extension (v0.15.0)
+GET  /api/evaluation/report                         # Gap detection evaluation report
+GET  /api/system/query-metrics                      # Query performance + GraphDB recommendation
+POST /api/graph/{project_id}/cross-paper-links      # Cross-paper entity linking
+GET  /api/graph/gaps/{project_id}/repro/{gap_id}    # Gap reproduction report
 ```
 
 > **Full API Documentation**: See `DOCS/api/infranodus-api.md` for detailed schemas.
@@ -678,6 +684,44 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.15.0 Release Notes
+
+> **Version**: 0.15.0 | **Date**: 2026-02-08
+> **Full Notes**: See `RELEASE_NOTES_v0.15.0.md`
+
+### Backend (Phases 7-10)
+- **Provenance Chain**: 3-tier evidence cascade (relationship_evidence → source_chunk_ids → text_search) + AI explanation fallback
+- **Search Strategy Routing**: Automatic vector/graph_traversal/hybrid classification in chat responses
+- **Embedding-based ER**: Cosine similarity candidate detection + few-shot Groq extraction
+- **Table→Graph Pipeline**: TableSourceMetadata for table-sourced entities
+- **Gap Evaluation**: Ground truth dataset (AI Education) + Recall/Precision/F1 metrics
+- **Query Instrumentation**: QueryMetricsCollector with hop-level latency + GraphDB 500ms threshold
+- **Cross-Paper Linking**: SAME_AS relationship type for cross-paper entity identity
+
+### Frontend (Phase 11A-11F)
+- **Provenance UI**: 4-tier badges with Korean labels in EdgeContextModal
+- **Strategy Badges**: Icon-based search strategy indicators in ChatInterface
+- **ER Dashboard**: Embedding/string candidate stats in ImportProgress
+- **Table Viz**: Amber ring indicator + EVALUATED_ON metric badges
+- **Evaluation Page**: New `/evaluation` route with gap detection metrics grid
+- **Query Metrics**: Hop-by-hop latency bars + GraphDB recommendation in Settings
+- **SAME_AS Viz**: Dashed purple edges with camera-based LOD + toggle control
+
+### UX Polish (Phase 12A-12D)
+- Progressive disclosure (EdgeContextModal, ImportProgress, ChatInterface)
+- Responsive layout + ARIA accessibility labels (Korean)
+- QA fixture scenarios (provenance-chain, strategy-badge, same-as-edges)
+- Codex documentation updated (SDD, TDD, Execution Procedure/Log)
+
+### Technical
+- 18 sub-phases, 0 TypeScript errors, 38 tests + 9 snapshots passing
+- New endpoints: `/api/evaluation/report`, `/api/system/query-metrics`, `/api/graph/{id}/cross-paper-links`
+- New page: `/evaluation`
+- Migration: `021_cross_paper_links.sql`
+- No breaking changes, no new env vars
 
 ---
 

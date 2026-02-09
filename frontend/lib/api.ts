@@ -20,6 +20,9 @@ import type {
   GapReproReport,
   StructuralGap,
   RelationshipEvidence,
+  ProvenanceSource,
+  GapEvaluationReport,
+  QueryMetrics,
 } from '@/types';
 import { getSession } from './supabase';
 
@@ -725,11 +728,55 @@ class ApiClient {
   /**
    * Fetch evidence chunks that support a specific relationship.
    * Used for contextual edge exploration - clicking an edge shows source text.
+   *
+   * Phase 11A: Infers provenance source from response characteristics.
+   * The backend 3-tier cascade (relationship_evidence -> source_chunk_ids -> text_search)
+   * returns the same schema, but we can detect which tier provided the data:
+   * - Tier 1 (relationship_evidence): has evidence_id !== chunk_id
+   * - Tier 2 (source_chunk_ids): has evidence_id === chunk_id, relevance 0.6 or 0.9
+   * - Tier 3 (text_search): has evidence_id === chunk_id, relevance 0.5
+   * - Tier 4 (ai_explanation): no chunks, ai_explanation present
    */
   async fetchRelationshipEvidence(relationshipId: string): Promise<RelationshipEvidence> {
-    return this.request<RelationshipEvidence>(
+    const data = await this.request<RelationshipEvidence>(
       `/api/graph/relationships/${relationshipId}/evidence`
     );
+
+    // Infer provenance source if not already set by backend
+    if (!data.provenance_source) {
+      data.provenance_source = this.inferProvenanceSource(data);
+    }
+
+    return data;
+  }
+
+  /**
+   * Phase 11A: Infer which tier of the evidence cascade produced the chunks.
+   */
+  private inferProvenanceSource(data: RelationshipEvidence): ProvenanceSource {
+    // No chunks at all
+    if (!data.evidence_chunks || data.evidence_chunks.length === 0) {
+      return data.ai_explanation ? 'ai_explanation' : 'text_search';
+    }
+
+    const firstChunk = data.evidence_chunks[0];
+
+    // Tier 1: relationship_evidence table has separate evidence_id and chunk_id
+    if (firstChunk.evidence_id !== firstChunk.chunk_id) {
+      return 'relationship_evidence';
+    }
+
+    // Tier 2 vs 3: source_chunk_ids provenance uses 0.6/0.9 relevance scores
+    // Text-search fallback defaults to 0.5
+    const hasProvenanceScores = data.evidence_chunks.some(
+      (c) => c.relevance_score === 0.6 || c.relevance_score === 0.9
+    );
+    if (hasProvenanceScores) {
+      return 'source_chunk_ids';
+    }
+
+    // Default: text-search fallback
+    return 'text_search';
   }
 
   // ============================================
@@ -914,6 +961,22 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ provider, key }),
     });
+  }
+
+  // ============================================
+  // Evaluation Report (Phase 11E)
+  // ============================================
+
+  async getEvaluationReport(): Promise<GapEvaluationReport> {
+    return this.request<GapEvaluationReport>('/api/evaluation/report');
+  }
+
+  // ============================================
+  // Query Performance Metrics (Phase 11E)
+  // ============================================
+
+  async getQueryMetrics(): Promise<QueryMetrics> {
+    return this.request<QueryMetrics>('/api/system/query-metrics');
   }
 }
 

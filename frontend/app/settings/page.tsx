@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Settings, Sun, Moon, Monitor, Database, Cpu, Globe, Key, Eye, EyeOff, Check, X, Loader2, AlertCircle } from 'lucide-react';
+import { Settings, Sun, Moon, Monitor, Database, Cpu, Globe, Key, Eye, EyeOff, Check, X, Loader2, AlertCircle, BarChart3 } from 'lucide-react';
 import { Header, Footer } from '@/components/layout';
 import { ThemeToggle, ErrorBoundary } from '@/components/ui';
 import { useTheme } from '@/hooks/useTheme';
 import { api } from '@/lib/api';
+import type { QueryMetrics } from '@/types';
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -33,6 +34,10 @@ export default function SettingsPage() {
   const [llmProvider, setLlmProvider] = useState('groq');
   const [providerSaving, setProviderSaving] = useState(false);
 
+  // Query Metrics state
+  const [queryMetrics, setQueryMetrics] = useState<QueryMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+
   const themeOptions = [
     { value: 'light' as const, label: '라이트 모드', icon: Sun, description: '항상 밝은 테마 사용' },
     { value: 'dark' as const, label: '다크 모드', icon: Moon, description: '항상 어두운 테마 사용' },
@@ -54,7 +59,21 @@ export default function SettingsPage() {
   // Load API keys on mount
   useEffect(() => {
     loadApiKeys();
+    loadQueryMetrics();
   }, []);
+
+  const loadQueryMetrics = async () => {
+    try {
+      setMetricsLoading(true);
+      const metrics = await api.getQueryMetrics();
+      setQueryMetrics(metrics);
+    } catch (err) {
+      console.error('Failed to load query metrics:', err);
+      setQueryMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
 
   const loadApiKeys = async () => {
     try {
@@ -580,6 +599,126 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
+            </section>
+
+            {/* Query Performance Metrics */}
+            <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
+              <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-accent-teal" />
+                쿼리 성능 메트릭
+              </h3>
+
+              {metricsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted" />
+                </div>
+              ) : !queryMetrics || queryMetrics.total_queries === 0 ? (
+                <div className="bg-surface/5 border border-muted/20 p-6 text-center">
+                  <p className="font-mono text-sm text-muted">
+                    채팅을 시작하면 쿼리 성능 데이터가 수집됩니다
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Overall Stats */}
+                  <div className="border-l-2 border-accent-teal bg-surface/5 p-4">
+                    <div className="space-y-2 text-sm font-mono">
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-muted">전체 쿼리</span>
+                        <span className="text-ink dark:text-paper">{queryMetrics.total_queries}회</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-muted">평균 응답시간</span>
+                        <span className="text-ink dark:text-paper">{queryMetrics.avg_latency_ms.toFixed(0)}ms</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-muted">P95 응답시간</span>
+                        <span className="text-ink dark:text-paper">{queryMetrics.p95_latency_ms.toFixed(0)}ms</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-muted">최대 응답시간</span>
+                        <span className="text-ink dark:text-paper">{queryMetrics.max_latency_ms.toFixed(0)}ms</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Hop Count Performance */}
+                  {Object.keys(queryMetrics.by_hop_count).length > 0 && (
+                    <div>
+                      <h4 className="font-mono text-xs uppercase tracking-wider text-muted mb-3">
+                        홉 수별 응답시간
+                      </h4>
+                      <div className="space-y-2">
+                        {Object.entries(queryMetrics.by_hop_count)
+                          .sort(([a], [b]) => parseInt(a) - parseInt(b))
+                          .map(([hop, metrics]) => {
+                            const maxLatency = Math.max(
+                              ...Object.values(queryMetrics.by_hop_count).map(m => m.avg_latency_ms)
+                            );
+                            const percentage = (metrics.avg_latency_ms / maxLatency) * 100;
+
+                            return (
+                              <div key={hop} className="space-y-1">
+                                <div className="flex justify-between items-center text-xs font-mono">
+                                  <span className="text-muted">{hop}-hop ({metrics.count}회)</span>
+                                  <span className="text-ink dark:text-paper">{metrics.avg_latency_ms.toFixed(0)}ms</span>
+                                </div>
+                                <div className="h-2 bg-surface/10 border border-ink/5 dark:border-paper/5">
+                                  <div
+                                    className="h-full bg-accent-teal"
+                                    style={{ width: `${percentage}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* GraphDB Recommendation */}
+                  <div className="border-l-2 border-accent-violet bg-surface/5 p-4">
+                    <div className="space-y-3">
+                      <div className="font-mono text-xs text-muted">
+                        GraphDB 추천
+                      </div>
+                      <div className="font-mono text-sm text-ink dark:text-paper">
+                        {queryMetrics.graphdb_recommendation}
+                      </div>
+                      {queryMetrics.threshold_info && (
+                        <div className="space-y-2 mt-3">
+                          <div className="flex justify-between items-center text-xs font-mono">
+                            <span className="text-muted">3-hop 목표</span>
+                            <span className="text-accent-violet">
+                              {queryMetrics.threshold_info.three_hop_target_ms}ms
+                            </span>
+                          </div>
+                          {queryMetrics.by_hop_count['3'] && (
+                            <div className="h-2 bg-surface/10 border border-ink/5 dark:border-paper/5">
+                              <div
+                                className={`h-full ${
+                                  queryMetrics.by_hop_count['3'].avg_latency_ms <= queryMetrics.threshold_info.three_hop_target_ms
+                                    ? 'bg-accent-teal'
+                                    : 'bg-accent-amber'
+                                }`}
+                                style={{
+                                  width: `${Math.min(
+                                    (queryMetrics.by_hop_count['3'].avg_latency_ms / queryMetrics.threshold_info.three_hop_target_ms) * 100,
+                                    100
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="text-xs font-mono text-muted">
+                            {queryMetrics.threshold_info.description}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         </ErrorBoundary>

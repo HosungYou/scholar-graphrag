@@ -118,6 +118,11 @@ class QueryExecutionAgent:
     async def execute(self, task_plan) -> ExecutionResult:
         """
         Execute all tasks in the plan.
+
+        Routing considers both task_type and search_strategy:
+        - search_strategy="vector": use vector/text search (default)
+        - search_strategy="graph_traversal": use multi-hop graph traversal
+        - search_strategy="hybrid": run both vector search and graph traversal, merge results
         """
         results = []
         nodes_accessed = []
@@ -144,15 +149,28 @@ class QueryExecutionAgent:
                 # Get dependent results for context
                 dep_results = [self._previous_results.get(dep) for dep in task.depends_on]
 
+                # Read search_strategy from SubTask (defaults to "vector")
+                search_strategy = getattr(task, "search_strategy", "vector")
+
                 # Route to appropriate handler
-                if task.task_type == "search":
-                    data = await self._execute_search(task.parameters)
+                if task.task_type == "graph_traversal":
+                    data = await self._execute_graph_traversal(task.parameters, dep_results)
+                elif task.task_type == "search":
+                    if search_strategy == "graph_traversal":
+                        data = await self._execute_graph_traversal(task.parameters, dep_results)
+                    elif search_strategy == "hybrid":
+                        data = await self._execute_hybrid(task.parameters, dep_results)
+                    else:
+                        data = await self._execute_search(task.parameters)
                 elif task.task_type == "document_search":
                     # Chunk-based document search with hierarchical retrieval
                     params = {**task.parameters, "use_chunks": True}
                     data = await self._execute_search(params)
                 elif task.task_type == "retrieve":
-                    data = await self._execute_retrieve(task.parameters)
+                    if search_strategy == "hybrid":
+                        data = await self._execute_hybrid(task.parameters, dep_results)
+                    else:
+                        data = await self._execute_retrieve(task.parameters)
                 elif task.task_type == "analyze":
                     data = await self._execute_analyze(task.parameters, dep_results)
                 elif task.task_type == "compare":
@@ -171,6 +189,10 @@ class QueryExecutionAgent:
                 # Track accessed nodes
                 if isinstance(data, dict) and "nodes" in data:
                     nodes_accessed.extend([n.get("id", "") for n in data.get("nodes", [])])
+                if isinstance(data, dict) and "edges" in data:
+                    edges_traversed.extend(
+                        [e.get("id", "") for e in data.get("edges", []) if isinstance(e, dict)]
+                    )
                 if isinstance(data, list):
                     for item in data:
                         if isinstance(item, dict) and "id" in item:
@@ -189,8 +211,148 @@ class QueryExecutionAgent:
         return ExecutionResult(
             results=results,
             nodes_accessed=list(set(nodes_accessed)),  # Deduplicate
-            edges_traversed=edges_traversed,
+            edges_traversed=list(set(edges_traversed)),
         )
+
+    async def _execute_graph_traversal(self, params: dict, dep_results: list = None) -> dict:
+        """
+        Execute graph traversal query using recursive CTE via GraphStore.
+
+        Extracts start entity IDs from params or from dependent search results.
+        Then calls graph_store.multi_hop_traversal() and returns structured results
+        with nodes, edges, and hop distances.
+        """
+        project_id = params.get("project_id")
+        max_hops = params.get("max_hops", 2)
+        relationship_types = params.get("relationship_types")
+        limit = params.get("limit", 50)
+
+        # Determine start entities: from params, or from dependent results
+        start_entity_ids = params.get("start_entity_ids", [])
+
+        if not start_entity_ids and dep_results:
+            # Extract entity IDs from dependent search results
+            for result in dep_results:
+                if isinstance(result, list):
+                    for item in result:
+                        if isinstance(item, dict) and "id" in item:
+                            start_entity_ids.append(item["id"])
+                elif isinstance(result, dict):
+                    if "nodes" in result:
+                        for node in result["nodes"]:
+                            if isinstance(node, dict) and "id" in node:
+                                start_entity_ids.append(node["id"])
+                    elif "id" in result:
+                        start_entity_ids.append(result["id"])
+
+        if not start_entity_ids:
+            # Last resort: find entities by query text, then traverse
+            query = params.get("query", "")
+            if query and self.graph_store and project_id:
+                try:
+                    search_results = await self.graph_store.search_entities(
+                        query=query,
+                        project_id=project_id,
+                        limit=5,
+                    )
+                    start_entity_ids = [r["id"] for r in search_results if "id" in r]
+                except Exception as e:
+                    logger.warning(f"Entity search for traversal seeds failed: {e}")
+
+        if not start_entity_ids:
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "no_start_entities",
+                "message": "Could not find entities to start traversal from.",
+            }
+
+        if not self.graph_store:
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "graph_store_unavailable",
+            }
+
+        try:
+            traversal_result = await self.graph_store.multi_hop_traversal(
+                project_id=project_id,
+                start_entity_ids=start_entity_ids,
+                max_hops=max_hops,
+                relationship_types=relationship_types,
+                limit=limit,
+            )
+
+            # Apply low-trust filter on traversal nodes
+            if traversal_result.get("nodes"):
+                traversal_result["nodes"] = self._apply_low_trust_filter(
+                    traversal_result["nodes"], params
+                )
+
+            traversal_result["status"] = "traversal_complete"
+            traversal_result["start_entities"] = start_entity_ids
+            traversal_result["max_hops"] = max_hops
+            return traversal_result
+
+        except Exception as e:
+            logger.error(f"Graph traversal failed: {e}")
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "error",
+                "message": f"Graph traversal failed: {str(e)}",
+            }
+
+    async def _execute_hybrid(self, params: dict, dep_results: list = None) -> dict:
+        """
+        Execute hybrid search: run both vector search AND graph traversal,
+        then merge the results.
+
+        Vector search finds semantically similar entities.
+        Graph traversal discovers structurally connected entities.
+        The merged result provides comprehensive coverage.
+        """
+        # Run vector search
+        vector_results = await self._execute_search(params)
+
+        # Run graph traversal using vector results as seeds
+        traversal_result = await self._execute_graph_traversal(
+            params, dep_results=[vector_results] if vector_results else dep_results
+        )
+
+        # Merge: deduplicate nodes by ID, keeping richer data
+        seen_ids = set()
+        merged_nodes = []
+
+        # Vector results first (they have similarity scores)
+        if isinstance(vector_results, list):
+            for item in vector_results:
+                if isinstance(item, dict) and "id" in item:
+                    if item["id"] not in seen_ids:
+                        seen_ids.add(item["id"])
+                        item["source"] = "vector"
+                        merged_nodes.append(item)
+
+        # Then traversal nodes (they have hop distances)
+        for node in traversal_result.get("nodes", []):
+            if isinstance(node, dict) and "id" in node:
+                if node["id"] not in seen_ids:
+                    seen_ids.add(node["id"])
+                    node["source"] = "graph_traversal"
+                    merged_nodes.append(node)
+
+        return {
+            "nodes": merged_nodes,
+            "edges": traversal_result.get("edges", []),
+            "paths": traversal_result.get("paths", {}),
+            "vector_count": len(vector_results) if isinstance(vector_results, list) else 0,
+            "traversal_count": len(traversal_result.get("nodes", [])),
+            "merged_count": len(merged_nodes),
+            "status": "hybrid_complete",
+        }
 
     async def _execute_search(self, params: dict) -> list:
         """Execute a search query against the graph store.

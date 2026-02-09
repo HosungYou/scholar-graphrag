@@ -37,6 +37,7 @@ import {
   Tags,
   Type,
   Calendar,
+  Link2,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -94,6 +95,9 @@ export function KnowledgeGraph3D({
     addPinnedNode,
     removePinnedNode,
     clearPinnedNodes,
+    // Phase 11F: SAME_AS edge filter
+    showSameAsEdges,
+    toggleSameAsEdges,
   } = useGraphStore();
 
   // 3D-specific store
@@ -354,6 +358,8 @@ export function KnowledgeGraph3D({
             onClearPinnedNodes={clearPinnedNodes}
             // v0.8.0: Adaptive label visibility
             labelVisibility={view3D.labelVisibility}
+            // Phase 11F: SAME_AS edge filter
+            showSameAsEdges={showSameAsEdges}
           />
         </>
       )}
@@ -450,6 +456,21 @@ export function KnowledgeGraph3D({
             ) : (
               <Type className="w-4 h-4 opacity-50" />
             )}
+          </button>
+
+          {/* Phase 11F: SAME_AS Edge Toggle */}
+          <button
+            onClick={toggleSameAsEdges}
+            className={`p-2 transition-colors ${
+              showSameAsEdges
+                ? 'bg-accent-violet/10 text-accent-violet'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={`Cross-Paper Links (SAME_AS): ${showSameAsEdges ? 'Visible' : 'Hidden'}`}
+            aria-label="교차 논문 연결 표시/숨김"
+            aria-pressed={showSameAsEdges}
+          >
+            <Link2 className="w-4 h-4" />
           </button>
 
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
@@ -613,6 +634,7 @@ export function KnowledgeGraph3D({
           gaps={gaps}
           clusters={clusters}
           nodes={displayData.nodes}
+          edges={displayData.edges}
           onGapSelect={handleGapSelect}
           onHighlightNodes={handleGapHighlight}
           onClearHighlights={handleClearGapHighlights}
@@ -760,6 +782,7 @@ export function KnowledgeGraph3D({
         relationshipType={selectedEdge?.relationship_type}
         relationshipConfidence={selectedEdgeConfidence}
         isLowTrust={selectedEdgeIsLowTrust}
+        relationshipProperties={selectedEdge?.properties}
       />
     </div>
   );

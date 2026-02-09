@@ -10,6 +10,8 @@
 - `frontend/__tests__/components/import/ImportProgress.snapshot.test.tsx`
 - `frontend/__tests__/components/graph/Graph3D.snapshot.test.tsx`
 - `frontend/__tests__/components/graph/KnowledgeGraph3D.snapshot.test.tsx`
+- `frontend/__tests__/components/graph/EdgeContextModal.snapshot.test.tsx` (future)
+- `frontend/__tests__/components/chat/ChatInterface.snapshot.test.tsx` (future)
 - `frontend/e2e/visual-regression.spec.ts`
 - `frontend/e2e/visual-regression.spec.ts-snapshots/*`
 
@@ -34,6 +36,11 @@
 7. PR 라벨과 템플릿 체크리스트가 triage 판정과 일치하는가
    - `snapshot:accept | snapshot:fix | snapshot:split`
    - `- [x] Snapshot triage reviewed`
+8. Provenance 배지(relationship_evidence, source_chunk_ids, text_search, ai_explanation)가 올바른 한국어 레이블로 표시되는가
+9. 검색 전략 배지(vector, graph_traversal, hybrid)가 아이콘과 함께 올바르게 표시되는가
+10. SAME_AS 엣지가 대시 패턴으로 렌더링되며, 카메라 거리 > 800일 때 숨겨지는가
+11. EdgeContextModal의 점진적 공개(첫 번째 청크만 표시 + 확장 버튼)가 동작하는가
+12. ImportProgress의 ER 세부 정보 섹션이 기본 접힌 상태인가
 
 ## 리뷰 원칙
 

@@ -8,6 +8,27 @@ Detects structural gaps (research opportunities) in the knowledge graph by:
 4. Generating AI-suggested research questions to bridge gaps
 
 Reference: InfraNodus content gap analysis methodology
+
+TODO (Phase 10B): Cross-paper SAME_AS links can be leveraged for citation gap
+detection.  Papers that share SAME_AS entities (i.e. they discuss the same
+Method, Dataset, or Concept under the same canonical name) but do *not* cite
+each other represent potential citation gaps.  A future enhancement could query:
+
+    SELECT DISTINCT pm_a.id AS paper_a, pm_b.id AS paper_b
+    FROM relationships r
+    JOIN entities e_src ON r.source_id = e_src.id
+    JOIN entities e_tgt ON r.target_id = e_tgt.id
+    JOIN paper_metadata pm_a ON e_src.properties->>'source_paper_id' = pm_a.id::text
+    JOIN paper_metadata pm_b ON e_tgt.properties->>'source_paper_id' = pm_b.id::text
+    WHERE r.relationship_type = 'SAME_AS'
+      AND NOT EXISTS (
+          SELECT 1 FROM relationships cite
+          WHERE cite.relationship_type = 'CITES'
+            AND cite.source_id = pm_a.id AND cite.target_id = pm_b.id
+      )
+
+and surface these pairs as "citation gap" recommendations alongside structural
+gaps.
 """
 
 import logging

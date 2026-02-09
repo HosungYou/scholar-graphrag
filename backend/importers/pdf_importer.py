@@ -29,6 +29,7 @@ from graph.graph_store import GraphStore
 from graph.entity_extractor import EntityExtractor
 from graph.entity_resolution import EntityResolutionService
 from graph.relationship_builder import ConceptCentricRelationshipBuilder
+from graph.table_extractor import TableExtractor
 from importers.semantic_chunker import SemanticChunker
 
 logger = logging.getLogger(__name__)
@@ -51,16 +52,100 @@ class PDFImporter:
         self.graph_store = graph_store
         self.progress_callback = progress_callback
 
-        # Initialize entity extractor and semantic chunker
+        # Initialize entity extractor, semantic chunker, and table extractor
         self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
         self.entity_resolution = EntityResolutionService(llm_provider=self.entity_extractor.llm)
         self.semantic_chunker = SemanticChunker()
+        self.table_extractor = TableExtractor()
 
     def _update_progress(self, stage: str, progress: float, message: str):
         """Update import progress."""
         if self.progress_callback:
             self.progress_callback(stage, progress, message)
         logger.info(f"[{stage}] {progress:.0%} - {message}")
+
+    async def _link_entities_to_chunks(
+        self,
+        project_id: str,
+        paper_id: str,
+        entity_ids_and_names: list[tuple[str, str]],
+    ) -> int:
+        """
+        Phase 7A: Link entities to their source chunks by matching entity names
+        against chunk text. Updates entity properties with source_chunk_ids.
+
+        Args:
+            project_id: Project UUID
+            paper_id: Paper UUID (to scope chunk lookup)
+            entity_ids_and_names: List of (entity_id, canonical_name) tuples
+
+        Returns:
+            Number of entity-chunk links created
+        """
+        if not self.graph_store or not entity_ids_and_names or not paper_id:
+            return 0
+
+        try:
+            # Fetch all chunks for this paper
+            chunks = await self.graph_store.get_chunks_by_paper(paper_id)
+            if not chunks:
+                return 0
+
+            links_created = 0
+
+            for entity_id, entity_name in entity_ids_and_names:
+                if not entity_name or len(entity_name) < 3:
+                    continue
+
+                # Find chunks that mention this entity (case-insensitive)
+                matching_chunk_ids = []
+                name_lower = entity_name.lower()
+                for chunk in chunks:
+                    chunk_text = (chunk.get("text") or "").lower()
+                    if name_lower in chunk_text:
+                        matching_chunk_ids.append(chunk["id"])
+
+                if matching_chunk_ids:
+                    # Update entity properties with source_chunk_ids
+                    try:
+                        if hasattr(self.graph_store, '_entity_dao') and self.graph_store._entity_dao.db:
+                            await self.graph_store._entity_dao.db.execute(
+                                """
+                                UPDATE entities
+                                SET properties = jsonb_set(
+                                    COALESCE(properties, '{}'::jsonb),
+                                    '{source_chunk_ids}',
+                                    (
+                                        SELECT jsonb_agg(DISTINCT val)
+                                        FROM (
+                                            SELECT jsonb_array_elements_text(
+                                                COALESCE(properties->'source_chunk_ids', '[]'::jsonb)
+                                            ) AS val
+                                            UNION
+                                            SELECT unnest($2::text[]) AS val
+                                        ) combined
+                                    )
+                                )
+                                WHERE id = $1
+                                """,
+                                entity_id,
+                                matching_chunk_ids,
+                            )
+                            links_created += len(matching_chunk_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to update source_chunk_ids for entity {entity_id}: {e}")
+
+            if links_created > 0:
+                logger.info(
+                    f"Phase 7A: Linked {links_created} chunk-entity pairs "
+                    f"for {len(entity_ids_and_names)} entities in paper {paper_id}"
+                )
+
+            return links_created
+
+        except Exception as e:
+            logger.warning(f"Phase 7A: Chunk-entity linking failed for paper {paper_id}: {e}")
+            return 0
 
     def _accumulate_resolution_stats(self, stats: Dict[str, Any], resolution) -> None:
         """Accumulate shared entity-resolution metrics into importer stats."""
@@ -81,6 +166,81 @@ class PDFImporter:
         if samples:
             stats["potential_false_merge_samples"].extend(samples)
             stats["potential_false_merge_samples"] = stats["potential_false_merge_samples"][:15]
+
+    async def _extract_tables_from_pdf(
+        self,
+        pdf_path: str,
+        project_id: str,
+        paper_id: str,
+        stats: Dict[str, Any],
+    ) -> None:
+        """
+        Phase 9A: Extract SOTA comparison tables from a PDF and store
+        Method/Dataset/Metric entities with EVALUATED_ON relationships.
+
+        Runs silently -- if table detection fails, import continues normally.
+        """
+        try:
+            table_entities, table_relationships = self.table_extractor.extract_all_tables(pdf_path)
+
+            if not table_entities and not table_relationships:
+                return
+
+            self._update_progress("tables", 0.88, f"Storing {len(table_entities)} table entities...")
+
+            # Map entity names to stored entity IDs for relationship creation
+            entity_name_to_id: Dict[str, str] = {}
+
+            for te in table_entities:
+                entity_id = await self.graph_store.add_entity(
+                    project_id=project_id,
+                    entity_type=te.entity_type,
+                    name=te.name,
+                    properties={
+                        **te.properties,
+                        "source_type": "table",
+                    },
+                )
+                entity_name_to_id[te.name] = entity_id
+                stats["table_entities_extracted"] = stats.get("table_entities_extracted", 0) + 1
+
+                # Link entity to paper
+                if paper_id and entity_id:
+                    rel_type = {
+                        "Method": "USES_METHOD",
+                        "Dataset": "USES_DATASET",
+                        "Metric": "EVALUATES_WITH",
+                    }.get(te.entity_type, "RELATED_TO")
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=paper_id,
+                        target_id=entity_id,
+                        relationship_type=rel_type,
+                        properties={"source_type": "table"},
+                    )
+
+            # Create EVALUATED_ON relationships between Method and Dataset entities
+            for tr in table_relationships:
+                source_id = entity_name_to_id.get(tr.source_name)
+                target_id = entity_name_to_id.get(tr.target_name)
+                if source_id and target_id:
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=source_id,
+                        target_id=target_id,
+                        relationship_type=tr.relationship_type,
+                        properties=tr.properties,
+                    )
+                    stats["table_relationships_extracted"] = stats.get("table_relationships_extracted", 0) + 1
+
+            logger.info(
+                f"Table extraction complete: {stats.get('table_entities_extracted', 0)} entities, "
+                f"{stats.get('table_relationships_extracted', 0)} relationships"
+            )
+
+        except Exception as e:
+            logger.warning(f"Table extraction failed (non-fatal): {e}")
+            # Non-fatal: import continues without table data
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract all text from a PDF file."""
@@ -277,6 +437,8 @@ class PDFImporter:
                 "llm_pairs_confirmed": 0,
                 "potential_false_merge_count": 0,
                 "potential_false_merge_samples": [],
+                "table_entities_extracted": 0,
+                "table_relationships_extracted": 0,
             }
 
             if extract_concepts and self.graph_store:
@@ -360,6 +522,15 @@ class PDFImporter:
                     logger.warning(f"Entity extraction failed: {e}")
                     # Continue without entities - still create the project
 
+            # Table extraction: detect SOTA tables and extract Method/Dataset/Metric entities
+            if self.graph_store and paper_id:
+                await self._extract_tables_from_pdf(
+                    pdf_path=tmp_path,
+                    project_id=project_id,
+                    paper_id=paper_id,
+                    stats=stats,
+                )
+
             if stats["raw_entities_extracted"] > 0:
                 stats["canonicalization_rate"] = (
                     stats["merges_applied"] / stats["raw_entities_extracted"]
@@ -438,6 +609,8 @@ class PDFImporter:
             "llm_pairs_confirmed": 0,
             "potential_false_merge_count": 0,
             "potential_false_merge_samples": [],
+            "table_entities_extracted": 0,
+            "table_relationships_extracted": 0,
         }
 
         for i, (filename, content) in enumerate(pdf_files):
@@ -469,6 +642,8 @@ class PDFImporter:
                     "llm_pairs_reviewed",
                     "llm_pairs_confirmed",
                     "potential_false_merge_count",
+                    "table_entities_extracted",
+                    "table_relationships_extracted",
                 ]:
                     total_stats[key] += result.get("stats", {}).get(key, 0)
                 samples = result.get("stats", {}).get("potential_false_merge_samples", []) or []
@@ -537,6 +712,8 @@ class PDFImporter:
                 "llm_pairs_confirmed": 0,
                 "potential_false_merge_count": 0,
                 "potential_false_merge_samples": [],
+                "table_entities_extracted": 0,
+                "table_relationships_extracted": 0,
             }
             stored_entity_keys = set()
 
@@ -598,6 +775,7 @@ class PDFImporter:
                         logger.info(f"Created {chunks_created} semantic chunks for {filename}")
                         
                         # Use section-aware extraction if sections detected
+                        _section_entity_ids_and_names: list[tuple[str, str]] = []
                         if chunked_result.get("sections") and extract_concepts:
                             try:
                                 section_entities = await self.entity_extractor.extract_from_sections(
@@ -654,12 +832,18 @@ class PDFImporter:
                                         elif entity_type_str == "Finding":
                                             stats["findings_extracted"] += 1
                                         stored_entity_keys.add(entity_key)
+                                        # Phase 7A: Track for chunk-entity linking
+                                        if entity_id:
+                                            _section_entity_ids_and_names.append((entity_id, canonical_name))
                             except Exception as e:
                                 logger.warning(f"Section-aware extraction failed: {e}")
                 except Exception as e:
                     logger.warning(f"Semantic chunking failed for {filename}: {e}")
-            
+
             stats["chunks_created"] = chunks_created
+
+            # Phase 7A: Track entity_id -> name for chunk-entity linking
+            _entity_ids_and_names: list[tuple[str, str]] = []
 
             if extract_concepts and self.graph_store:
                 try:
@@ -726,9 +910,32 @@ class PDFImporter:
                         elif entity_type_str == "Finding":
                             stats["findings_extracted"] += 1
                         stored_entity_keys.add(entity_key)
+                        # Phase 7A: Track for chunk-entity linking
+                        if entity_id:
+                            _entity_ids_and_names.append((entity_id, canonical_name))
 
                 except Exception as e:
                     logger.warning(f"Entity extraction failed for {filename}: {e}")
+
+            # Phase 7A: Link entities to source chunks for provenance
+            if paper_id and chunks_created > 0:
+                all_tracked = list(_entity_ids_and_names)
+                # Merge section-extracted entities if they were tracked
+                try:
+                    all_tracked = _section_entity_ids_and_names + all_tracked
+                except NameError:
+                    pass  # _section_entity_ids_and_names not defined (no chunking occurred)
+                if all_tracked:
+                    await self._link_entities_to_chunks(project_id, paper_id, all_tracked)
+
+            # Phase 9A: Table extraction for SOTA comparison tables
+            if self.graph_store and paper_id:
+                await self._extract_tables_from_pdf(
+                    pdf_path=tmp_path,
+                    project_id=project_id,
+                    paper_id=paper_id,
+                    stats=stats,
+                )
 
             if stats["raw_entities_extracted"] > 0:
                 stats["canonicalization_rate"] = (

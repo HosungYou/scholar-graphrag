@@ -78,6 +78,55 @@
   - countdown 표시
   - 자동 재시도 후 사용자 메시지 일관성 유지
 
+### S5. Provenance Chain Display
+
+- Given: 관계에 MENTIONS 기반 source_chunk_ids 근거가 존재
+- When: EdgeContextModal에서 관계 상세 보기
+- Then:
+  - provenance_source 배지가 "source_chunk_ids"로 표시
+  - 한국어 레이블 "청크 출처 참조"로 표시
+
+### S6. Search Strategy Badge
+
+- Given: 채팅 응답에 `meta.search_strategy = "hybrid"`
+- When: ChatInterface에서 응답 렌더링
+- Then:
+  - 하이브리드 전략 배지가 아이콘과 함께 표시
+  - hop_count가 존재하면 홉 수 표시
+
+### S7. SAME_AS Edge Visualization
+
+- Given: 교차 논문 SAME_AS 관계가 존재
+- When: Graph3D에서 그래프 렌더링
+- Then:
+  - SAME_AS 엣지가 대시 패턴으로 표시
+  - 카메라 거리 > 800일 때 투명 처리
+
+### S8. Progressive Disclosure (EdgeContextModal)
+
+- Given: 관계에 3개 이상의 evidence chunk 존재
+- When: EdgeContextModal 열기
+- Then:
+  - 첫 번째 청크만 기본 표시
+  - "상세 보기 (N개 더)" 버튼 클릭 시 전체 표시
+
+### S9. Evaluation Report
+
+- Given: Ground truth 갭 데이터셋 존재
+- When: /evaluation 페이지 접근
+- Then:
+  - Recall/Precision/F1 메트릭 그리드 표시
+  - 매칭/미매칭 갭 비교 테이블 표시
+
+### S10. Query Performance Metrics
+
+- Given: 쿼리 실행 이력 존재
+- When: /settings 페이지의 Query Performance 섹션 확인
+- Then:
+  - hop별 레이턴시 바 차트 표시
+  - GraphDB 전환 권고 게이지 표시
+  - 500ms 임계값 기준선 표시
+
 ## 5. Commands
 
 ### Backend
@@ -110,6 +159,8 @@ npm run type-check
 
 1. Playwright 그래프 테스트는 `NEXT_PUBLIC_E2E_MOCK_3D=1` 기반이므로 실제 WebGL 물리 흔들림 회귀는 별도 브라우저 트랙 필요
 2. 시각 회귀 baseline은 현재 Chromium 단일 브라우저 기준이며 cross-browser 편차(Firefox/WebKit)는 미커버
+3. Phase 11-12 UI 컴포넌트의 스냅샷 테스트는 향후 추가 예정 (EdgeContextModal, ChatInterface)
+4. Evaluation 페이지/Query Metrics는 목(mock) 데이터 기반으로만 테스트됨; 실제 백엔드 통합 테스트 필요
 
 ## 8. Immediate Next Test Work
 

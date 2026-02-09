@@ -24,6 +24,9 @@ interface Message {
   highlighted_nodes?: string[];
   highlighted_edges?: string[];
   timestamp: Date;
+  // Phase 11B: Search strategy metadata
+  searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+  hopCount?: number;
 }
 
 interface ChatInterfaceProps {
@@ -33,6 +36,9 @@ interface ChatInterfaceProps {
     citations?: string[];
     highlighted_nodes?: string[];
     highlighted_edges?: string[];
+    // Phase 11B: Search strategy metadata
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
   }>;
   onCitationClick?: (citation: string) => void;
   initialMessages?: Message[];
@@ -91,6 +97,9 @@ export function ChatInterface({
         highlighted_nodes: response.highlighted_nodes,
         highlighted_edges: response.highlighted_edges,
         timestamp: new Date(),
+        // Phase 11B: Search strategy metadata
+        searchStrategy: response.searchStrategy,
+        hopCount: response.hopCount,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -239,6 +248,51 @@ export function ChatInterface({
                     )}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* Search Strategy Badge (Phase 12A: Icon-only with hover expansion) */}
+            {message.role === 'assistant' && message.searchStrategy && (
+              <div className="mt-3 flex items-center gap-2">
+                <span
+                  className="group inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono bg-accent-teal/10 text-accent-teal border border-accent-teal/30 transition-all duration-200 hover:px-3"
+                  aria-label={`${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색 전략 사용'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? `그래프 탐색 전략 사용, ${message.hopCount || 2} 홉`
+                      : '하이브리드 검색 전략 사용'
+                  }`}
+                  title={`이 답변은 ${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? '그래프 탐색'
+                      : '하이브리드 검색'
+                  }으로 생성되었습니다`}
+                >
+                  {/* Icon only by default, expand text on hover */}
+                  {message.searchStrategy === 'vector' && (
+                    <>
+                      <span className="text-sm">🔍</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Vector Search</span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'graph_traversal' && (
+                    <>
+                      <span className="text-sm">🕸️</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">
+                        Graph Traversal{message.hopCount && ` (${message.hopCount}-hop)`}
+                      </span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'hybrid' && (
+                    <>
+                      <span className="text-sm">🔀</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Hybrid</span>
+                    </>
+                  )}
+                </span>
               </div>
             )}
 

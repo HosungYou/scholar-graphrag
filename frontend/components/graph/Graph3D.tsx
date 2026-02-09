@@ -138,6 +138,8 @@ export interface Graph3DProps {
   bloomEnabled?: boolean;
   bloomIntensity?: number;
   glowSize?: number;
+  // Phase 11F: SAME_AS edge filter
+  showSameAsEdges?: boolean;
   // v0.7.0: Adaptive labeling props
   labelVisibility?: 'none' | 'important' | 'all';
   onLabelVisibilityChange?: (mode: 'none' | 'important' | 'all') => void;
@@ -175,37 +177,14 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   bloomIntensity = 0.5,
   glowSize = 1.3,
   labelVisibility: labelVisibilityProp = 'important',
+  showSameAsEdges = true,
   onLabelVisibilityChange,
   pinnedNodes = [],
   onNodePin,
   onNodeUnpin,
   onClearPinnedNodes,
 }, ref) => {
-  if (E2E_MOCK_3D) {
-    const lowTrustEdgeCount = edges.filter((edge) => {
-      const confidence = typeof edge.properties?.confidence === 'number'
-        ? edge.properties.confidence
-        : (edge.weight || 1);
-      return confidence < 0.6;
-    }).length;
-
-    const ghostEdgeCount = showGhostEdges ? potentialEdges.length : 0;
-
-    return (
-      <div className="w-full h-full bg-[#0d1117] p-4 border border-white/10" data-testid="graph3d-e2e-mock">
-        <div className="font-mono text-xs text-accent-teal uppercase tracking-wide mb-2">
-          Graph3D E2E Mock Mode
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs text-muted">
-          <div data-testid="graph3d-node-count">nodes: {nodes.length}</div>
-          <div data-testid="graph3d-edge-count">edges: {edges.length}</div>
-          <div data-testid="graph3d-low-trust-count">low_trust_edges: {lowTrustEdgeCount}</div>
-          <div data-testid="graph3d-ghost-edge-count">ghost_edges: {ghostEdgeCount}</div>
-        </div>
-      </div>
-    );
-  }
-
+  // All hooks must be called unconditionally at the top (React rules)
   const fgRef = useRef<any>(null);
   const textureCache = useRef(new Map<string, THREE.CanvasTexture>());
   // v0.14.1: nodeObjectCache removed — it cached grey nodes before cluster colors arrived
@@ -451,7 +430,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       return forceNode;
     });
 
-    const forceLinks: ForceGraphLink[] = edges.map(edge => ({
+    // Phase 11F: Filter SAME_AS edges based on showSameAsEdges flag
+    const filteredEdges = showSameAsEdges
+      ? edges
+      : edges.filter(edge => edge.relationship_type !== 'SAME_AS');
+
+    const forceLinks: ForceGraphLink[] = filteredEdges.map(edge => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
@@ -484,7 +468,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     return { nodes: forceNodes, links: forceLinks };
-  }, [nodes, edges, clusterColorMap, centralityMap, showGhostEdges, potentialEdges]);
+  }, [nodes, edges, clusterColorMap, centralityMap, showGhostEdges, potentialEdges, showSameAsEdges]);
   // ⚠️ CRITICAL: highlightedNodeSet and highlightedEdgeSet REMOVED from dependencies!
 
   // UI-010 FIX: Separate style maps for highlighting (changes without triggering graph rebuild)
@@ -654,6 +638,22 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       group.add(bridgeGlow);
     }
 
+    // Phase 11D: Table-sourced entity indicator (subtle border ring)
+    const isTableSourced = (node.properties as any)?.source_type === 'table';
+    if (isTableSourced && !isHighlighted) {
+      const tableRingSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.25;
+      const tableRingGeometry = new THREE.RingGeometry(tableRingSize, tableRingSize + nodeSize * 0.1, 32);
+      const tableRingMaterial = new THREE.MeshBasicMaterial({
+        color: '#F59E0B', // Amber - indicates table extraction
+        transparent: true,
+        opacity: bloomEnabled ? 0.3 + bloomIntensity * 0.15 : 0.4,
+        side: THREE.DoubleSide,
+      });
+      const tableRing = new THREE.Mesh(tableRingGeometry, tableRingMaterial);
+      tableRing.rotation.x = Math.PI / 2;
+      group.add(tableRing);
+    }
+
     // Highlight ring for selected nodes
     if (isHighlighted) {
       const ringSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.3;
@@ -787,8 +787,14 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
   // Link color - Cluster-based coloring (InfraNodus-style)
   // UI-010 FIX: Uses edgeStyleMap for highlight state
+  // Phase 12B: SAME_AS edge LOD (hide when camera distance > 800)
   const linkColor = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
+
+    // Phase 12B: Hide SAME_AS edges when zoomed out (camera distance > 800)
+    if (link.relationshipType === 'SAME_AS' && showSameAsEdges && currentZoomRef.current > 800) {
+      return 'rgba(0, 0, 0, 0)'; // Fully transparent when LOD threshold exceeded
+    }
 
     // Ghost edges: amber/orange with transparency based on similarity
     if (link.isGhost) {
@@ -842,11 +848,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
     // Default: white with low opacity
     return 'rgba(255, 255, 255, 0.15)';
-  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors]);
+  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors, showSameAsEdges]);
 
-  // Custom link rendering for ghost edges (dashed lines)
+  // Custom link rendering for ghost edges and SAME_AS edges (dashed lines)
   const linkThreeObject = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
+
+    // Phase 11F: Render SAME_AS edges as dashed purple lines
+    if (link.relationshipType === 'SAME_AS') {
+      const geometry = new THREE.BufferGeometry();
+      const material = new THREE.LineDashedMaterial({
+        color: 0x9D4EDD, // Purple (accent-violet)
+        dashSize: 2,
+        gapSize: 1.5,
+        opacity: 0.7,
+        transparent: true,
+      });
+
+      const line = new THREE.Line(geometry, material);
+      line.computeLineDistances();
+
+      return line;
+    }
 
     if (!link.isGhost) {
       return null; // Use default rendering for regular edges
@@ -868,11 +891,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return line;
   }, []);
 
-  // Update ghost edge positions
+  // Update ghost edge and SAME_AS edge positions
   const linkPositionUpdate = useCallback((line: THREE.Object3D, coords: { start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number } }, linkData: unknown) => {
     const link = linkData as ForceGraphLink;
 
-    if (link.isGhost && line instanceof THREE.Line) {
+    // Phase 11F: Handle SAME_AS edges (dashed lines)
+    if ((link.isGhost || link.relationshipType === 'SAME_AS') && line instanceof THREE.Line) {
       const positions = new Float32Array([
         coords.start.x, coords.start.y, coords.start.z,
         coords.end.x, coords.end.y, coords.end.z
@@ -1198,6 +1222,32 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     };
   }, []);
 
+  // E2E Mock Mode - Early return AFTER all hooks have been called
+  if (E2E_MOCK_3D) {
+    const lowTrustEdgeCount = edges.filter((edge) => {
+      const confidence = typeof edge.properties?.confidence === 'number'
+        ? edge.properties.confidence
+        : (edge.weight || 1);
+      return confidence < 0.6;
+    }).length;
+
+    const ghostEdgeCount = showGhostEdges ? potentialEdges.length : 0;
+
+    return (
+      <div className="w-full h-full bg-[#0d1117] p-4 border border-white/10" data-testid="graph3d-e2e-mock">
+        <div className="font-mono text-xs text-accent-teal uppercase tracking-wide mb-2">
+          Graph3D E2E Mock Mode
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs text-muted">
+          <div data-testid="graph3d-node-count">nodes: {nodes.length}</div>
+          <div data-testid="graph3d-edge-count">edges: {edges.length}</div>
+          <div data-testid="graph3d-low-trust-count">low_trust_edges: {lowTrustEdgeCount}</div>
+          <div data-testid="graph3d-ghost-edge-count">ghost_edges: {ghostEdgeCount}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="w-full h-full bg-[#0d1117]"
@@ -1211,12 +1261,26 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         nodeThreeObject={nodeThreeObject}
         nodeLabel={(nodeData: unknown) => {
           const node = nodeData as ForceGraphNode;
+          const isTableSourced = (node.properties as any)?.source_type === 'table';
+          const tablePage = (node.properties as any)?.table_page;
+          const tableIndex = (node.properties as any)?.table_index;
+
+          // Phase 11F: Check for SAME_AS connections (cross-paper entities)
+          const sameAsEdges = graphData.links.filter(link =>
+            link.relationshipType === 'SAME_AS' &&
+            (link.source === node.id || (typeof link.source === 'object' && (link.source as ForceGraphNode).id === node.id) ||
+             link.target === node.id || (typeof link.target === 'object' && (link.target as ForceGraphNode).id === node.id))
+          );
+          const crossPaperCount = sameAsEdges.length > 0 ? sameAsEdges.length + 1 : 0;
+
           return `
             <div style="background: rgba(0,0,0,0.8); padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 12px;">
               <div style="font-weight: bold; color: ${node.color || '#888'};">${node.name || 'Unknown'}</div>
               <div style="color: #888; margin-top: 4px;">${node.entityType || 'Entity'}</div>
               ${node.centrality ? `<div style="color: #4ECDC4; margin-top: 2px;">Centrality: ${(node.centrality * 100).toFixed(1)}%</div>` : ''}
               ${node.isBridge ? '<div style="color: #FFD700; margin-top: 2px;">Bridge Node</div>' : ''}
+              ${crossPaperCount > 0 ? `<div style="color: #9D4EDD; margin-top: 2px;">🔗 이 개념은 ${crossPaperCount}편의 논문에서 공통으로 언급됩니다</div>` : ''}
+              ${isTableSourced ? `<div style="color: #F59E0B; margin-top: 2px;">📊 From Table${tablePage ? ` (p.${tablePage})` : ''}${tableIndex !== undefined ? ` #${tableIndex + 1}` : ''}</div>` : ''}
             </div>
           `;
         }}

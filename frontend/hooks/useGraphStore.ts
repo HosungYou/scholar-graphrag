@@ -45,6 +45,9 @@ interface GraphStore {
   // Pinned Nodes State (Graph-to-Prompt)
   pinnedNodes: string[];
 
+  // Phase 11F: SAME_AS Edge Filter
+  showSameAsEdges: boolean;
+
   // Actions
   fetchGraphData: (projectId: string) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
@@ -76,6 +79,9 @@ interface GraphStore {
   addPinnedNode: (nodeId: string) => void;
   removePinnedNode: (nodeId: string) => void;
   clearPinnedNodes: () => void;
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => void;
 }
 
 // Default filters (Hybrid Mode: Paper/Author + Concept-Centric)
@@ -131,6 +137,9 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   // Pinned Nodes State
   pinnedNodes: [],
+
+  // Phase 11F: SAME_AS Edge Filter State
+  showSameAsEdges: true,
 
   // Actions
   fetchGraphData: async (projectId: string) => {
@@ -334,4 +343,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   })),
 
   clearPinnedNodes: () => set({ pinnedNodes: [] }),
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => set((state) => ({ showSameAsEdges: !state.showSameAsEdges })),
 }));

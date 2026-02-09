@@ -17,13 +17,19 @@ import type {
   ImportJob,
   ImportResumeInfo,
   StructuralGap,
+  RelationshipEvidence,
+  EvidenceChunk,
 } from '@/types';
+import { EdgeContextModal } from '@/components/graph/EdgeContextModal';
+import { ChatInterface } from '@/components/chat/ChatInterface';
 
 const QA_GRAPH_DATA: GraphData = {
   nodes: [
     { id: 'n1', entity_type: 'Concept', name: 'Trust', properties: { cluster_id: 0 } },
     { id: 'n2', entity_type: 'Method', name: 'Fine-tuning', properties: { cluster_id: 1 } },
     { id: 'n3', entity_type: 'Finding', name: 'Bias Reduction', properties: { cluster_id: 1 } },
+    { id: 'n4', entity_type: 'Concept', name: 'Explainability', properties: { cluster_id: 0 } },
+    { id: 'n5', entity_type: 'Concept', name: 'XAI', properties: { cluster_id: 0 } },
   ],
   edges: [
     {
@@ -41,6 +47,14 @@ const QA_GRAPH_DATA: GraphData = {
       relationship_type: 'SUPPORTS',
       weight: 0.86,
       properties: { confidence: 0.86 },
+    },
+    {
+      id: 'e3',
+      source: 'n4',
+      target: 'n5',
+      relationship_type: 'SAME_AS',
+      weight: 0.95,
+      properties: { confidence: 0.95 },
     },
   ],
 };
@@ -157,6 +171,50 @@ const IMPORT_RESUME_INFO_FIXTURE: ImportResumeInfo = {
   },
 };
 
+const QA_EVIDENCE_FIXTURE: RelationshipEvidence = {
+  relationship_id: 'e1',
+  source_name: 'Trust',
+  target_name: 'Fine-tuning',
+  relationship_type: 'APPLIES_TO',
+  total_evidence: 3,
+  provenance_source: 'source_chunk_ids',
+  evidence_chunks: [
+    {
+      evidence_id: 'ev1',
+      chunk_id: 'chunk1',
+      text: 'Trust mechanisms are essential when applying fine-tuning strategies to language models, as they ensure model reliability during adaptation.',
+      section_type: 'introduction',
+      paper_id: 'paper1',
+      paper_title: 'Trust-Aware Fine-Tuning for LLMs',
+      paper_authors: 'Smith et al.',
+      paper_year: 2024,
+      relevance_score: 0.92,
+    },
+    {
+      evidence_id: 'ev2',
+      chunk_id: 'chunk2',
+      text: 'We demonstrate that incorporating trust scores into the fine-tuning objective function improves model robustness by 23%.',
+      section_type: 'results',
+      paper_id: 'paper1',
+      paper_title: 'Trust-Aware Fine-Tuning for LLMs',
+      paper_authors: 'Smith et al.',
+      paper_year: 2024,
+      relevance_score: 0.88,
+    },
+    {
+      evidence_id: 'ev3',
+      chunk_id: 'chunk3',
+      text: 'The relationship between trust and fine-tuning effectiveness has been understudied despite its critical role in deployment scenarios.',
+      section_type: 'discussion',
+      paper_id: 'paper2',
+      paper_title: 'Trustworthy AI in Practice',
+      paper_authors: 'Johnson & Lee',
+      paper_year: 2023,
+      relevance_score: 0.85,
+    },
+  ],
+};
+
 export default function QAE2EPage() {
   const searchParams = useSearchParams();
   const scenario = searchParams.get('scenario') || 'knowledge';
@@ -166,6 +224,18 @@ export default function QAE2EPage() {
 
   const [cameraResetCount, setCameraResetCount] = useState(0);
   const [ready, setReady] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    citations?: string[];
+    highlighted_nodes?: string[];
+    highlighted_edges?: string[];
+    timestamp: Date;
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
+  }>>([]);
 
   useEffect(() => {
     const originalGetImportStatus = api.getImportStatus.bind(api);
@@ -174,6 +244,7 @@ export default function QAE2EPage() {
     const originalGetGapRecommendations = api.getGapRecommendations.bind(api);
     const originalGenerateBridgeHypotheses = api.generateBridgeHypotheses.bind(api);
     const originalCreateBridge = api.createBridge.bind(api);
+    const originalFetchRelationshipEvidence = api.fetchRelationshipEvidence.bind(api);
 
     api.getImportStatus = async () => (
       scenario === 'import-interrupted' ? IMPORT_INTERRUPTED_FIXTURE : IMPORT_COMPLETED_FIXTURE
@@ -201,6 +272,7 @@ export default function QAE2EPage() {
       relationship_ids: ['bridge-qa-1'],
       message: 'QA bridge created',
     });
+    api.fetchRelationshipEvidence = async () => QA_EVIDENCE_FIXTURE;
 
     const currentGraphStore = useGraphStore.getState();
     useGraphStore.setState({
@@ -243,6 +315,7 @@ export default function QAE2EPage() {
       api.getGapRecommendations = originalGetGapRecommendations;
       api.generateBridgeHypotheses = originalGenerateBridgeHypotheses;
       api.createBridge = originalCreateBridge;
+      api.fetchRelationshipEvidence = originalFetchRelationshipEvidence;
     };
   }, [scenario]);
 
@@ -344,6 +417,80 @@ export default function QAE2EPage() {
       {scenario === 'import-interrupted' && (
         <section data-testid="qa-scenario-root" className="max-w-3xl">
           <ImportProgress jobId="qa-job" />
+        </section>
+      )}
+
+      {scenario === 'provenance-chain' && (
+        <section data-testid="qa-scenario-root" className="max-w-3xl">
+          <div className="mb-4">
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="px-4 py-2 bg-teal-600 text-white rounded"
+              data-testid="qa-open-modal"
+            >
+              Open Edge Context Modal
+            </button>
+          </div>
+          <EdgeContextModal
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            relationshipId="e1"
+            sourceName="Trust"
+            targetName="Fine-tuning"
+            relationshipType="APPLIES_TO"
+            relationshipConfidence={0.52}
+            isLowTrust={true}
+          />
+        </section>
+      )}
+
+      {scenario === 'strategy-badge' && (
+        <section data-testid="qa-scenario-root" className="max-w-3xl h-[600px]">
+          <ChatInterface
+            projectId="qa-project"
+            onSendMessage={async (message) => {
+              const response = {
+                content: `Response to: ${message}`,
+                citations: ['Paper 1', 'Paper 2'],
+                searchStrategy: chatMessages.length === 0 ? 'hybrid' as const : 'graph_traversal' as const,
+                hopCount: chatMessages.length === 0 ? undefined : 2,
+              };
+              setChatMessages(prev => [
+                ...prev,
+                {
+                  id: `user-${Date.now()}`,
+                  role: 'user',
+                  content: message,
+                  timestamp: new Date(),
+                },
+                {
+                  id: `assistant-${Date.now()}`,
+                  role: 'assistant',
+                  content: response.content,
+                  citations: response.citations,
+                  timestamp: new Date(),
+                  searchStrategy: response.searchStrategy,
+                  hopCount: response.hopCount,
+                },
+              ]);
+              return response;
+            }}
+            initialMessages={chatMessages}
+          />
+        </section>
+      )}
+
+      {scenario === 'same-as-edges' && (
+        <section data-testid="qa-scenario-root" className="h-[560px] border border-white/10">
+          <Graph3D
+            nodes={QA_GRAPH_DATA.nodes}
+            edges={QA_GRAPH_DATA.edges}
+            clusters={QA_CLUSTERS}
+            centralityMetrics={QA_CENTRALITY}
+            highlightedNodes={[]}
+            highlightedEdges={[]}
+            onNodeClick={(node) => useGraphStore.getState().setSelectedNode(scenarioNodeMap[node.id] || null)}
+          />
         </section>
       )}
     </main>

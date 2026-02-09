@@ -339,6 +339,10 @@ app.include_router(quota.router, tags=["Quota"])
 app.include_router(system.router, tags=["System"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 
+# Evaluation endpoints (Phase 11E)
+from routers import evaluation
+app.include_router(evaluation.router, tags=["Evaluation"])
+
 
 @app.get("/")
 async def root():

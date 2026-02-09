@@ -164,7 +164,7 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
             class="flex items-center gap-2 flex-wrap mb-1.5"
           >
             <span
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
               style="background-color: rgba(230, 57, 70, 0.082); color: rgb(230, 57, 70); border: 1px solid #e6394630;"
               title="Trust"
             >
@@ -194,7 +194,7 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
               />
             </svg>
             <span
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
               style="background-color: rgba(46, 196, 182, 0.082); color: rgb(46, 196, 182); border: 1px solid #2ec4b630;"
               title="Fairness"
             >
@@ -551,7 +551,7 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
             class="flex items-center gap-2 flex-wrap mb-1.5"
           >
             <span
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
               style="background-color: rgba(230, 57, 70, 0.082); color: rgb(230, 57, 70); border: 1px solid #e6394630;"
               title="Trust"
             >
@@ -581,7 +581,7 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
               />
             </svg>
             <span
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+              class="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
               style="background-color: rgba(46, 196, 182, 0.082); color: rgb(46, 196, 182); border: 1px solid #2ec4b630;"
               title="Fairness"
             >

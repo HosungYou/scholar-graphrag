@@ -158,6 +158,88 @@ class ZoteroRDFImporter:
 
         logger.info(f"[{self.progress.status}] {self.progress.progress:.0%} - {self.progress.message}")
 
+    async def _link_entities_to_chunks(
+        self,
+        project_id: str,
+        paper_id: str,
+        entity_ids_and_names: list[tuple[str, str]],
+    ) -> int:
+        """
+        Phase 7A: Link entities to their source chunks by matching entity names
+        against chunk text. Updates entity properties with source_chunk_ids.
+
+        Args:
+            project_id: Project UUID
+            paper_id: Paper UUID (to scope chunk lookup)
+            entity_ids_and_names: List of (entity_id, canonical_name) tuples
+
+        Returns:
+            Number of entity-chunk links created
+        """
+        if not self.graph_store or not entity_ids_and_names or not paper_id:
+            return 0
+
+        try:
+            # Fetch all chunks for this paper
+            chunks = await self.graph_store.get_chunks_by_paper(paper_id)
+            if not chunks:
+                return 0
+
+            links_created = 0
+
+            for entity_id, entity_name in entity_ids_and_names:
+                if not entity_name or len(entity_name) < 3:
+                    continue
+
+                # Find chunks that mention this entity (case-insensitive)
+                matching_chunk_ids = []
+                name_lower = entity_name.lower()
+                for chunk in chunks:
+                    chunk_text = (chunk.get("text") or "").lower()
+                    if name_lower in chunk_text:
+                        matching_chunk_ids.append(chunk["id"])
+
+                if matching_chunk_ids:
+                    try:
+                        if self.db:
+                            await self.db.execute(
+                                """
+                                UPDATE entities
+                                SET properties = jsonb_set(
+                                    COALESCE(properties, '{}'::jsonb),
+                                    '{source_chunk_ids}',
+                                    (
+                                        SELECT jsonb_agg(DISTINCT val)
+                                        FROM (
+                                            SELECT jsonb_array_elements_text(
+                                                COALESCE(properties->'source_chunk_ids', '[]'::jsonb)
+                                            ) AS val
+                                            UNION
+                                            SELECT unnest($2::text[]) AS val
+                                        ) combined
+                                    )
+                                )
+                                WHERE id = $1
+                                """,
+                                entity_id,
+                                matching_chunk_ids,
+                            )
+                            links_created += len(matching_chunk_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to update source_chunk_ids for entity {entity_id}: {e}")
+
+            if links_created > 0:
+                logger.info(
+                    f"Phase 7A: Linked {links_created} chunk-entity pairs "
+                    f"for {len(entity_ids_and_names)} entities in paper {paper_id}"
+                )
+
+            return links_created
+
+        except Exception as e:
+            logger.warning(f"Phase 7A: Chunk-entity linking failed for paper {paper_id}: {e}")
+            return 0
+
     def _accumulate_resolution_stats(self, stats: Dict[str, Any], resolution) -> None:
         """Accumulate shared entity-resolution metrics into import results."""
         stats["raw_entities_extracted"] = stats.get("raw_entities_extracted", 0) + int(resolution.raw_entities)
@@ -885,6 +967,9 @@ class ZoteroRDFImporter:
                         logger.warning(f"Semantic chunking failed for {item.title}: {e}")
 
                 # Extract concepts if enabled - use full PDF text with chunking
+                # Phase 7A: Track entity_id -> name for chunk-entity linking
+                _entity_ids_and_names: list[tuple[str, str]] = []
+
                 if extract_concepts and self.llm and (item.abstract or pdf_text):
                     try:
                         # Use chunking strategy to process full PDF content
@@ -934,6 +1019,10 @@ class ZoteroRDFImporter:
                                 if entity_id not in paper_entity_tracker.entity_ids:
                                     paper_entity_tracker.entity_ids.append(entity_id)
 
+                                # Phase 7A: Track for chunk-entity linking
+                                if entity_id:
+                                    _entity_ids_and_names.append((entity_id, canonical_name))
+
                                 self.progress.concepts_extracted += 1
                                 results["concepts_extracted"] += 1
 
@@ -943,6 +1032,10 @@ class ZoteroRDFImporter:
 
                     except Exception as e:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
+
+                # Phase 7A: Link entities to source chunks for provenance
+                if paper_id and results.get("chunks_created", 0) > 0 and _entity_ids_and_names:
+                    await self._link_entities_to_chunks(project_id, paper_id, _entity_ids_and_names)
 
                 # PERF-011: Log paper processing completion with timing
                 paper_elapsed = time.time() - paper_start_time

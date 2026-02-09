@@ -109,6 +109,228 @@ class GraphAnalytics:
         }
 
     # =========================================================================
+    # Multi-Hop Graph Traversal
+    # =========================================================================
+
+    async def multi_hop_traversal(
+        self,
+        project_id: str,
+        start_entity_ids: list[str],
+        max_hops: int = 2,
+        relationship_types: list[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """
+        Perform multi-hop graph traversal using PostgreSQL recursive CTE.
+
+        Starts from the given entity IDs and follows relationships up to
+        max_hops away, optionally filtering by relationship type.
+
+        Args:
+            project_id: Project scope for the traversal
+            start_entity_ids: Entity IDs to start traversal from
+            max_hops: Maximum number of hops from start entities (1-5)
+            relationship_types: Optional filter for relationship types
+            limit: Maximum number of nodes to return
+
+        Returns:
+            Dict with 'nodes', 'edges', and 'paths' (hop distances)
+        """
+        if not start_entity_ids:
+            return {"nodes": [], "edges": [], "paths": {}}
+
+        max_hops = min(max(max_hops, 1), 5)  # Clamp to 1-5
+
+        if self.db:
+            return await self._db_multi_hop_traversal(
+                project_id, start_entity_ids, max_hops, relationship_types, limit
+            )
+
+        # In-memory fallback: BFS traversal
+        if not self.entity_dao:
+            return {"nodes": [], "edges": [], "paths": {}}
+
+        visited = {}  # node_id -> hop_distance
+        for sid in start_entity_ids:
+            visited[sid] = 0
+        frontier = list(start_entity_ids)
+        result_edges = []
+
+        for hop in range(1, max_hops + 1):
+            next_frontier = []
+            for current_id in frontier:
+                for edge in self.entity_dao.edges.values():
+                    if edge.project_id != project_id:
+                        continue
+                    if relationship_types and edge.relationship_type not in relationship_types:
+                        continue
+
+                    neighbor_id = None
+                    if edge.source_id == current_id:
+                        neighbor_id = edge.target_id
+                    elif edge.target_id == current_id:
+                        neighbor_id = edge.source_id
+
+                    if neighbor_id is not None:
+                        result_edges.append(edge)
+                        if neighbor_id not in visited:
+                            visited[neighbor_id] = hop
+                            next_frontier.append(neighbor_id)
+
+                if len(visited) >= limit:
+                    break
+            frontier = next_frontier
+            if len(visited) >= limit:
+                break
+
+        result_nodes = []
+        for node in self.entity_dao.nodes.values():
+            if node.id in visited:
+                result_nodes.append({
+                    "id": node.id,
+                    "entity_type": node.entity_type,
+                    "name": node.name,
+                    "properties": node.properties,
+                    "hop_distance": visited[node.id],
+                })
+
+        seen_edges = set()
+        unique_edges = []
+        for e in result_edges:
+            if e.id not in seen_edges:
+                seen_edges.add(e.id)
+                unique_edges.append({
+                    "id": e.id,
+                    "source": e.source_id,
+                    "target": e.target_id,
+                    "relationship_type": e.relationship_type,
+                    "weight": getattr(e, "weight", 1.0),
+                })
+
+        return {
+            "nodes": result_nodes[:limit],
+            "edges": unique_edges,
+            "paths": visited,
+        }
+
+    async def _db_multi_hop_traversal(
+        self,
+        project_id: str,
+        start_entity_ids: list[str],
+        max_hops: int,
+        relationship_types: list[str],
+        limit: int,
+    ) -> dict:
+        """
+        Multi-hop traversal using PostgreSQL recursive CTE.
+
+        The CTE walks from start_entity_ids outward through the relationships
+        table, tracking hop distance. Relationship type filtering is applied
+        inside the recursive step.
+        """
+        # Build the relationship type filter clause
+        rel_type_filter = ""
+        params: list = [start_entity_ids, project_id, max_hops, limit]
+        if relationship_types:
+            rel_type_filter = "AND r.relationship_type = ANY($5::text[])"
+            params.append(relationship_types)
+
+        query = f"""
+            WITH RECURSIVE traversal AS (
+                -- Base case: start entities at hop 0
+                SELECT
+                    e.id,
+                    e.entity_type,
+                    e.name,
+                    e.properties,
+                    0 AS hop_distance
+                FROM entities e
+                WHERE e.id = ANY($1::uuid[])
+                  AND e.project_id = $2
+
+                UNION
+
+                -- Recursive step: follow relationships one hop at a time
+                SELECT DISTINCT
+                    e2.id,
+                    e2.entity_type,
+                    e2.name,
+                    e2.properties,
+                    t.hop_distance + 1
+                FROM traversal t
+                JOIN relationships r
+                    ON (r.source_id = t.id OR r.target_id = t.id)
+                    AND r.project_id = $2
+                    {rel_type_filter}
+                JOIN entities e2
+                    ON e2.id = CASE
+                        WHEN r.source_id = t.id THEN r.target_id
+                        ELSE r.source_id
+                    END
+                    AND e2.project_id = $2
+                WHERE t.hop_distance < $3
+            )
+            SELECT DISTINCT ON (id)
+                id, entity_type, name, properties, hop_distance
+            FROM traversal
+            ORDER BY id, hop_distance ASC
+            LIMIT $4
+        """
+
+        node_rows = await self.db.fetch(query, *params)
+
+        if not node_rows:
+            return {"nodes": [], "edges": [], "paths": {}}
+
+        node_ids = [str(row["id"]) for row in node_rows]
+        paths = {str(row["id"]): int(row["hop_distance"]) for row in node_rows}
+
+        # Fetch edges connecting the traversed nodes
+        edge_filter = ""
+        edge_params: list = [node_ids, project_id]
+        if relationship_types:
+            edge_filter = "AND relationship_type = ANY($3::text[])"
+            edge_params.append(relationship_types)
+
+        edge_query = f"""
+            SELECT id, source_id, target_id, relationship_type, weight, properties
+            FROM relationships
+            WHERE source_id = ANY($1::uuid[])
+              AND target_id = ANY($1::uuid[])
+              AND project_id = $2
+              {edge_filter}
+        """
+        edge_rows = await self.db.fetch(edge_query, *edge_params)
+
+        nodes = [
+            {
+                "id": str(row["id"]),
+                "entity_type": row["entity_type"],
+                "name": row["name"],
+                "properties": row["properties"] or {},
+                "hop_distance": int(row["hop_distance"]),
+            }
+            for row in node_rows
+        ]
+
+        edges = [
+            {
+                "id": str(row["id"]),
+                "source": str(row["source_id"]),
+                "target": str(row["target_id"]),
+                "relationship_type": row["relationship_type"],
+                "weight": float(row["weight"]) if row["weight"] else 1.0,
+            }
+            for row in edge_rows
+        ]
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "paths": paths,
+        }
+
+    # =========================================================================
     # Subgraph Extraction
     # =========================================================================
 

@@ -33,6 +33,7 @@ class SectionType(str, Enum):
     REFERENCES = "references"
     APPENDIX = "appendix"
     ACKNOWLEDGMENTS = "acknowledgments"
+    TABLE = "table"
     UNKNOWN = "unknown"
 
 
@@ -98,6 +99,10 @@ SECTION_PATTERNS = {
     SectionType.ACKNOWLEDGMENTS: [
         r'^acknowledgment',
         r'^acknowledgement',
+    ],
+    SectionType.TABLE: [
+        r'^table\s+\d+[.:]',
+        r'^table\s+\d+\s*$',
     ],
 }
 
@@ -451,6 +456,22 @@ class SemanticChunker:
             section = chunk.section_type.value
             summary[section] = summary.get(section, 0) + 1
         return summary
+
+    @staticmethod
+    def is_table_chunk(chunk: dict) -> bool:
+        """
+        Check if a chunk dict originates from a table region.
+
+        Use this to skip table-region chunks during entity extraction,
+        since table data is handled separately by TableExtractor (Phase 9A).
+
+        Args:
+            chunk: A chunk dict as returned by chunk_academic_text()
+
+        Returns:
+            True if the chunk is from a detected table region
+        """
+        return chunk.get("section_type") == SectionType.TABLE.value
 
     def chunk_academic_text(
         self,

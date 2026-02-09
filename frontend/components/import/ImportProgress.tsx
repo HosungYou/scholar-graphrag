@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { ImportJob, ImportResumeInfo } from '@/types';
+import type { ImportJob, ImportResumeInfo, ImportReliabilitySummary } from '@/types';
 
 /* ============================================================
    ImportProgress - VS Design Diverge Style
@@ -52,6 +52,78 @@ function getCompletedProjectId(job: ImportJob | null): string | null {
 function formatPercent(value: number | undefined): string {
   if (typeof value !== 'number' || Number.isNaN(value)) return '0.0%';
   return `${(value * 100).toFixed(1)}%`;
+}
+
+/* ============================================================
+   ERDetailSection - Entity Resolution Details (Phase 12A)
+   Collapsible section showing embedding-based ER statistics
+   DEFAULT: Collapsed (show only 3 key metrics in parent)
+   ============================================================ */
+
+interface ERDetailSectionProps {
+  summary: ImportReliabilitySummary;
+}
+
+function ERDetailSection({ summary }: ERDetailSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const hasERData =
+    typeof summary.embedding_candidates_found === 'number' ||
+    typeof summary.string_candidates_found === 'number' ||
+    typeof summary.llm_confirmed_merges === 'number';
+
+  if (!hasERData) return null;
+
+  return (
+    <div className="mt-4 border-l-2 border-accent-teal/20">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-label={isExpanded ? 'Collapse ER details' : 'Expand ER details'}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-surface/10 transition-all duration-200"
+      >
+        {isExpanded ? (
+          <ChevronDown className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        )}
+        <span className="font-mono text-xs uppercase tracking-wider text-accent-teal">
+          ER 상세
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 space-y-2 transition-all duration-200">
+          {typeof summary.embedding_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">Embedding Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.embedding_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.string_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">String Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.string_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.llm_confirmed_merges === 'number' && (
+            <div className="flex items-center justify-between py-2">
+              <span className="font-mono text-xs text-muted">LLM Confirmed Merges</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.llm_confirmed_merges}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ImportProgress({ jobId, onComplete, onError }: ImportProgressProps) {
@@ -467,44 +539,53 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         </div>
 
         {isComplete && reliabilitySummary && (
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">Canonicalization</p>
-              <p className="font-mono text-sm text-accent-teal mt-1">
-                {formatPercent(reliabilitySummary.canonicalization_rate)} ({reliabilitySummary.merges_applied} merges)
-              </p>
+          <>
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Canonicalization</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.canonicalization_rate)} ({reliabilitySummary.merges_applied} merges)
+                </p>
+              </div>
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Provenance Coverage</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.provenance_coverage)}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Entities</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.raw_entities_extracted} {'->'} {reliabilitySummary.entities_after_resolution}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Low-Trust Edges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.low_trust_edges} ({formatPercent(reliabilitySummary.low_trust_edge_ratio)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">LLM Merge Reviews</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.llm_pairs_confirmed}/{reliabilitySummary.llm_pairs_reviewed} ({formatPercent(reliabilitySummary.llm_confirmation_accept_rate)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Potential False Merges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.potential_false_merge_count} ({formatPercent(reliabilitySummary.potential_false_merge_ratio)})
+                </p>
+              </div>
             </div>
-            <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">Provenance Coverage</p>
-              <p className="font-mono text-sm text-accent-teal mt-1">
-                {formatPercent(reliabilitySummary.provenance_coverage)}
-              </p>
-            </div>
-            <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">Entities</p>
-              <p className="font-mono text-sm text-ink dark:text-paper mt-1">
-                {reliabilitySummary.raw_entities_extracted} {'->'} {reliabilitySummary.entities_after_resolution}
-              </p>
-            </div>
-            <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">Low-Trust Edges</p>
-              <p className="font-mono text-sm text-ink dark:text-paper mt-1">
-                {reliabilitySummary.low_trust_edges} ({formatPercent(reliabilitySummary.low_trust_edge_ratio)})
-              </p>
-            </div>
-            <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">LLM Merge Reviews</p>
-              <p className="font-mono text-sm text-ink dark:text-paper mt-1">
-                {reliabilitySummary.llm_pairs_confirmed}/{reliabilitySummary.llm_pairs_reviewed} ({formatPercent(reliabilitySummary.llm_confirmation_accept_rate)})
-              </p>
-            </div>
-            <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted">Potential False Merges</p>
-              <p className="font-mono text-sm text-ink dark:text-paper mt-1">
-                {reliabilitySummary.potential_false_merge_count} ({formatPercent(reliabilitySummary.potential_false_merge_ratio)})
-              </p>
-            </div>
-          </div>
+
+            {/* Entity Resolution Details - Collapsible Section */}
+            {(typeof reliabilitySummary.embedding_candidates_found === 'number' ||
+              typeof reliabilitySummary.string_candidates_found === 'number' ||
+              typeof reliabilitySummary.llm_confirmed_merges === 'number') && (
+              <ERDetailSection summary={reliabilitySummary} />
+            )}
+          </>
         )}
 
         {/* Complete action */}

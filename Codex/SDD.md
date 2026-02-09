@@ -103,12 +103,26 @@
    - low-trust edge 비율이 높을수록 시각적 경고 강화
 3. provenance 우선 탐색
    - 관계를 클릭하면 근거 텍스트/출처를 우선 제시
+4. Provenance Chain 시각화
+   - EdgeContextModal에서 4-tier provenance 배지 표시
+   - relationship_evidence → source_chunk_ids → text_search → ai_explanation
+5. 검색 전략 메타데이터
+   - 채팅 응답에 vector/graph_traversal/hybrid 전략 배지
+   - hop_count 기반 탐색 깊이 표시
+6. 교차 논문 엔티티 연결
+   - SAME_AS 관계를 대시 패턴 엣지로 시각화
+   - 카메라 거리 기반 LOD (> 800 거리에서 숨김)
+7. 점진적 공개
+   - EdgeContextModal: 첫 번째 청크만 기본 표시, 확장 버튼으로 나머지
+   - ImportProgress: ER 세부 정보 기본 접힌 상태
 
 ## 7. Backend/DB Evolution Strategy
 
 1. 단기
    - Postgres 기반 유지
    - 병목 쿼리 계측 및 인덱스/쿼리 튜닝
+   - QueryMetricsCollector로 hop별 레이턴시 추적
+   - 3-hop 쿼리 500ms 임계값 기준 GraphDB 전환 권고 자동 생성
 2. 중기
    - 그래프 탐색 전용 read-model(또는 projection) 분리 검토
 3. 장기
@@ -124,6 +138,12 @@
    - 도메인 제약(컴퓨터과학/AI)으로 의미 경계 고정
 4. 하이브리드 검증
    - 임베딩 후보군 → LLM 최종 판정(비용 절감)
+5. 임베딩 기반 후보 탐지
+   - 코사인 유사도로 ER 후보 쌍 사전 선별
+   - embedding_candidates_found / string_candidates_found 지표 추적
+6. Few-shot 추출 향상
+   - Groq 기반 도메인 특화 few-shot 프롬프트
+   - llm_confirmed_merges 지표로 LLM 확인 병합 추적
 
 ## 9. Observability
 
@@ -139,3 +159,14 @@
 1. 프론트 테스트 인프라 불안정(`jest-dom` 타입)
 2. Postgres 다중 hop 성능 저하 가능성
 3. 대규모 ER 처리 시 LLM 호출비/지연 증가
+
+## 11. Evaluation Framework
+
+1. 갭 검출 평가
+   - Ground truth: AI Education 도메인 데이터셋
+   - 메트릭: Recall, Precision, F1
+   - /api/evaluation/report 엔드포인트
+2. 쿼리 성능 모니터링
+   - hop별/타입별 레이턴시 수집
+   - P95 레이턴시 추적
+   - GraphDB 전환 임계값(500ms) 자동 권고

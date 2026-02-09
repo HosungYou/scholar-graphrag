@@ -14,9 +14,10 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Layers,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { RelationshipEvidence, EvidenceChunk } from '@/types';
+import type { RelationshipEvidence, EvidenceChunk, ProvenanceSource } from '@/types';
 
 /* ============================================================
    EdgeContextModal - Contextual Edge Exploration
@@ -37,6 +38,7 @@ interface EdgeContextModalProps {
   relationshipType?: string;
   relationshipConfidence?: number;
   isLowTrust?: boolean;
+  relationshipProperties?: Record<string, unknown>; // Phase 11D: Additional edge properties
 }
 
 // Highlight text that matches entity names
@@ -115,6 +117,162 @@ function getSectionColor(sectionType: string): string {
     background: 'bg-accent-indigo/20 text-accent-indigo',
   };
   return colors[sectionType] || 'bg-surface/20 text-muted';
+}
+
+// Phase 11A: Provenance source label mapping
+function getProvenanceLabel(source?: ProvenanceSource | null): { label: string; color: string } {
+  switch (source) {
+    case 'relationship_evidence':
+      return { label: 'Direct Evidence', color: 'bg-accent-emerald/15 text-accent-emerald' };
+    case 'source_chunk_ids':
+      return { label: 'Chunk Provenance', color: 'bg-accent-teal/15 text-accent-teal' };
+    case 'text_search':
+      return { label: 'Text Search', color: 'bg-accent-amber/15 text-accent-amber' };
+    case 'ai_explanation':
+      return { label: 'AI Analysis', color: 'bg-accent-violet/15 text-accent-violet' };
+    default:
+      return { label: 'Evidence', color: 'bg-surface/15 text-muted' };
+  }
+}
+
+// Phase 11A: Source Chunk card for provenance-based evidence display
+function SourceChunkCard({
+  evidence,
+  sourceName,
+  targetName,
+  isExpanded,
+  onToggle,
+  isSharedChunk,
+}: {
+  evidence: EvidenceChunk;
+  sourceName: string;
+  targetName: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  isSharedChunk: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(evidence.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <div className="border border-ink/10 dark:border-paper/10 bg-surface/5 relative">
+      {/* Left accent bar: teal for shared chunks, violet for single-entity */}
+      <div
+        className={`absolute left-0 top-0 bottom-0 w-1 ${
+          isSharedChunk ? 'bg-accent-teal' : 'bg-accent-violet'
+        }`}
+      />
+
+      {/* Header */}
+      <button
+        onClick={onToggle}
+        className="w-full p-4 pl-5 text-left hover:bg-surface/5 transition-colors"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            {/* Chunk metadata labels */}
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {evidence.section_type && (
+                <span className={`px-2 py-0.5 font-mono text-xs ${getSectionColor(evidence.section_type)}`}>
+                  {formatSectionType(evidence.section_type)}
+                </span>
+              )}
+              {isSharedChunk && (
+                <span className="px-1.5 py-0.5 font-mono text-xs bg-accent-teal/10 text-accent-teal">
+                  Shared
+                </span>
+              )}
+              <span className="px-1.5 py-0.5 text-xs font-mono bg-accent-teal/10 text-accent-teal">
+                {Math.round(evidence.relevance_score * 100)}% relevant
+              </span>
+              <span className="px-1.5 py-0.5 text-xs font-mono bg-surface/10 text-muted">
+                {evidence.chunk_id.slice(0, 8)}
+              </span>
+            </div>
+
+            {/* Paper title */}
+            {evidence.paper_title && (
+              <p className="font-mono text-xs text-ink dark:text-paper truncate mb-1">
+                {evidence.paper_title}
+              </p>
+            )}
+
+            {/* Authors + year */}
+            <div className="flex items-center gap-3">
+              {evidence.paper_authors && (
+                <p className="flex items-center gap-1 text-xs text-muted truncate">
+                  <User className="w-3 h-3 flex-shrink-0" />
+                  {evidence.paper_authors}
+                </p>
+              )}
+              {evidence.paper_year && (
+                <span className="flex items-center gap-1 text-xs text-muted">
+                  <Calendar className="w-3 h-3" />
+                  {evidence.paper_year}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isExpanded ? (
+              <ChevronUp className="w-4 h-4 text-muted" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-muted" />
+            )}
+          </div>
+        </div>
+
+        {/* Preview text (when collapsed) */}
+        {!isExpanded && (
+          <p className="text-sm text-muted mt-2 line-clamp-2">
+            {evidence.context_snippet || evidence.text.slice(0, 150)}...
+          </p>
+        )}
+      </button>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div className="px-4 pl-5 pb-4 border-t border-ink/5 dark:border-paper/5">
+          {/* Full text with entity name highlights */}
+          <div className="mt-4 p-4 bg-paper dark:bg-ink border border-ink/5 dark:border-paper/5">
+            <p className="text-sm text-ink dark:text-paper leading-relaxed break-words">
+              {highlightEntities(evidence.text, [sourceName, targetName])}
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-3 py-1.5 font-mono text-xs text-muted hover:text-ink dark:hover:text-paper hover:bg-surface/10 transition-colors"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3 text-accent-teal" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  Copy
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Individual evidence card component
@@ -221,7 +379,7 @@ function EvidenceCard({
         <div className="px-4 pl-5 pb-4 border-t border-ink/5 dark:border-paper/5">
           {/* Full text with highlights */}
           <div className="mt-4 p-4 bg-paper dark:bg-ink border border-ink/5 dark:border-paper/5">
-            <p className="text-sm text-ink dark:text-paper leading-relaxed">
+            <p className="text-sm text-ink dark:text-paper leading-relaxed break-words">
               {highlightEntities(evidence.text, [sourceName, targetName])}
             </p>
           </div>
@@ -260,11 +418,16 @@ export function EdgeContextModal({
   relationshipType: initialRelationshipType,
   relationshipConfidence,
   isLowTrust = false,
+  relationshipProperties = {}, // Phase 11D: Edge properties from parent
 }: EdgeContextModalProps) {
   const [evidence, setEvidence] = useState<RelationshipEvidence | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
+  // Phase 11A: Tab state for Evidence vs Source Chunks view
+  const [activeTab, setActiveTab] = useState<'evidence' | 'source_chunks'>('evidence');
+  // Phase 12A: Progressive disclosure - show only first chunk by default
+  const [showAllChunks, setShowAllChunks] = useState(false);
 
   // v0.8.0: Focus trap and accessibility refs
   const modalRef = useRef<HTMLDivElement>(null);
@@ -375,6 +538,12 @@ export function EdgeContextModal({
         const data = await api.fetchRelationshipEvidence(relationshipId);
         setEvidence(data);
         setExpandedIndex(0); // Auto-expand first evidence
+        // Phase 11A: Auto-select Source Chunks tab when provenance is chunk-based
+        if (data.provenance_source === 'source_chunk_ids') {
+          setActiveTab('source_chunks');
+        } else {
+          setActiveTab('evidence');
+        }
       } catch (err) {
         console.error('Failed to fetch relationship evidence:', err);
         const errorMessage = err instanceof Error ? err.message : 'Failed to load evidence';
@@ -420,7 +589,7 @@ export function EdgeContextModal({
       {/* Modal */}
       <div
         ref={modalRef}
-        className="relative w-full max-w-2xl max-h-[80vh] bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 flex flex-col overflow-hidden"
+        className="relative w-full max-w-full sm:max-w-2xl max-h-[80vh] bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 flex flex-col overflow-hidden"
       >
         {/* Decorative corner accent */}
         <div className="absolute top-0 right-0 w-24 h-24 bg-accent-teal/10 transform rotate-45 translate-x-12 -translate-y-12" />
@@ -460,6 +629,27 @@ export function EdgeContextModal({
                 {targetName}
               </span>
             </div>
+
+            {/* Phase 11D: EVALUATED_ON relationship properties */}
+            {relationshipType === 'EVALUATED_ON' && Boolean(relationshipProperties.score || relationshipProperties.metric) && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                {Boolean(relationshipProperties.metric) && (
+                  <span className="px-2 py-1 bg-accent-emerald/10 text-accent-emerald font-mono text-xs">
+                    {String(relationshipProperties.metric)}
+                  </span>
+                )}
+                {relationshipProperties.score !== undefined && (
+                  <span className="px-2 py-1 bg-accent-teal/10 text-accent-teal font-mono text-xs">
+                    Score: {String(relationshipProperties.score)}
+                  </span>
+                )}
+                {Boolean(relationshipProperties.dataset) && (
+                  <span className="px-2 py-1 bg-accent-blue/10 text-accent-blue font-mono text-xs">
+                    on {String(relationshipProperties.dataset)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <button
@@ -535,20 +725,67 @@ export function EdgeContextModal({
                 </div>
               )}
 
-              {/* Only show evidence count if no error and has evidence */}
+              {/* Phase 11A: Provenance source badge + evidence count */}
               {!evidence.error_code && (
-                <div className="flex items-center gap-2 mb-4">
-                  <BookOpen className="w-4 h-4 text-accent-teal" />
-                  <span className="font-mono text-xs text-muted">
-                    {evidence.total_evidence} source{evidence.total_evidence !== 1 ? 's' : ''} found
-                  </span>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-accent-teal" />
+                    <span className="font-mono text-xs text-muted">
+                      {evidence.total_evidence} source{evidence.total_evidence !== 1 ? 's' : ''} found
+                    </span>
+                  </div>
+                  {evidence.provenance_source && (
+                    <span
+                      className={`px-2 py-0.5 font-mono text-xs ${getProvenanceLabel(evidence.provenance_source).color}`}
+                      aria-label={`출처: ${
+                        evidence.provenance_source === 'relationship_evidence'
+                          ? '관계 증거 테이블'
+                          : evidence.provenance_source === 'source_chunk_ids'
+                          ? '청크 출처'
+                          : evidence.provenance_source === 'text_search'
+                          ? '텍스트 검색'
+                          : 'AI 분석'
+                      }`}
+                    >
+                      {getProvenanceLabel(evidence.provenance_source).label}
+                    </span>
+                  )}
                 </div>
               )}
 
-              {/* Evidence list */}
-              {evidence.evidence_chunks.length > 0 ? (
+              {/* Phase 11A: Tab bar (Evidence / Source Chunks) */}
+              {evidence.evidence_chunks.length > 0 && !evidence.error_code && (
+                <div className="flex items-center gap-0 mb-4 border-b border-ink/10 dark:border-paper/10">
+                  <button
+                    onClick={() => { setActiveTab('evidence'); setExpandedIndex(0); }}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 font-mono text-xs uppercase tracking-wider transition-colors border-b-2 -mb-px ${
+                      activeTab === 'evidence'
+                        ? 'border-accent-teal text-accent-teal'
+                        : 'border-transparent text-muted hover:text-ink dark:hover:text-paper'
+                    }`}
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    Evidence
+                  </button>
+                  <button
+                    onClick={() => { setActiveTab('source_chunks'); setExpandedIndex(0); }}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 font-mono text-xs uppercase tracking-wider transition-colors border-b-2 -mb-px ${
+                      activeTab === 'source_chunks'
+                        ? 'border-accent-teal text-accent-teal'
+                        : 'border-transparent text-muted hover:text-ink dark:hover:text-paper'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Source Chunks
+                  </button>
+                </div>
+              )}
+
+              {/* Evidence list (original tab) - Phase 12A: Progressive disclosure */}
+              {evidence.evidence_chunks.length > 0 && activeTab === 'evidence' ? (
                 <div className="space-y-3">
-                  {evidence.evidence_chunks.map((chunk, index) => (
+                  {/* Show only first chunk by default */}
+                  {(showAllChunks ? evidence.evidence_chunks : evidence.evidence_chunks.slice(0, 1)).map((chunk, index) => (
                     <EvidenceCard
                       key={chunk.evidence_id}
                       evidence={chunk}
@@ -558,21 +795,66 @@ export function EdgeContextModal({
                       onToggle={() => setExpandedIndex(expandedIndex === index ? null : index)}
                     />
                   ))}
+
+                  {/* Show All button if more than 1 chunk */}
+                  {evidence.evidence_chunks.length > 1 && !showAllChunks && (
+                    <button
+                      onClick={() => setShowAllChunks(true)}
+                      className="w-full py-3 border border-ink/10 dark:border-paper/10 bg-surface/5 hover:bg-surface/10 transition-all duration-200 font-mono text-sm text-accent-teal"
+                    >
+                      상세 보기 ({evidence.evidence_chunks.length - 1}개 더)
+                    </button>
+                  )}
                 </div>
-              ) : (
+              ) : evidence.evidence_chunks.length > 0 && activeTab === 'source_chunks' ? (
+                /* Phase 11A: Source Chunks tab - provenance-based chunk display */
+                <div className="space-y-3">
+                  {(() => {
+                    try {
+                      // Determine shared vs individual chunks based on relevance score
+                      // Backend sets 0.9 for shared chunks, 0.6 for single-entity chunks
+                      const hasProvenance = evidence.provenance_source === 'source_chunk_ids';
+                      return evidence.evidence_chunks.map((chunk, index) => (
+                        <SourceChunkCard
+                          key={chunk.chunk_id}
+                          evidence={chunk}
+                          sourceName={sourceName}
+                          targetName={targetName}
+                          isExpanded={expandedIndex === index}
+                          onToggle={() => setExpandedIndex(expandedIndex === index ? null : index)}
+                          isSharedChunk={hasProvenance && chunk.relevance_score >= 0.85}
+                        />
+                      ));
+                    } catch {
+                      // Backward compatibility: if source chunks display fails, show empty state
+                      return (
+                        <div className="text-center py-8">
+                          <Layers className="w-8 h-8 text-muted mx-auto mb-3" />
+                          <p className="font-mono text-xs text-muted uppercase tracking-wider mb-2">
+                            Source Chunk View Unavailable
+                          </p>
+                          <p className="text-sm text-muted">
+                            Switch to the Evidence tab to view source passages.
+                          </p>
+                        </div>
+                      );
+                    }
+                  })()}
+                </div>
+              ) : evidence.evidence_chunks.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-16 h-16 flex items-center justify-center bg-surface/5 mx-auto mb-4">
                     <FileText className="w-8 h-8 text-muted" />
                   </div>
                   {/* v0.11.0: Show AI explanation if available */}
-                  {(evidence as any).ai_explanation ? (
+                  {evidence.ai_explanation ? (
                     <>
                       <p className="font-mono text-xs text-accent-teal uppercase tracking-wider mb-3">
                         AI Analysis
                       </p>
                       <div className="max-w-md mx-auto text-left bg-accent-teal/5 border border-accent-teal/20 p-4">
                         <p className="text-sm text-ink dark:text-paper leading-relaxed">
-                          {(evidence as any).ai_explanation}
+                          {evidence.ai_explanation}
                         </p>
                       </div>
                       <p className="text-xs text-muted mt-3">
@@ -584,14 +866,21 @@ export function EdgeContextModal({
                       <p className="font-mono text-xs text-muted uppercase tracking-wider mb-2">
                         No Text Evidence Available
                       </p>
-                      <p className="text-sm text-muted">
+                      <p className="text-sm text-muted mb-4">
                         This relationship was inferred from co-occurrence analysis or semantic similarity.
                         No specific text passages were found in the source documents.
                       </p>
+                      {/* Phase 12A: Enhanced empty state message for MENTIONS edges */}
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted/70">
+                        <FileText className="w-4 h-4" />
+                        <p className="italic">
+                          이 관계는 추출 시점 이전에 생성되어 청크 출처가 없습니다
+                        </p>
+                      </div>
                     </>
                   )}
                 </div>
-              )}
+              ) : null}
             </>
           )}
         </div>

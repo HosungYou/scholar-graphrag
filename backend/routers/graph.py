@@ -23,6 +23,7 @@ from datetime import datetime
 import io
 
 from database import db
+from graph.entity_resolution import EntityResolutionService
 from graph.graph_store import GraphStore
 from graph.metrics_cache import metrics_cache
 from auth.dependencies import require_auth_if_configured
@@ -178,6 +179,8 @@ class RelationshipType(str, Enum):
     SUPPORTS = "SUPPORTS"
     CONTRADICTS = "CONTRADICTS"
     RELATED_TO = "RELATED_TO"
+    MENTIONS = "MENTIONS"  # Phase 7A: Chunk→Entity provenance
+    SAME_AS = "SAME_AS"  # Phase 10B: Cross-paper entity identity link
 
 
 # Pydantic Models
@@ -3670,8 +3673,66 @@ async def get_relationship_evidence(
                 logger.warning(f"Failed to query relationship_evidence table: {e}")
                 evidence_rows = []
 
-        # If no evidence in dedicated table, try to find evidence from
-        # semantic chunks that mention both entities
+        # Phase 7A: Try provenance-based evidence using source_chunk_ids
+        # from entity properties. This finds chunks where both entities were
+        # actually extracted from, providing precise provenance.
+        if not evidence_rows:
+            try:
+                evidence_rows = await database.fetch(
+                    """
+                    WITH source_chunks AS (
+                        SELECT jsonb_array_elements_text(properties->'source_chunk_ids')::UUID AS cid
+                        FROM entities
+                        WHERE id = $2
+                          AND properties ? 'source_chunk_ids'
+                    ),
+                    target_chunks AS (
+                        SELECT jsonb_array_elements_text(properties->'source_chunk_ids')::UUID AS cid
+                        FROM entities
+                        WHERE id = $3
+                          AND properties ? 'source_chunk_ids'
+                    ),
+                    shared_chunks AS (
+                        SELECT cid FROM source_chunks
+                        INTERSECT
+                        SELECT cid FROM target_chunks
+                    ),
+                    all_chunks AS (
+                        -- Shared chunks first (higher relevance), then union of individual chunks
+                        SELECT cid, 0.9 AS relevance FROM shared_chunks
+                        UNION ALL
+                        SELECT cid, 0.6 AS relevance FROM source_chunks WHERE cid NOT IN (SELECT cid FROM shared_chunks)
+                        UNION ALL
+                        SELECT cid, 0.6 AS relevance FROM target_chunks WHERE cid NOT IN (SELECT cid FROM shared_chunks)
+                                                                          AND cid NOT IN (SELECT cid FROM source_chunks)
+                    )
+                    SELECT
+                        sc.id as evidence_id,
+                        sc.id as chunk_id,
+                        sc.text,
+                        sc.section_type,
+                        pm.id as paper_id,
+                        pm.title as paper_title,
+                        pm.authors as paper_authors,
+                        pm.year as paper_year,
+                        ac.relevance as relevance_score,
+                        NULL as context_snippet
+                    FROM all_chunks ac
+                    JOIN semantic_chunks sc ON sc.id = ac.cid
+                    LEFT JOIN paper_metadata pm ON sc.paper_id = pm.id
+                    WHERE sc.project_id = $1
+                    ORDER BY ac.relevance DESC, sc.sequence_order
+                    LIMIT 10
+                    """,
+                    str(project_id),
+                    str(relationship["source_id"]),
+                    str(relationship["target_id"]),
+                )
+            except Exception as e:
+                logger.debug(f"Phase 7A provenance lookup failed (non-critical): {e}")
+                evidence_rows = []
+
+        # Fallback: try to find evidence from semantic chunks that mention both entities by name
         if not evidence_rows:
             source_name = relationship["source_name"]
             target_name = relationship["target_name"]
@@ -4097,4 +4158,64 @@ async def rebuild_embeddings_and_relationships(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to rebuild: {str(e)}"
+        )
+
+
+# ============================================
+# Phase 10B: Cross-Paper Entity Linking
+# ============================================
+
+class CrossPaperLinkRequest(BaseModel):
+    """Request body for cross-paper entity linking."""
+    entity_types: Optional[List[str]] = None  # Defaults to ["Method", "Dataset", "Concept"]
+
+
+@router.post("/api/graph/{project_id}/cross-paper-links")
+async def create_cross_paper_links(
+    project_id: UUID,
+    request: Optional[CrossPaperLinkRequest] = None,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Trigger cross-paper entity linking for a project.
+
+    Finds entities with the same canonical name across different source papers
+    and creates SAME_AS relationships between them.  This is a second-pass
+    operation that should be run after entity extraction and standard entity
+    resolution.
+
+    Returns:
+        JSON with groups_found, links_created, skipped_existing, entity_types.
+    """
+    try:
+        await verify_project_access(database, project_id, current_user, "edit")
+
+        entity_types = None
+        if request and request.entity_types:
+            entity_types = request.entity_types
+
+        service = EntityResolutionService()
+        result = await service.cross_paper_entity_linking(
+            project_id=str(project_id),
+            db=database,
+            entity_types=entity_types,
+        )
+
+        return {
+            "status": "success",
+            "message": (
+                f"Cross-paper linking complete: {result['links_created']} links "
+                f"created from {result['groups_found']} entity groups"
+            ),
+            **result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cross-paper entity linking failed for project {project_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cross-paper entity linking failed: {str(e)}"
         )

@@ -279,6 +279,10 @@ class ConceptCentricScholarAGImporter:
             paper_entity_ids, author_entity_ids = await self._store_paper_and_author_entities(project_id, papers)
 
             # Phase 2: Extract concepts from all papers
+            # NOTE (Phase 7A): Chunk-entity provenance (source_chunk_ids) is NOT tracked here
+            # because the ScholarAG importer extracts entities from paper abstracts only,
+            # not from semantic chunks. Chunk provenance is tracked in PDF and Zotero importers
+            # where full-text chunking occurs before entity extraction.
             self._update_progress("processing", 0.25, "Extracting concepts with LLM...")
             all_entities = []
             paper_entities_map = {}  # paper_id -> {type: [entity_ids]}

@@ -53,6 +53,16 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
           data-testid="icon"
         />
       </button>
+      <button
+        aria-label="교차 논문 연결 표시/숨김"
+        class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
+        title="Cross-Paper Links (SAME_AS): Hidden"
+      >
+        <svg
+          class="w-4 h-4"
+          data-testid="icon"
+        />
+      </button>
       <div
         class="w-px bg-ink/10 dark:bg-paper/10"
       />

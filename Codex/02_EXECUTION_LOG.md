@@ -606,6 +606,37 @@
   - `make test-frontend-e2e` 통과 (`1 passed`)
   - `make test-frontend-visual` 통과 (`5 passed`)
 
+### Phase 7-12 Batch Implementation (Core-Preserving Reliability Track Extension)
+
+- 기간: 2026-02-08
+- 수행
+  - Phase 7A: MENTIONS 기반 provenance chain (3-tier evidence cascade + AI explanation fallback)
+  - Phase 7B: Search strategy routing (vector/graph_traversal/hybrid 자동 분류)
+  - Phase 8A: Embedding 기반 ER 후보 쌍 탐지 (코사인 유사도)
+  - Phase 8B: Few-shot 프롬프트 + Groq 추출 향상
+  - Phase 9A: Table→Graph 변환 파이프라인 (TableSourceMetadata)
+  - Phase 9B: Gap evaluation 데이터셋 + 평가 메트릭 (ai_education_gaps.json)
+  - Phase 10A: QueryMetricsCollector (hop별/타입별 레이턴시)
+  - Phase 10B: Cross-paper SAME_AS 엔티티 연결
+  - Phase 11A: Provenance Chain UI (EdgeContextModal 배지)
+  - Phase 11B: Search Strategy Badges (ChatInterface 전략 표시)
+  - Phase 11C: ER Statistics Dashboard (ImportProgress 임베딩/문자열 통계)
+  - Phase 11D: Table Extraction Visualization
+  - Phase 11E: Evaluation Report Viewer + Query Performance Metrics
+  - Phase 11F: Cross-Paper SAME_AS Visualization (대시 엣지 + LOD)
+  - Phase 12A: Progressive Disclosure (점진적 공개 UX)
+  - Phase 12B: Responsive Layout + Accessibility (ARIA, 반응형, LOD)
+  - Phase 12C: QA Fixture 시나리오 추가 + 스냅샷 체크리스트 갱신
+  - Phase 12D: Codex 문서 갱신 (본 항목)
+- 검증
+  - npx tsc --noEmit: 0 errors (Phase 11E, 12A, 12B 병렬 실행 후 통합 검증)
+  - 각 Phase별 개별 TypeScript 검증 통과
+- 결과
+  - 백엔드 Phase 7-10: 4개 기능 모듈 완료
+  - 프론트엔드 Phase 11A-11F: 6개 UI 통합 완료
+  - UX Phase 12A-12D: 점진적 공개 + 접근성 + QA + 문서 완료
+  - 전체 파이프라인 Phase 0-12 완료
+
 ## 오픈 이슈
 
 - 현재 기준 블로킹 이슈 없음

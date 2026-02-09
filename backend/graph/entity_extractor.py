@@ -279,6 +279,24 @@ Example: "small sample size"
 Datasets used or created.
 Example: "imagenet", "custom survey n=500"
 
+## Examples
+
+### Example 1: AI in Education Paper
+
+Title: "Effects of AI Chatbots on Second Language Speaking Skills: A Meta-Analysis"
+Abstract: "This meta-analysis examines 23 studies on AI chatbot interventions for second language acquisition. We analyzed speaking skills improvement through conversational AI agents. Results showed moderate positive effects (d=0.45, p<0.01) on speaking proficiency, with stronger effects for intermediate learners. Publication bias was detected but did not substantially alter findings."
+
+Expected output:
+{{"concepts": [{{"name": "ai chatbot", "confidence": 0.95}}, {{"name": "second language acquisition", "confidence": 0.9}}, {{"name": "speaking skills", "confidence": 0.85}}, {{"name": "conversational agent", "confidence": 0.8}}], "methods": [{{"name": "meta-analysis", "confidence": 0.95}}], "findings": [{{"name": "moderate positive effect on speaking", "confidence": 0.85}}, {{"name": "stronger effects for intermediate learners", "confidence": 0.8}}], "problems": [{{"name": "limited chatbot effectiveness research", "confidence": 0.7}}], "innovations": [], "limitations": [{{"name": "publication bias", "confidence": 0.75}}], "datasets": []}}
+
+### Example 2: Deep Learning Paper
+
+Title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+Abstract: "We introduce BERT, a new language representation model which stands for Bidirectional Encoder Representations from Transformers. BERT is designed to pre-train deep bidirectional representations by jointly conditioning on both left and right context. Our pre-trained BERT model can be fine-tuned with just one additional output layer to achieve state-of-the-art results on eleven natural language processing tasks including the GLUE benchmark."
+
+Expected output:
+{{"concepts": [{{"name": "language representation", "confidence": 0.95}}, {{"name": "transfer learning", "confidence": 0.9}}, {{"name": "pre-training", "confidence": 0.9}}, {{"name": "bidirectional transformer", "confidence": 0.95}}, {{"name": "contextualized embedding", "confidence": 0.85}}], "methods": [{{"name": "masked language modeling", "confidence": 0.9}}, {{"name": "next sentence prediction", "confidence": 0.85}}], "findings": [{{"name": "state of the art on 11 nlp tasks", "confidence": 0.9}}], "problems": [{{"name": "unidirectional language model limitations", "confidence": 0.8}}], "innovations": [{{"name": "bidirectional pre-training", "confidence": 0.9}}], "limitations": [], "datasets": [{{"name": "glue benchmark", "confidence": 0.9}}]}}
+
 ## Output Format
 Return ONLY valid JSON. ALL 7 keys MUST be present. Use empty arrays [] if no entities found.
 
@@ -395,16 +413,18 @@ class EntityExtractor:
     Implements NLP-AKG methodology for academic knowledge graph construction.
     """
 
-    def __init__(self, llm_provider=None, use_fast_mode: bool = True):
+    def __init__(self, llm_provider=None, use_fast_mode: bool = True, extraction_provider: str = "default"):
         """
         Initialize entity extractor.
 
         Args:
             llm_provider: LLM provider instance (Claude, OpenAI, etc.)
             use_fast_mode: Use simplified prompt for faster extraction
+            extraction_provider: LLM provider preference ("default", "groq", "anthropic")
         """
         self.llm = llm_provider
         self.use_fast_mode = use_fast_mode
+        self.extraction_provider = extraction_provider
         self._extraction_cache: Dict[str, dict] = {}
 
     async def extract_from_paper(
@@ -595,7 +615,15 @@ class EntityExtractor:
                             )
                             return result
                     except Exception as json_err:
-                        logger.debug(f"generate_json() failed, falling back to generate(): {json_err}")
+                        logger.warning(f"generate_json() failed: {json_err}")
+                        # If JSON parsing failed with generate_json(), try fallback with generate()
+                        # This handles cases where Groq returns malformed JSON
+                        if "JSON" in str(json_err) or "parse" in str(json_err).lower():
+                            logger.info(f"JSON parse error detected, falling back to generate() for '{title[:40]}...'")
+                            # Fall through to generate() below
+                        else:
+                            # Re-raise non-JSON errors
+                            raise
 
                 # Fallback to generate() with manual JSON parsing
                 # PERF-011: Reset timer for generate() fallback

@@ -53,6 +53,7 @@ interface GapPanelProps {
   gaps: StructuralGap[];
   clusters: ConceptCluster[];
   nodes?: GraphEntity[];  // For mapping bridge candidate UUIDs to names
+  edges?: { source: string; target: string; relationship_type: string }[];  // Phase 11F: For SAME_AS detection
   onGapSelect: (gap: StructuralGap) => void;
   onHighlightNodes: (nodeIds: string[]) => void;
   onClearHighlights: () => void;
@@ -69,6 +70,7 @@ export function GapPanel({
   gaps,
   clusters,
   nodes = [],
+  edges = [],
   onGapSelect,
   onHighlightNodes,
   onClearHighlights,
@@ -181,6 +183,20 @@ export function GapPanel({
     const node = nodes.find(n => n.id === nodeId);
     return node?.name || nodeId.slice(0, 8) + '...';  // Fallback to truncated UUID
   }, [nodes]);
+
+  // Phase 11F: Check if gap involves cross-paper entities (SAME_AS connections)
+  const hasCrossPaperEntities = useCallback((gap: StructuralGap): boolean => {
+    const gapEntityIds = new Set([
+      ...gap.cluster_a_concepts,
+      ...gap.cluster_b_concepts,
+      ...gap.bridge_candidates,
+    ]);
+
+    return edges.some(edge =>
+      edge.relationship_type === 'SAME_AS' &&
+      (gapEntityIds.has(edge.source) || gapEntityIds.has(edge.target))
+    );
+  }, [edges]);
 
   // Handle gap click
   const handleGapClick = useCallback((gap: StructuralGap) => {
@@ -479,6 +495,7 @@ export function GapPanel({
               {displayedGaps.map((gap, gapIndex) => {
                 const isSelected = selectedGap?.id === gap.id;
                 const isExpandedItem = expandedGapId === gap.id;
+                const isCrossPaper = hasCrossPaperEntities(gap);
 
                 return (
                   <div
@@ -495,6 +512,14 @@ export function GapPanel({
                     <div className="absolute -top-2 -left-2 w-6 h-6 flex items-center justify-center bg-surface text-white font-mono text-xs">
                       {String(gapIndex + 1).padStart(2, '0')}
                     </div>
+
+                    {/* Phase 11F: Cross-Paper badge */}
+                    {isCrossPaper && (
+                      <div className="absolute -top-2 -right-2 flex flex-col sm:flex-row items-center gap-0.5 px-1.5 py-0.5 bg-[#9D4EDD] text-white font-mono text-[10px]">
+                        <span>🔗</span>
+                        <span className="hidden sm:inline">Cross-Paper</span>
+                      </div>
+                    )}
 
                     {/* Gap Header */}
                     <div
@@ -514,7 +539,7 @@ export function GapPanel({
                       {/* Row 1: Cluster labels (Improvement F: Pill-style chips) */}
                       <div className="flex items-center gap-2 flex-wrap mb-1.5">
                         <span
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
                           style={{
                             backgroundColor: `${getClusterColor(gap.cluster_a_id)}15`,
                             color: getClusterColor(gap.cluster_a_id),
@@ -527,7 +552,7 @@ export function GapPanel({
                         </span>
                         <ArrowRight className="w-3 h-3 text-muted flex-shrink-0" />
                         <span
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-[140px]"
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
                           style={{
                             backgroundColor: `${getClusterColor(gap.cluster_b_id)}15`,
                             color: getClusterColor(gap.cluster_b_id),

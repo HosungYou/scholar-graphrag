@@ -111,6 +111,103 @@
 3. 완료 기준을 통과한 경우에만 다음 Phase로 이동
 4. 실패 시 원인/대응안을 로그에 남기고 같은 Phase에서 재시도
 
+### Phase 7. MENTIONS-based Provenance + Search Strategy (Phase 7A + 7B)
+
+- 입력
+  - chunk→entity MENTIONS 관계
+  - 쿼리 분석 결과(vector/graph_traversal/hybrid)
+- 수행
+  - 3-tier evidence cascade: relationship_evidence → source_chunk_ids(MENTIONS) → text_search
+  - AI explanation fallback (Tier 4)
+  - Search strategy routing: vector/graph_traversal/hybrid 자동 분류
+- 출력
+  - provenance_source 필드로 근거 출처 추적
+  - 채팅 응답에 search_strategy/hop_count 메타데이터
+- 완료 기준
+  - EdgeContextModal에서 provenance 배지 표시
+  - ChatInterface에서 전략 배지 표시
+
+### Phase 8. Embedding-based ER + Few-shot Extraction (Phase 8A + 8B)
+
+- 입력
+  - 엔티티 임베딩 벡터
+  - 도메인 특화 few-shot 프롬프트
+- 수행
+  - 코사인 유사도 기반 ER 후보 쌍 탐지
+  - Groq few-shot 프롬프트로 엔티티 추출 정확도 향상
+- 출력
+  - embedding_candidates_found, string_candidates_found 지표
+  - llm_confirmed_merges 지표
+- 완료 기준
+  - reliability_summary에 임베딩/문자열 후보 통계 포함
+
+### Phase 9. Table Extraction + Gap Evaluation (Phase 9A + 9B)
+
+- 입력
+  - PDF 테이블 데이터
+  - Ground truth 갭 데이터셋(AI Education 도메인)
+- 수행
+  - 테이블→그래프 변환 파이프라인(TableSourceMetadata)
+  - 갭 검출 정밀도/재현율 평가 메트릭
+- 출력
+  - 테이블 출처 엔티티(source_type: 'table')
+  - GapDetectionMetrics(recall, precision, f1)
+- 완료 기준
+  - evaluation/gap_evaluation_data/ai_education_gaps.json 존재
+  - /api/evaluation/report 엔드포인트 동작
+
+### Phase 10. Query Instrumentation + Cross-Paper Linking (Phase 10A + 10B)
+
+- 입력
+  - 쿼리 실행 로그
+  - 논문 간 동일 엔티티 쌍
+- 수행
+  - QueryMetricsCollector로 hop별/타입별 레이턴시 수집
+  - SAME_AS 관계 타입으로 교차 논문 엔티티 연결
+- 출력
+  - /api/system/query-metrics 엔드포인트
+  - SAME_AS 관계 + GraphDB 전환 권고
+- 완료 기준
+  - 3-hop 쿼리 500ms 임계값 추적 가능
+  - 프론트에서 SAME_AS 엣지 대시 렌더링
+
+### Phase 11. Frontend Integration (Phase 11A-11F)
+
+- 입력
+  - Phase 7-10 백엔드 엔드포인트
+- 수행
+  - 11A: Provenance Chain UI (EdgeContextModal 배지)
+  - 11B: Search Strategy Badges (ChatInterface 전략 표시)
+  - 11C: ER Statistics Dashboard (ImportProgress 임베딩/문자열 통계)
+  - 11D: Table Extraction Visualization (테이블 출처 표시)
+  - 11E: Evaluation Report + Query Metrics (평가 페이지 + 설정 쿼리 성능)
+  - 11F: Cross-Paper SAME_AS Visualization (대시 엣지 + LOD)
+- 출력
+  - 6개 프론트엔드 기능 모듈
+- 완료 기준
+  - npx tsc --noEmit 0 errors
+
+### Phase 12. UX Polish + Documentation (Phase 12A-12D)
+
+- 입력
+  - Phase 11 UI 컴포넌트
+- 수행
+  - 12A: Progressive Disclosure (EdgeContextModal 점진적 공개, ImportProgress 접기)
+  - 12B: Responsive Layout + Accessibility (ARIA 레이블, 반응형, SAME_AS LOD)
+  - 12C: QA Fixture 시나리오 추가 + 스냅샷 체크리스트 갱신
+  - 12D: Codex 문서 갱신 (본 문서)
+- 출력
+  - UX 개선 + 접근성 + 테스트 커버리지 + 문서 정합성
+- 완료 기준
+  - 전체 Phase 0-12 상태가 "완료"
+
+## 진행 순서 규칙
+
+1. 각 Phase 시작 전에 `02_EXECUTION_LOG.md`에 시작 기록
+2. 코드 변경 후 테스트/검증 명령을 로그에 남김
+3. 완료 기준을 통과한 경우에만 다음 Phase로 이동
+4. 실패 시 원인/대응안을 로그에 남기고 같은 Phase에서 재시도
+
 ## 현재 상태(2026-02-08)
 
 - Phase 0: 완료
@@ -120,5 +217,11 @@
 - Phase 4: 완료(약어/표기 변형 + homonym + batch/LLM 확정 + 오병합 샘플링 지표 반영)
 - Phase 5: 완료(429/Retry-After + GAP 체인 구조화 로그 + gap_id 재현 리포트 export 반영)
 - Phase 6: 완료(Playwright E2E/visual + snapshot triage CI/PR 자동화 반영)
+- Phase 7: 완료(MENTIONS provenance + search strategy routing 반영)
+- Phase 8: 완료(Embedding ER + few-shot extraction 반영)
+- Phase 9: 완료(Table extraction + gap evaluation 반영)
+- Phase 10: 완료(Query instrumentation + SAME_AS linking 반영)
+- Phase 11: 완료(Frontend integration 6개 모듈 반영)
+- Phase 12: 완료(UX polish + documentation 반영)
 - 통합 회귀 검증: 완료(`backend/venv/bin/pytest` 기준)
 - 표준 실행 진입점: 완료(`Makefile` 기반 `make test-backend-core`, `make test-frontend-core`)

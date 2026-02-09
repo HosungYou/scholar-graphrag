@@ -20,6 +20,7 @@ from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from config import settings
 from middleware.error_tracking import get_error_tracker, should_alert
+from graph.query_metrics import QueryMetricsCollector, QueryMetricsSummary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -336,4 +337,29 @@ async def get_recent_errors(
     return {
         "count": len(errors),
         "errors": list(reversed(errors)),  # Most recent first
+    }
+
+
+# ============================================================================
+# Query Performance Metrics (Phase 10A)
+# ============================================================================
+
+
+@router.get("/api/system/query-metrics")
+async def get_query_metrics():
+    """Get query performance metrics for GraphDB migration decision."""
+    collector = QueryMetricsCollector.get_instance()
+    summary = collector.get_summary()
+    return {
+        "total_queries": summary.total_queries,
+        "avg_latency_ms": summary.avg_latency_ms,
+        "p95_latency_ms": summary.p95_latency_ms,
+        "max_latency_ms": summary.max_latency_ms,
+        "by_query_type": summary.by_type,
+        "by_hop_count": summary.by_hop_count,
+        "graphdb_recommendation": summary.graphdb_recommendation,
+        "threshold_info": {
+            "three_hop_target_ms": 500,
+            "description": "If 3-hop queries consistently exceed 500ms, native GraphDB is recommended"
+        }
     }
