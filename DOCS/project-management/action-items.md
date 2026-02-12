@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-04
+> **마지막 업데이트**: 2026-02-12
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 19 | 19 | 0 | 0 |
-| 🟡 Medium | 20 | 20 | 0 | 0 |
+| 🔴 High | 22 | 22 | 0 | 0 |
+| 🟡 Medium | 22 | 20 | 0 | 2 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **44** | **44** | **0** | **0** |
+| **Total** | **49** | **47** | **0** | **2** |
 
 ---
 
@@ -26,7 +26,58 @@
 
 ## 🟡 Medium Priority (Short-term)
 
-*모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+### AUTH-004: Orphaned 프로젝트 소유권 할당
+- **Source**: Auth Flow 완성 2026-02-12
+- **Status**: ⬜ Pending
+- **Priority**: 🟡 Medium
+- **Description**: Auth 추가 이전에 생성된 프로젝트(`owner_id = NULL`)에 첫 관리자 로그인 시 소유권을 자동 할당하는 기능
+- **Notes**: 현재 `OR p.owner_id IS NULL`로 모든 인증 사용자에게 노출. 멀티테넌트 환경에서 소유권 명확화 필요.
+- **Created**: 2026-02-12
+
+---
+
+### AUTH-005: 프로젝트 공유 UI
+- **Source**: Auth Flow 완성 2026-02-12
+- **Status**: ⬜ Pending
+- **Priority**: 🟡 Medium
+- **Description**: 팀 협업을 위한 프로젝트 공유 UI 구현. `project_collaborators` 및 `team_projects` 테이블 활용.
+- **Notes**: 백엔드 접근 제어 로직은 이미 구현됨 (`check_project_access`).
+- **Created**: 2026-02-12
+
+---
+
+## 📝 v0.13.3 Release - Completed Items (2026-02-12)
+
+### AUTH-002: GitHub OAuth 버튼 제거
+- **Source**: Auth Flow 완성 2026-02-12
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `frontend/components/auth/LoginForm.tsx` - GitHub 버튼 제거, Google 전폭
+  - `frontend/components/auth/SignupForm.tsx` - GitHub 버튼 제거, Google 전폭
+- **Description**: Supabase에서 GitHub OAuth가 비활성화되었으나 UI에 버튼이 남아있어 사용자 혼란 발생
+- **Solution Applied**:
+  - [x] LoginForm에서 GitHub OAuth 버튼 제거
+  - [x] SignupForm에서 GitHub OAuth 버튼 제거
+  - [x] Google OAuth 버튼 전폭 레이아웃
+- **Completed**: 2026-02-12
+- **Commit**: d22ce91
+
+---
+
+### AUTH-003: Orphaned 프로젝트 목록 노출 수정
+- **Source**: Auth Flow 완성 2026-02-12
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `backend/routers/projects.py` - SQL 쿼리에 `OR p.owner_id IS NULL` 추가
+- **Description**: Auth 추가 이전에 생성된 프로젝트(`owner_id = NULL`)가 인증된 사용자에게 표시되지 않아 빈 프로젝트 목록 노출
+- **Root Cause**: 프로젝트 리스팅 쿼리가 `owner_id = $1`만 체크하여 NULL 소유자 프로젝트 제외
+- **Solution Applied**:
+  - [x] `OR p.owner_id IS NULL` 조건 추가
+  - [x] 인증된 모든 사용자에게 orphaned 프로젝트 노출
+- **Completed**: 2026-02-12
+- **Commit**: 7d4225b (origin), ecf3568 (render)
 
 ---
 
