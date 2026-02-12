@@ -330,7 +330,7 @@ jobs:
 
       - name: Install MkDocs
         run: |
-          pip install -r docs/requirements.txt
+          pip install -r DOCS/requirements.txt
 
       - name: Build documentation
         run: |

@@ -1,6 +1,7 @@
 # MkDocs Configuration for ScholaRAG_Graph Documentation
 # Site: https://scholarag-graph.readthedocs.io
 
+docs_dir: DOCS
 site_name: ScholaRAG_Graph
 site_url: https://scholarag-graph.readthedocs.io
 site_description: Open-source concept-centric knowledge graph for systematic literature reviews
