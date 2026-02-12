@@ -64,6 +64,34 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#F97316', // Orange
     icon: <Square className="w-3 h-3" strokeWidth={2} />
   },
+  Invention: {
+    color: '#7C3AED', // Violet
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Patent: {
+    color: '#2563EB', // Blue
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Inventor: {
+    color: '#DB2777', // Pink
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Technology: {
+    color: '#059669', // Green
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  License: {
+    color: '#D97706', // Amber
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Grant: {
+    color: '#4F46E5', // Indigo
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Department: {
+    color: '#0891B2', // Cyan
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
 };
 
 export function SearchBar({

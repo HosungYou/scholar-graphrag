@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Graph3D, Graph3DRef } from './Graph3D';
 import { GapPanel } from './GapPanel';
+import { DraggablePanel, DragHandle } from '../ui/DraggablePanel';
 import { CentralityPanel } from './CentralityPanel';
 import { ClusterPanel } from './ClusterPanel';
 import { GraphLegend } from './GraphLegend';
@@ -12,8 +13,9 @@ import { InsightHUD } from './InsightHUD';
 import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
 import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
-import { CitationView } from './CitationView';  // v0.13.0: Citation Network
+import { TemporalView } from './TemporalView';  // v0.12.1: Temporal Timeline
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
+import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import type { GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
@@ -26,24 +28,32 @@ import {
   Info,
   RotateCcw,
   Layers,
-  Zap,
-  ZapOff,
   Scissors,
   BarChart3,
   PieChart,
   Sun,
   SunDim,
-  GitBranch,  // v0.13.0
+  Tag,
+  Tags,
+  Type,
+  Calendar,
+  Link2,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
   projectId: string;
   onNodeClick?: (nodeId: string, nodeData: GraphEntity) => void;
+  onAskQuestion?: (question: string) => void;
+  onDebugCameraReset?: () => void;
+  onDebugGapFocus?: (gapId: string) => void;
 }
 
 export function KnowledgeGraph3D({
   projectId,
   onNodeClick,
+  onAskQuestion,
+  onDebugCameraReset,
+  onDebugGapFocus,
 }: KnowledgeGraph3DProps) {
   const graph3DRef = useRef<Graph3DRef>(null);
   const [selectedNode, setSelectedNode] = useState<GraphEntity | null>(null);
@@ -80,6 +90,14 @@ export function KnowledgeGraph3D({
     viewMode,
     setViewMode,
     filters,  // Phase 4 FIX: Subscribe to filters for reactive filtering
+    // v0.7.0: Node pinning
+    pinnedNodes,
+    addPinnedNode,
+    removePinnedNode,
+    clearPinnedNodes,
+    // Phase 11F: SAME_AS edge filter
+    showSameAsEdges,
+    toggleSameAsEdges,
   } = useGraphStore();
 
   // 3D-specific store
@@ -88,8 +106,8 @@ export function KnowledgeGraph3D({
     centrality,
     fetchCentrality,
     getVisiblePercentage,
-    toggleParticles,
     toggleBloom,
+    cycleLabelVisibility,
   } = useGraph3DStore();
 
   // Fetch data on mount
@@ -120,6 +138,7 @@ export function KnowledgeGraph3D({
     };
   }, [getFilteredData, view3D.lodEnabled, centrality, getVisiblePercentage, filters]);
   // Phase 4 FIX: Added `filters` to re-render when filter state changes
+  const displayNodes = displayData?.nodes ?? [];
 
   // Handle node click
   const handleNodeClick = useCallback((node: GraphEntity) => {
@@ -150,6 +169,7 @@ export function KnowledgeGraph3D({
   // Handle gap selection
   const handleGapSelect = useCallback((gap: StructuralGap) => {
     setSelectedGap(gap);
+    onDebugGapFocus?.(gap.id);
 
     // Highlight gap nodes
     const allNodes = [
@@ -161,7 +181,7 @@ export function KnowledgeGraph3D({
 
     // Focus camera on gap
     graph3DRef.current?.focusOnGap(gap);
-  }, [setSelectedGap, setHighlightedNodes]);
+  }, [setSelectedGap, setHighlightedNodes, onDebugGapFocus]);
 
   // Handle gap highlight
   const handleGapHighlight = useCallback((nodeIds: string[]) => {
@@ -182,7 +202,8 @@ export function KnowledgeGraph3D({
   // Handle reset camera
   const handleResetCamera = useCallback(() => {
     graph3DRef.current?.resetCamera();
-  }, []);
+    onDebugCameraReset?.();
+  }, [onDebugCameraReset]);
 
   // Handle background click
   const handleBackgroundClick = useCallback(() => {
@@ -201,6 +222,29 @@ export function KnowledgeGraph3D({
     setEdgeModalOpen(false);
     setSelectedEdge(null);
   }, []);
+
+  const selectedEdgeConfidence = useMemo(() => {
+    if (!selectedEdge) return undefined;
+    const propConfidence = selectedEdge.properties?.confidence;
+    if (typeof propConfidence === 'number') return propConfidence;
+    if (typeof selectedEdge.weight === 'number') return selectedEdge.weight;
+    return undefined;
+  }, [selectedEdge]);
+
+  const selectedEdgeIsLowTrust = useMemo(() => {
+    if (typeof selectedEdgeConfidence !== 'number') return false;
+    return selectedEdgeConfidence < 0.6;
+  }, [selectedEdgeConfidence]);
+
+  const selectedEdgeSourceName = useMemo(() => {
+    if (!selectedEdge) return undefined;
+    return displayNodes.find((node) => node.id === selectedEdge.source)?.name;
+  }, [selectedEdge, displayNodes]);
+
+  const selectedEdgeTargetName = useMemo(() => {
+    if (!selectedEdge) return undefined;
+    return displayNodes.find((node) => node.id === selectedEdge.target)?.name;
+  }, [selectedEdge, displayNodes]);
 
   // Handle close node details
   const handleCloseNodeDetails = useCallback(() => {
@@ -289,24 +333,35 @@ export function KnowledgeGraph3D({
     <div className="relative w-full h-full">
       {/* Graph View (3D, Topic, or Gaps) */}
       {viewMode === '3d' && (
-        <Graph3D
-          ref={graph3DRef}
-          nodes={displayData.nodes}
-          edges={displayData.edges}
-          clusters={clusters}
-          centralityMetrics={centralityMetrics}
-          highlightedNodes={highlightedNodes}
-          highlightedEdges={highlightedEdges}
-          selectedGap={selectedGap}
-          onNodeClick={handleNodeClick}
-          onBackgroundClick={handleBackgroundClick}
-          onEdgeClick={handleEdgeClick}  // UI-011: Relationship Evidence
-          showParticles={view3D.showParticles}
-          particleSpeed={view3D.particleSpeed}
-          bloomEnabled={view3D.bloom.enabled}
-          bloomIntensity={view3D.bloom.intensity}
-          glowSize={view3D.bloom.glowSize}
-        />
+        <>
+          <EntityTypeLegend visibleTypes={Object.keys(nodeCounts)} />
+          <Graph3D
+            key={`graph3d-${viewMode}-${projectId}`}
+            ref={graph3DRef}
+            nodes={displayData.nodes}
+            edges={displayData.edges}
+            clusters={clusters}
+            centralityMetrics={centralityMetrics}
+            highlightedNodes={highlightedNodes}
+            highlightedEdges={highlightedEdges}
+            selectedGap={selectedGap}
+            onNodeClick={handleNodeClick}
+            onBackgroundClick={handleBackgroundClick}
+            onEdgeClick={handleEdgeClick}  // UI-011: Relationship Evidence
+            bloomEnabled={view3D.bloom.enabled}
+            bloomIntensity={view3D.bloom.intensity}
+            glowSize={view3D.bloom.glowSize}
+            // v0.7.0: Node pinning
+            pinnedNodes={pinnedNodes}
+            onNodePin={addPinnedNode}
+            onNodeUnpin={removePinnedNode}
+            onClearPinnedNodes={clearPinnedNodes}
+            // v0.8.0: Adaptive label visibility
+            labelVisibility={view3D.labelVisibility}
+            // Phase 11F: SAME_AS edge filter
+            showSameAsEdges={showSameAsEdges}
+          />
+        </>
       )}
       {viewMode === 'topic' && (
         <TopicViewMode
@@ -343,39 +398,27 @@ export function KnowledgeGraph3D({
           bloomEnabled={view3D.bloom.enabled}
           bloomIntensity={view3D.bloom.intensity}
           glowSize={view3D.bloom.glowSize}
+          // v0.7.0: Node pinning
+          pinnedNodes={pinnedNodes}
+          onNodePin={addPinnedNode}
+          onNodeUnpin={removePinnedNode}
+          onClearPinnedNodes={clearPinnedNodes}
         />
       )}
-      {viewMode === 'citations' && (
-        <CitationView projectId={projectId} />
+      {viewMode === 'temporal' && (
+        <TemporalView projectId={projectId} />
       )}
 
       {/* Top Controls */}
       <div className="absolute top-4 right-4 flex gap-2">
         <div className="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-1 flex gap-1">
           {/* 3D Mode Indicator */}
-          <div className="p-2 bg-accent-teal text-white relative">
+          <div className="p-2 bg-accent-teal text-white relative" title="3D Graph View - Drag nodes to explore, scroll to zoom">
             <Box className="w-4 h-4" />
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white" />
           </div>
 
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
-
-          {/* Particle Toggle */}
-          <button
-            onClick={toggleParticles}
-            className={`p-2 transition-colors ${
-              view3D.showParticles
-                ? 'bg-accent-amber/10 text-accent-amber'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title={view3D.showParticles ? 'Hide particles' : 'Show particles'}
-          >
-            {view3D.showParticles ? (
-              <Zap className="w-4 h-4" />
-            ) : (
-              <ZapOff className="w-4 h-4" />
-            )}
-          </button>
 
           {/* Bloom/Glow Toggle */}
           <button
@@ -385,7 +428,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-yellow-500/10 text-yellow-500'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title={view3D.bloom.enabled ? 'Disable glow effect' : 'Enable glow effect'}
+            title={view3D.bloom.enabled ? 'Disable bloom effect' : 'Enable bloom effect (highlight important nodes)'}
           >
             {view3D.bloom.enabled ? (
               <Sun className="w-4 h-4" />
@@ -394,13 +437,50 @@ export function KnowledgeGraph3D({
             )}
           </button>
 
+          {/* v0.8.0: Label Visibility Toggle */}
+          <button
+            onClick={cycleLabelVisibility}
+            className={`p-2 transition-colors ${
+              view3D.labelVisibility === 'all'
+                ? 'bg-accent-violet/10 text-accent-violet'
+                : view3D.labelVisibility === 'important'
+                ? 'bg-accent-teal/10 text-accent-teal'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={`Labels: ${view3D.labelVisibility === 'all' ? 'All nodes' : view3D.labelVisibility === 'important' ? 'Top 20% nodes' : 'Hidden'} (click to toggle)`}
+          >
+            {view3D.labelVisibility === 'all' ? (
+              <Tags className="w-4 h-4" />
+            ) : view3D.labelVisibility === 'important' ? (
+              <Tag className="w-4 h-4" />
+            ) : (
+              <Type className="w-4 h-4 opacity-50" />
+            )}
+          </button>
+
+          {/* Phase 11F: SAME_AS Edge Toggle */}
+          <button
+            onClick={toggleSameAsEdges}
+            className={`p-2 transition-colors ${
+              showSameAsEdges
+                ? 'bg-accent-violet/10 text-accent-violet'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={`Cross-Paper Links (SAME_AS): ${showSameAsEdges ? 'Visible' : 'Hidden'}`}
+            aria-label="교차 논문 연결 표시/숨김"
+            aria-pressed={showSameAsEdges}
+          >
+            <Link2 className="w-4 h-4" />
+          </button>
+
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
 
           {/* Reset Camera */}
           <button
             onClick={handleResetCamera}
+            data-testid="kg-reset-camera"
             className="p-2 hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper transition-colors"
-            title="Reset camera"
+            title="Reset Camera"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
@@ -413,7 +493,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle legend"
+            title="Toggle Entity Type Legend"
           >
             <Info className="w-4 h-4" />
           </button>
@@ -426,7 +506,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-amber/10 text-accent-amber'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle gap panel"
+            title="Toggle Research Gaps Panel"
           >
             <Sparkles className="w-4 h-4" />
           </button>
@@ -439,7 +519,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle node slicing panel"
+            title="Toggle Centrality Panel"
           >
             <Scissors className="w-4 h-4" />
           </button>
@@ -452,7 +532,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-violet/10 text-accent-violet'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle cluster panel"
+            title="Toggle Cluster Panel"
           >
             <Layers className="w-4 h-4" />
           </button>
@@ -465,7 +545,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-teal/10 text-accent-teal'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle insight HUD"
+            title="Toggle Analysis HUD"
           >
             <BarChart3 className="w-4 h-4" />
           </button>
@@ -478,7 +558,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-violet/10 text-accent-violet'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle main topics"
+            title="Toggle Top Topics Panel"
           >
             <PieChart className="w-4 h-4" />
           </button>
@@ -486,16 +566,16 @@ export function KnowledgeGraph3D({
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
 
           {/* UI-012: View Mode Toggle - 3 modes: 3D, Topic, Gaps */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center bg-ink/15 dark:bg-paper/15 rounded-lg p-1 gap-1 border border-ink/20 dark:border-paper/20">
             {/* 3D Mode */}
             <button
               onClick={() => setViewMode('3d')}
-              className={`flex items-center gap-1.5 px-2 py-2 transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === '3d'
-                  ? 'bg-accent-teal text-white'
-                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+                  ? 'bg-accent-teal text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="3D Graph View"
+              title="3D Graph View - Physics-based knowledge graph"
             >
               <Box className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">3D</span>
@@ -504,12 +584,12 @@ export function KnowledgeGraph3D({
             {/* Topic Mode */}
             <button
               onClick={() => setViewMode('topic')}
-              className={`flex items-center gap-1.5 px-2 py-2 transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === 'topic'
-                  ? 'bg-accent-purple text-white'
-                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+                  ? 'bg-accent-purple text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="Topic View (InfraNodus-style clusters)"
+              title="Topic View - Cluster and community visualization"
             >
               <Grid2X2 className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Topics</span>
@@ -518,41 +598,43 @@ export function KnowledgeGraph3D({
             {/* Gaps Mode */}
             <button
               onClick={() => setViewMode('gaps')}
-              className={`flex items-center gap-1.5 px-2 py-2 transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === 'gaps'
-                  ? 'bg-accent-amber text-white'
-                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+                  ? 'bg-accent-amber text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="Gaps View (Structural gap exploration)"
+              title="Gaps View - Research gaps and bridge hypothesis exploration"
             >
               <Sparkles className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Gaps</span>
             </button>
 
-            {/* Citation Network - v0.13.0 */}
+            {/* Temporal Mode - v0.12.1 */}
             <button
-              onClick={() => setViewMode('citations')}
-              className={`flex items-center gap-1.5 px-2 py-2 transition-all ${
-                viewMode === 'citations'
-                  ? 'bg-[#457B9D] text-white'
-                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              onClick={() => setViewMode('temporal')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                viewMode === 'temporal'
+                  ? 'bg-accent-orange text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="Citation Network (Semantic Scholar)"
+              title="시간축 시각화 (Temporal)"
             >
-              <GitBranch className="w-4 h-4" />
-              <span className="font-mono text-xs uppercase tracking-wider">Citations</span>
+              <Calendar className="w-4 h-4" />
+              <span className="font-mono text-xs uppercase tracking-wider">Temporal</span>
             </button>
           </div>
         </div>
       </div>
 
       {/* Gap Panel - Hidden in Gaps mode (GapsViewMode has integrated gap list) */}
-      {showGapPanel && viewMode !== 'gaps' && viewMode !== 'citations' && (
+      {showGapPanel && viewMode !== 'gaps' && (
+        <DraggablePanel panelId="gap" projectId={projectId} defaultPosition={{ x: 16, y: 16 }}>
         <GapPanel
           projectId={projectId}
           gaps={gaps}
           clusters={clusters}
           nodes={displayData.nodes}
+          edges={displayData.edges}
           onGapSelect={handleGapSelect}
           onHighlightNodes={handleGapHighlight}
           onClearHighlights={handleClearGapHighlights}
@@ -560,26 +642,31 @@ export function KnowledgeGraph3D({
           onRefresh={handleRefreshGaps}
           isMinimized={isGapPanelMinimized}
           onToggleMinimize={() => setIsGapPanelMinimized(!isGapPanelMinimized)}
+          onAskQuestion={onAskQuestion}
         />
+        </DraggablePanel>
       )}
 
-      {/* Centrality Panel - Right side below controls */}
-      {showCentralityPanel && (
-        <CentralityPanel
-          projectId={projectId}
-          className="absolute top-20 right-4 z-10"
-          onSlicingApplied={handleSlicingApplied}
-          onSlicingReset={handleSlicingReset}
-        />
-      )}
-
-      {/* Cluster Panel - Right side below Centrality Panel */}
-      {showClusterPanel && (
-        <ClusterPanel
-          projectId={projectId}
-          className={`absolute right-4 z-10 ${showCentralityPanel ? 'top-[340px]' : 'top-20'}`}
-          onFocusCluster={handleFocusCluster}
-        />
+      {/* Right-side panels - stacked */}
+      {(showCentralityPanel || showClusterPanel) && (
+        <DraggablePanel panelId="right-stack" projectId={projectId} defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 300 : 900, y: 80 }}>
+        <div className="flex flex-col gap-2 max-h-[calc(100vh-120px)] overflow-y-auto bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 rounded-sm">
+          <DragHandle />
+          {showCentralityPanel && (
+            <CentralityPanel
+              projectId={projectId}
+              onSlicingApplied={handleSlicingApplied}
+              onSlicingReset={handleSlicingReset}
+            />
+          )}
+          {showClusterPanel && (
+            <ClusterPanel
+              projectId={projectId}
+              onFocusCluster={handleFocusCluster}
+            />
+          )}
+        </div>
+        </DraggablePanel>
       )}
 
       {/* Legend */}
@@ -602,26 +689,48 @@ export function KnowledgeGraph3D({
       {/* Status Bar */}
       <StatusBar projectId={projectId} />
 
-      {/* Insight HUD - Bottom Left */}
-      {showInsightHUD && <InsightHUD projectId={projectId} />}
-
-      {/* Main Topics Panel - Bottom Left, above InsightHUD */}
-      {showMainTopics && (
-        <MainTopicsPanel
-          clusters={clusters}
-          onFocusCluster={handleFocusCluster}
-          onHighlightCluster={setHighlightedNodes}
-          onClearHighlight={clearHighlights}
-          className={`absolute z-20 ${showInsightHUD ? 'bottom-52 left-4' : 'bottom-4 left-4'}`}
+      {/* Insight HUD - v0.8.0: Repositioned to right side (InfraNodus-style Analytics) */}
+      {/* Dynamic positioning: below CentralityPanel and ClusterPanel if visible */}
+      {showInsightHUD && (
+        <DraggablePanel
+          panelId="insight-hud"
+          projectId={projectId}
+          defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 220 : 900, y: showCentralityPanel || showClusterPanel ? 400 : 80 }}
+          zIndex={20}
+        >
+        <InsightHUD
+          projectId={projectId}
         />
+        </DraggablePanel>
       )}
 
-      {/* View Mode Badge - Hidden in Gaps mode (GapsViewMode has its own badge) */}
-      {viewMode !== 'gaps' && viewMode !== 'citations' && (
+      {/* Main Topics Panel - Bottom Left (InsightHUD moved to right side) */}
+      {showMainTopics && (
+        <DraggablePanel
+          panelId="main-topics"
+          projectId={projectId}
+          defaultPosition={{ x: 16, y: typeof window !== 'undefined' ? window.innerHeight - 200 : 600 }}
+        >
+          <MainTopicsPanel
+            clusters={clusters}
+            onFocusCluster={handleFocusCluster}
+            onHighlightCluster={setHighlightedNodes}
+            onClearHighlight={clearHighlights}
+          />
+        </DraggablePanel>
+      )}
+
+      {/* v0.10.0: View Mode Badge with Active Indicator - Hidden in Gaps mode */}
+      {viewMode !== 'gaps' && (
         <div className="absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
           <div className="flex items-center gap-2">
             {viewMode === '3d' && (
               <>
+                {/* Pulsing active indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-teal rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-teal rounded-full" />
+                </div>
                 <Box className="w-4 h-4 text-accent-teal" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted">
                   3D Mode
@@ -633,12 +742,29 @@ export function KnowledgeGraph3D({
             )}
             {viewMode === 'topic' && (
               <>
+                {/* Pulsing active indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-purple rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-purple rounded-full" />
+                </div>
                 <Grid2X2 className="w-4 h-4 text-accent-purple" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted">
                   Topic View
                 </span>
                 <span className="text-xs text-muted">
                   • {clusters.length} clusters
+                </span>
+              </>
+            )}
+            {viewMode === 'temporal' && (
+              <>
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-accent-orange rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-accent-orange rounded-full" />
+                </div>
+                <Calendar className="w-4 h-4 text-accent-orange" />
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Temporal
                 </span>
               </>
             )}
@@ -651,6 +777,12 @@ export function KnowledgeGraph3D({
         isOpen={edgeModalOpen}
         onClose={handleCloseEdgeModal}
         relationshipId={selectedEdge?.id || null}
+        sourceName={selectedEdgeSourceName}
+        targetName={selectedEdgeTargetName}
+        relationshipType={selectedEdge?.relationship_type}
+        relationshipConfidence={selectedEdgeConfidence}
+        isLowTrust={selectedEdgeIsLowTrust}
+        relationshipProperties={selectedEdge?.properties}
       />
     </div>
   );

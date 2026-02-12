@@ -11,10 +11,12 @@ Security:
 - ALLOWED_IMPORT_ROOTS must be configured in production environments
 """
 
+import asyncio
 import logging
 import os
+from collections import deque
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any, Deque
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends, status
 from pydantic import BaseModel, field_validator
@@ -257,6 +259,7 @@ class ImportJobResponse(BaseModel):
     project_id: Optional[UUID] = None
     stats: Optional[dict] = None
     result: Optional[dict] = None  # Contains nodes_created, edges_created for frontend
+    reliability_summary: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     # UI-002: Added metadata for interrupted jobs display (project_name, checkpoint)
@@ -276,6 +279,70 @@ class ImportValidationResponse(BaseModel):
     warnings: list = []
 
 
+def _build_reliability_summary(stats: Optional[dict]) -> dict:
+    """
+    Build a normalized reliability summary from importer stats.
+
+    This keeps API responses consistent across ScholaRAG/PDF/Zotero import paths.
+    """
+    stats = stats or {}
+
+    raw_entities = int(stats.get("raw_entities_extracted", 0) or 0)
+    resolved_entities = int(stats.get("entities_after_resolution", 0) or 0)
+    merges_applied = int(stats.get("merges_applied", 0) or 0)
+    relationships_created = int(stats.get("relationships_created", 0) or 0)
+    low_trust_edges = int(stats.get("low_trust_edges", 0) or 0)
+    evidence_backed_relationships = int(stats.get("evidence_backed_relationships", 0) or 0)
+    llm_pairs_reviewed = int(stats.get("llm_pairs_reviewed", 0) or 0)
+    llm_pairs_confirmed = int(stats.get("llm_pairs_confirmed", 0) or 0)
+    potential_false_merge_count = int(stats.get("potential_false_merge_count", 0) or 0)
+    potential_false_merge_samples = stats.get("potential_false_merge_samples", [])
+    if not isinstance(potential_false_merge_samples, list):
+        potential_false_merge_samples = []
+    potential_false_merge_samples = potential_false_merge_samples[:10]
+
+    if "canonicalization_rate" in stats and stats.get("canonicalization_rate") is not None:
+        canonicalization_rate = float(stats.get("canonicalization_rate", 0.0) or 0.0)
+    elif raw_entities > 0:
+        canonicalization_rate = merges_applied / raw_entities
+    else:
+        canonicalization_rate = 0.0
+
+    if relationships_created > 0 and evidence_backed_relationships > 0:
+        provenance_coverage = evidence_backed_relationships / relationships_created
+    elif relationships_created > 0:
+        # Conservative default when evidence counters are unavailable.
+        provenance_coverage = 0.0
+    else:
+        provenance_coverage = 1.0
+
+    low_trust_ratio = (low_trust_edges / relationships_created) if relationships_created > 0 else 0.0
+    llm_confirmation_accept_rate = (
+        llm_pairs_confirmed / llm_pairs_reviewed if llm_pairs_reviewed > 0 else 0.0
+    )
+    potential_false_merge_ratio = (
+        potential_false_merge_count / merges_applied if merges_applied > 0 else 0.0
+    )
+
+    return {
+        "raw_entities_extracted": raw_entities,
+        "entities_after_resolution": resolved_entities,
+        "merges_applied": merges_applied,
+        "canonicalization_rate": canonicalization_rate,
+        "llm_pairs_reviewed": llm_pairs_reviewed,
+        "llm_pairs_confirmed": llm_pairs_confirmed,
+        "llm_confirmation_accept_rate": llm_confirmation_accept_rate,
+        "potential_false_merge_count": potential_false_merge_count,
+        "potential_false_merge_ratio": potential_false_merge_ratio,
+        "potential_false_merge_samples": potential_false_merge_samples,
+        "relationships_created": relationships_created,
+        "evidence_backed_relationships": evidence_backed_relationships,
+        "provenance_coverage": provenance_coverage,
+        "low_trust_edges": low_trust_edges,
+        "low_trust_edge_ratio": low_trust_ratio,
+    }
+
+
 # Job store for persistent tracking
 # Falls back to in-memory if DB unavailable
 _job_store: Optional[JobStore] = None
@@ -292,6 +359,205 @@ async def get_job_store() -> JobStore:
 
 # Legacy in-memory storage (deprecated, use JobStore)
 _import_jobs: dict = {}
+
+_TERMINAL_IMPORT_STATUSES = {
+    ImportStatus.COMPLETED.value,
+    ImportStatus.FAILED.value,
+    ImportStatus.INTERRUPTED.value,
+}
+
+
+def cleanup_legacy_import_jobs(max_age_hours: int = 24) -> int:
+    """
+    Remove old terminal jobs from legacy in-memory storage.
+
+    This keeps backwards-compatible fallback state from growing unbounded.
+    """
+    now = datetime.now()
+    removed = 0
+
+    for job_id, job_data in list(_import_jobs.items()):
+        status_value = str(job_data.get("status", "")).lower()
+        updated_at = job_data.get("updated_at")
+
+        if not isinstance(updated_at, datetime):
+            continue
+
+        age_hours = (now - updated_at).total_seconds() / 3600
+        if status_value in _TERMINAL_IMPORT_STATUSES and age_hours >= max_age_hours:
+            _import_jobs.pop(job_id, None)
+            removed += 1
+
+    return removed
+
+
+class _CoalescedJobProgressUpdater:
+    """
+    Coalesce high-frequency progress updates into a single async worker.
+
+    Prevents unbounded create_task() growth under frequent callbacks.
+    """
+
+    def __init__(self, job_store: JobStore, job_id: str, log_prefix: str):
+        self.job_store = job_store
+        self.job_id = job_id
+        self.log_prefix = log_prefix
+        self._latest: Optional[dict[str, Any]] = None
+        self._worker: Optional[asyncio.Task] = None
+        self._closed = False
+
+    def enqueue(self, progress: float, message: str) -> None:
+        if self._closed:
+            return
+        self._latest = {"progress": progress, "message": message}
+        self._ensure_worker()
+
+    def _ensure_worker(self) -> None:
+        if self._worker and not self._worker.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[{self.log_prefix} {self.job_id}] Could not update JobStore: no running event loop")
+            return
+
+        self._worker = loop.create_task(self._drain())
+        self._worker.add_done_callback(self._handle_worker_done)
+
+    async def _drain(self) -> None:
+        while self._latest is not None and not self._closed:
+            payload = self._latest
+            self._latest = None
+            await self.job_store.update_job(
+                job_id=self.job_id,
+                progress=payload["progress"],
+                message=payload["message"],
+            )
+
+    def _handle_worker_done(self, task: asyncio.Task) -> None:
+        try:
+            error = task.exception()
+            if error:
+                logger.error(f"[{self.log_prefix} {self.job_id}] JobStore update failed: {error}")
+        except asyncio.CancelledError:
+            return
+        except Exception as callback_error:
+            logger.error(f"[{self.log_prefix} {self.job_id}] JobStore callback failed: {callback_error}")
+
+        if self._latest is not None and not self._closed:
+            self._ensure_worker()
+
+    async def flush_and_close(self) -> None:
+        if self._worker:
+            try:
+                await self._worker
+            except Exception as e:
+                logger.error(f"[{self.log_prefix} {self.job_id}] Failed to flush progress updates: {e}")
+
+        if self._latest is not None:
+            payload = self._latest
+            self._latest = None
+            try:
+                await self.job_store.update_job(
+                    job_id=self.job_id,
+                    progress=payload["progress"],
+                    message=payload["message"],
+                )
+            except Exception as e:
+                logger.error(f"[{self.log_prefix} {self.job_id}] Failed to apply final progress update: {e}")
+
+        self._closed = True
+        self._latest = None
+
+
+class _QueuedCheckpointSaver:
+    """Serialize checkpoint writes via a single worker task."""
+
+    def __init__(self, job_store: JobStore, job_id: str):
+        self.job_store = job_store
+        self.job_id = job_id
+        self._pending: Deque[dict[str, Any]] = deque()
+        self._worker: Optional[asyncio.Task] = None
+        self._closed = False
+
+    def enqueue(
+        self,
+        paper_id: str,
+        index: int,
+        total_papers: int,
+        project_id: str,
+        stage: str,
+    ) -> None:
+        if self._closed:
+            return
+        self._pending.append(
+            {
+                "paper_id": paper_id,
+                "index": index,
+                "total_papers": total_papers,
+                "project_id": project_id,
+                "stage": stage,
+            }
+        )
+        self._ensure_worker()
+
+    def _ensure_worker(self) -> None:
+        if self._worker and not self._worker.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[Zotero Import {self.job_id}] Could not save checkpoint: no running event loop")
+            return
+        self._worker = loop.create_task(self._drain())
+        self._worker.add_done_callback(self._handle_worker_done)
+
+    async def _drain(self) -> None:
+        while self._pending and not self._closed:
+            payload = self._pending.popleft()
+            await save_checkpoint(
+                job_store=self.job_store,
+                job_id=self.job_id,
+                paper_id=payload["paper_id"],
+                index=payload["index"],
+                total_papers=payload["total_papers"],
+                project_id=payload["project_id"],
+                stage=payload["stage"],
+            )
+
+    def _handle_worker_done(self, task: asyncio.Task) -> None:
+        try:
+            error = task.exception()
+            if error:
+                logger.warning(f"[Zotero Import {self.job_id}] Checkpoint save failed: {error}")
+        except asyncio.CancelledError:
+            return
+        except Exception as callback_error:
+            logger.warning(f"[Zotero Import {self.job_id}] Checkpoint callback failed: {callback_error}")
+
+        if self._pending and not self._closed:
+            self._ensure_worker()
+
+    async def flush_and_close(self) -> None:
+        if self._worker:
+            try:
+                await self._worker
+            except Exception as e:
+                logger.warning(f"[Zotero Import {self.job_id}] Failed to flush checkpoints: {e}")
+
+        while self._pending:
+            payload = self._pending.popleft()
+            await save_checkpoint(
+                job_store=self.job_store,
+                job_id=self.job_id,
+                paper_id=payload["paper_id"],
+                index=payload["index"],
+                total_papers=payload["total_papers"],
+                project_id=payload["project_id"],
+                stage=payload["stage"],
+            )
+
+        self._closed = True
 
 
 # =============================================================================
@@ -562,12 +828,14 @@ async def _run_scholarag_import(
         )
 
         if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
             # Update job with results
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
             _import_jobs[job_id]["message"] = "Import completed successfully!"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
             _import_jobs[job_id]["updated_at"] = datetime.now()
 
             logger.info(f"[Import {job_id}] Completed successfully: {result.get('stats', {})}")
@@ -586,6 +854,9 @@ async def _run_scholarag_import(
                 "concepts_extracted": 0,
                 "relationships_created": 0,
             }
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary(
+                _import_jobs[job_id]["stats"]
+            )
 
             logger.error(f"[Import {job_id}] Failed: {sanitized_error}")
 
@@ -603,6 +874,9 @@ async def _run_scholarag_import(
             "concepts_extracted": 0,
             "relationships_created": 0,
         }
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary(
+            _import_jobs[job_id]["stats"]
+        )
 
 
 def _sanitize_error_message(error: str) -> str:
@@ -676,6 +950,11 @@ async def get_import_status(job_id: str):
             project_id=db_job.result.get("project_id") if db_job.result else None,
             stats=db_job.result.get("stats") if db_job.result else None,
             result=result_data,
+            reliability_summary=(
+                db_job.result.get("reliability_summary")
+                if db_job.result and db_job.result.get("reliability_summary")
+                else _build_reliability_summary(db_job.result.get("stats") if db_job.result else None)
+            ),
             created_at=db_job.created_at,
             updated_at=db_job.updated_at,
         )
@@ -731,6 +1010,11 @@ async def list_import_jobs(
             message=job.message,
             project_id=job.result.get("project_id") if job.result else None,
             stats=job.result.get("stats") if job.result else None,
+            reliability_summary=(
+                job.result.get("reliability_summary")
+                if job.result and job.result.get("reliability_summary")
+                else _build_reliability_summary(job.result.get("stats") if job.result else None)
+            ),
             created_at=job.created_at,
             updated_at=job.updated_at,
             # UI-002: Include metadata for frontend (project_name, checkpoint)
@@ -738,6 +1022,54 @@ async def list_import_jobs(
         )
         for job in jobs
     ]
+
+
+@router.delete("/jobs/interrupted")
+async def delete_interrupted_jobs(
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Delete all interrupted import jobs.
+
+    This endpoint cleans up stale jobs that were interrupted by server restarts.
+    Deletes from both JobStore (persistent DB) and in-memory _import_jobs dict.
+
+    Returns:
+        Dict with count of deleted jobs
+    """
+    job_store = await get_job_store()
+
+    # Query JobStore for all interrupted jobs
+    import_job_types = ["import", "pdf_import", "pdf_import_multiple", "zotero_import"]
+    interrupted_jobs = []
+
+    for job_type in import_job_types:
+        type_jobs = await job_store.list_jobs(
+            job_type=job_type,
+            status=JobStatus.INTERRUPTED,
+            limit=1000  # High limit to catch all interrupted jobs
+        )
+        interrupted_jobs.extend(type_jobs)
+
+    deleted_count = 0
+
+    # Delete from JobStore (persistent DB)
+    for job in interrupted_jobs:
+        try:
+            await job_store.delete_job(job.id)
+            deleted_count += 1
+
+            # Also remove from in-memory dict if present
+            _import_jobs.pop(job.id, None)
+
+            logger.info(f"Deleted interrupted job: {job.id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete job {job.id}: {e}")
+
+    return {
+        "deleted_count": deleted_count,
+        "message": f"Deleted {deleted_count} interrupted import jobs"
+    }
 
 
 class PDFImportRequest(BaseModel):
@@ -754,6 +1086,7 @@ class PDFImportResponse(BaseModel):
     message: str
     filename: str
     project_id: Optional[str] = None
+    reliability_summary: Optional[dict] = None
 
 
 @router.post("/pdf", response_model=PDFImportResponse)
@@ -859,6 +1192,11 @@ async def _run_pdf_import(
 
     # Get job store for persistent updates
     job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="PDF Import",
+    )
 
     # Map import stages to JobStore status
     stage_to_job_status = {
@@ -890,24 +1228,8 @@ async def _run_pdf_import(
         _import_jobs[job_id]["message"] = message
         _import_jobs[job_id]["updated_at"] = datetime.now()
 
-        # BUG-027 FIX: Also update JobStore for persistent progress tracking
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(
-                job_store.update_job(
-                    job_id=job_id,
-                    progress=progress,
-                    message=message,
-                )
-            )
-            # BUG-027-C FIX: Add error callback to surface silent failures
-            def _handle_jobstore_error(t):
-                if t.exception():
-                    logger.error(f"[PDF Import {job_id}] JobStore update failed: {t.exception()}")
-            task.add_done_callback(_handle_jobstore_error)
-        except RuntimeError:
-            logger.warning(f"[PDF Import {job_id}] Could not update JobStore: no running event loop")
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress, message=message)
 
         logger.info(f"[PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
 
@@ -946,12 +1268,16 @@ async def _run_pdf_import(
         )
 
         if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
             _import_jobs[job_id]["message"] = "PDF import completed successfully!"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
             _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
 
             # Update JobStore with completion status and result
             await job_store.update_job(
@@ -962,6 +1288,7 @@ async def _run_pdf_import(
                 result={
                     "project_id": str(result.get("project_id")) if result.get("project_id") else None,
                     "stats": result.get("stats", {}),
+                    "reliability_summary": reliability_summary,
                 },
             )
 
@@ -972,7 +1299,10 @@ async def _run_pdf_import(
 
             _import_jobs[job_id]["status"] = ImportStatus.FAILED
             _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
             _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
 
             # Update JobStore with failure
             await job_store.update_job(
@@ -990,7 +1320,10 @@ async def _run_pdf_import(
 
         _import_jobs[job_id]["status"] = ImportStatus.FAILED
         _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
         _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        await progress_updater.flush_and_close()
 
         # Update JobStore with exception
         await job_store.update_job(
@@ -1108,6 +1441,11 @@ async def _run_multiple_pdf_import(
 
     # Get job store for persistent updates
     job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="Multi-PDF Import",
+    )
 
     def progress_callback(stage: str, progress: float, message: str):
         """Update job status from importer progress.
@@ -1125,24 +1463,8 @@ async def _run_multiple_pdf_import(
         _import_jobs[job_id]["message"] = message
         _import_jobs[job_id]["updated_at"] = datetime.now()
 
-        # BUG-027 FIX: Also update JobStore for persistent progress tracking
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(
-                job_store.update_job(
-                    job_id=job_id,
-                    progress=progress,
-                    message=message,
-                )
-            )
-            # BUG-027-C FIX: Add error callback to surface silent failures
-            def _handle_jobstore_error(t):
-                if t.exception():
-                    logger.error(f"[Multi-PDF Import {job_id}] JobStore update failed: {t.exception()}")
-            task.add_done_callback(_handle_jobstore_error)
-        except RuntimeError:
-            logger.warning(f"[Multi-PDF Import {job_id}] Could not update JobStore: no running event loop")
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress, message=message)
 
         logger.info(f"[Multi-PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
 
@@ -1178,12 +1500,16 @@ async def _run_multiple_pdf_import(
         )
 
         if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
             _import_jobs[job_id]["message"] = f"Imported {result['stats']['papers_imported']} PDFs successfully!"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
             _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
 
             # Update JobStore with completion status and result
             await job_store.update_job(
@@ -1194,6 +1520,7 @@ async def _run_multiple_pdf_import(
                 result={
                     "project_id": str(result.get("project_id")) if result.get("project_id") else None,
                     "stats": result.get("stats", {}),
+                    "reliability_summary": reliability_summary,
                 },
             )
 
@@ -1204,7 +1531,10 @@ async def _run_multiple_pdf_import(
 
             _import_jobs[job_id]["status"] = ImportStatus.FAILED
             _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
             _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
 
             # Update JobStore with failure
             await job_store.update_job(
@@ -1222,7 +1552,10 @@ async def _run_multiple_pdf_import(
 
         _import_jobs[job_id]["status"] = ImportStatus.FAILED
         _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
         _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        await progress_updater.flush_and_close()
 
         # Update JobStore with exception
         await job_store.update_job(
@@ -1285,6 +1618,7 @@ class ZoteroImportResponse(BaseModel):
     message: str
     items_count: int = 0
     project_id: Optional[str] = None
+    reliability_summary: Optional[dict] = None
 
 
 @router.post("/zotero/validate", response_model=ZoteroValidationResponse)
@@ -1459,7 +1793,7 @@ async def import_zotero_folder(
         "job_id": job.id,
         "status": ImportStatus.PENDING,
         "progress": 0.0,
-        "message": f"Zotero import 시작: {items_count}개 항목",
+        "message": f"Zotero import starting: {items_count} items",
         "project_id": None,
         "stats": None,
         "created_at": now,
@@ -1479,7 +1813,7 @@ async def import_zotero_folder(
     return ZoteroImportResponse(
         job_id=job.id,
         status=ImportStatus.PENDING,
-        message=f"Zotero import 시작: {items_count}개 항목, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])}개 PDF",
+        message=f"Zotero import starting: {items_count} items, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])} PDFs",
         items_count=items_count,
     )
 
@@ -1517,6 +1851,12 @@ async def _run_zotero_import(
 
     # Get job store for persistent updates
     job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="Zotero Import",
+    )
+    checkpoint_saver = _QueuedCheckpointSaver(job_store=job_store, job_id=job_id)
 
     # BUG-028 Extension: Track processed papers for checkpoint
     processed_paper_ids = list(skip_paper_ids)  # Start with already processed
@@ -1556,49 +1896,20 @@ async def _run_zotero_import(
 
             processed_paper_ids.append(progress.current_paper_id)
 
-            # Save checkpoint asynchronously
-            try:
-                import asyncio
-                loop = asyncio.get_running_loop()
-                checkpoint_task = loop.create_task(
-                    save_checkpoint(
-                        job_store=job_store,
-                        job_id=job_id,
-                        paper_id=progress.current_paper_id,
-                        index=progress.current_paper_index if hasattr(progress, 'current_paper_index') else len(processed_paper_ids) - 1,
-                        total_papers=progress.papers_total,
-                        project_id=current_project_id or "",
-                        stage=progress.status,
-                    )
-                )
-                def _handle_checkpoint_error(t):
-                    if t.exception():
-                        logger.warning(f"[Zotero Import {job_id}] Checkpoint save failed: {t.exception()}")
-                checkpoint_task.add_done_callback(_handle_checkpoint_error)
-            except RuntimeError:
-                logger.warning(f"[Zotero Import {job_id}] Could not save checkpoint: no running event loop")
-
-        # BUG-027 FIX: Also update JobStore for persistent progress tracking
-        # Status API checks JobStore first, so without this update, frontend
-        # always sees progress=0.0 (the initial value set at job start)
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(
-                job_store.update_job(
-                    job_id=job_id,
-                    progress=progress.progress,
-                    message=progress.message,
-                )
+            checkpoint_saver.enqueue(
+                paper_id=progress.current_paper_id,
+                index=(
+                    progress.current_paper_index
+                    if hasattr(progress, "current_paper_index")
+                    else len(processed_paper_ids) - 1
+                ),
+                total_papers=progress.papers_total,
+                project_id=current_project_id or "",
+                stage=progress.status,
             )
-            # BUG-027-C FIX: Add error callback to surface silent failures
-            def _handle_jobstore_error(t):
-                if t.exception():
-                    logger.error(f"[Zotero Import {job_id}] JobStore update failed: {t.exception()}")
-            task.add_done_callback(_handle_jobstore_error)
-        except RuntimeError:
-            # No running loop (shouldn't happen in async context)
-            logger.warning(f"[Zotero Import {job_id}] Could not update JobStore: no running event loop")
+
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress.progress, message=progress.message)
 
         logger.info(f"[Zotero Import {job_id}] {progress.status}: {progress.progress:.0%} - {progress.message}")
 
@@ -1660,24 +1971,35 @@ async def _run_zotero_import(
         if result.get("success"):
             concepts_count = result.get("concepts_extracted", 0)
             relationships_count = result.get("relationships_created", 0)
+            reliability_summary = _build_reliability_summary(result)
+
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
 
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
-            _import_jobs[job_id]["message"] = f"Zotero import 완료: {result.get('papers_imported', 0)}개 논문"
+            _import_jobs[job_id]["message"] = f"Zotero import completed: {result.get('papers_imported', 0)} papers"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = {
                 "papers_imported": result.get("papers_imported", 0),
                 "pdfs_processed": result.get("pdfs_processed", 0),
                 "concepts_extracted": concepts_count,
                 "relationships_created": relationships_count,
+                "raw_entities_extracted": result.get("raw_entities_extracted", 0),
+                "entities_after_resolution": result.get("entities_after_resolution", 0),
+                "entities_stored_unique": result.get("entities_stored_unique", 0),
+                "merges_applied": result.get("merges_applied", 0),
+                "canonicalization_rate": result.get("canonicalization_rate", 0.0),
                 # Frontend-compatible field names
                 "nodes_created": concepts_count,
                 "edges_created": relationships_count,
             }
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
             _import_jobs[job_id]["result"] = {
                 "project_id": str(result.get("project_id")) if result.get("project_id") else None,
                 "nodes_created": concepts_count,
                 "edges_created": relationships_count,
+                "reliability_summary": reliability_summary,
             }
             _import_jobs[job_id]["updated_at"] = datetime.now()
 
@@ -1686,12 +2008,13 @@ async def _run_zotero_import(
                 job_id=job_id,
                 status=JobStatus.COMPLETED,
                 progress=1.0,
-                message=f"Zotero import 완료: {result.get('papers_imported', 0)}개 논문",
+                message=f"Zotero import completed: {result.get('papers_imported', 0)} papers",
                 result={
                     "project_id": str(result.get("project_id")) if result.get("project_id") else None,
                     "stats": _import_jobs[job_id]["stats"],
                     "nodes_created": concepts_count,
                     "edges_created": relationships_count,
+                    "reliability_summary": reliability_summary,
                 },
             )
 
@@ -1701,15 +2024,19 @@ async def _run_zotero_import(
             error_msg = "; ".join(errors[:3])  # Limit error message length
             sanitized_error = _sanitize_error_message(error_msg)
 
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
+
             _import_jobs[job_id]["status"] = ImportStatus.FAILED
-            _import_jobs[job_id]["message"] = f"Import 실패: {sanitized_error}"
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
             _import_jobs[job_id]["updated_at"] = datetime.now()
 
             # Update JobStore with failure
             await job_store.update_job(
                 job_id=job_id,
                 status=JobStatus.FAILED,
-                message=f"Import 실패: {sanitized_error}",
+                message=f"Import failed: {sanitized_error}",
                 error=sanitized_error,
             )
 
@@ -1719,15 +2046,19 @@ async def _run_zotero_import(
         logger.exception(f"[Zotero Import {job_id}] Exception during import")
         sanitized_error = _sanitize_error_message(str(e))
 
+        await checkpoint_saver.flush_and_close()
+        await progress_updater.flush_and_close()
+
         _import_jobs[job_id]["status"] = ImportStatus.FAILED
-        _import_jobs[job_id]["message"] = f"Import 실패: {sanitized_error}"
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
         _import_jobs[job_id]["updated_at"] = datetime.now()
 
         # Update JobStore with exception
         await job_store.update_job(
             job_id=job_id,
             status=JobStatus.FAILED,
-            message=f"Import 실패: {sanitized_error}",
+            message=f"Import failed: {sanitized_error}",
             error=sanitized_error,
         )
 

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["anthropic", "openai", "google", "groq"] = "groq"
     default_llm_model: str = "llama-3.3-70b-versatile"
 
+    # Entity Extraction LLM Provider
+    # Options: "default" (uses DEFAULT_LLM_PROVIDER), "groq", "anthropic"
+    extraction_llm_provider: str = "default"
+
     # Embedding Configuration
     embedding_model: str = "embed-english-v3.0"  # Cohere model
     embedding_dimension: int = 1024  # Cohere v3 dimension

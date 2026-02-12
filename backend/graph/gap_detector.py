@@ -8,14 +8,35 @@ Detects structural gaps (research opportunities) in the knowledge graph by:
 4. Generating AI-suggested research questions to bridge gaps
 
 Reference: InfraNodus content gap analysis methodology
+
+TODO (Phase 10B): Cross-paper SAME_AS links can be leveraged for citation gap
+detection.  Papers that share SAME_AS entities (i.e. they discuss the same
+Method, Dataset, or Concept under the same canonical name) but do *not* cite
+each other represent potential citation gaps.  A future enhancement could query:
+
+    SELECT DISTINCT pm_a.id AS paper_a, pm_b.id AS paper_b
+    FROM relationships r
+    JOIN entities e_src ON r.source_id = e_src.id
+    JOIN entities e_tgt ON r.target_id = e_tgt.id
+    JOIN paper_metadata pm_a ON e_src.properties->>'source_paper_id' = pm_a.id::text
+    JOIN paper_metadata pm_b ON e_tgt.properties->>'source_paper_id' = pm_b.id::text
+    WHERE r.relationship_type = 'SAME_AS'
+      AND NOT EXISTS (
+          SELECT 1 FROM relationships cite
+          WHERE cite.relationship_type = 'CITES'
+            AND cite.source_id = pm_a.id AND cite.target_id = pm_b.id
+      )
+
+and surface these pairs as "citation gap" recommendations alongside structural
+gaps.
 """
 
 import logging
-import asyncio
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
+import asyncio
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
@@ -198,6 +219,8 @@ class GapDetector:
             # Generate cluster name from top keywords
             if cluster.keywords:
                 cluster.name = " / ".join(cluster.keywords[:3])
+            else:
+                cluster.name = f"Cluster {cluster_id + 1}"
 
             result.append(cluster)
 
@@ -241,6 +264,8 @@ class GapDetector:
         clusters: list[ConceptCluster],
         relationships: list[dict],
         concepts: list[dict],
+        min_gaps: int = 3,
+        max_gaps: int = 10,
     ) -> list[StructuralGap]:
         """
         Detect structural gaps between concept clusters.
@@ -249,10 +274,14 @@ class GapDetector:
         - Low inter-cluster connectivity (few relationships)
         - But potential for connection (semantic similarity)
 
+        v0.6.0 Fix: Uses adaptive threshold to ensure gaps are detected even in dense graphs.
+
         Args:
             clusters: List of ConceptCluster objects
             relationships: List of relationship dicts with source_id, target_id
             concepts: List of concept dicts for semantic analysis
+            min_gaps: Minimum number of gaps to return (default: 3)
+            max_gaps: Maximum number of gaps to return (default: 10)
 
         Returns:
             List of StructuralGap objects, sorted by gap strength (strongest gaps first)
@@ -285,7 +314,8 @@ class GapDetector:
                     total_relationships += 1
 
         # Calculate gap strength for each cluster pair
-        gaps = []
+        # v0.6.0: First calculate ALL gap strengths, then apply adaptive threshold
+        all_gap_candidates = []
         cluster_ids = [c.id for c in clusters]
 
         for i, c1 in enumerate(cluster_ids):
@@ -304,24 +334,60 @@ class GapDetector:
                 else:
                     gap_strength = 0.0
 
-                # Only report significant gaps (strength < 0.3 = less than 30% connected)
-                if gap_strength < 0.3:
-                    cluster_a = [c for c in clusters if c.id == c1][0]
-                    cluster_b = [c for c in clusters if c.id == c2][0]
+                cluster_a = [c for c in clusters if c.id == c1][0]
+                cluster_b = [c for c in clusters if c.id == c2][0]
 
-                    gap = StructuralGap(
-                        cluster_a_id=c1,
-                        cluster_b_id=c2,
-                        gap_strength=gap_strength,
-                        concept_a_ids=cluster_a.concept_ids[:5],  # Top 5 concepts
-                        concept_b_ids=cluster_b.concept_ids[:5],
-                    )
-                    gaps.append(gap)
+                gap = StructuralGap(
+                    cluster_a_id=c1,
+                    cluster_b_id=c2,
+                    gap_strength=gap_strength,
+                    concept_a_ids=cluster_a.concept_ids[:5],  # Top 5 concepts
+                    concept_b_ids=cluster_b.concept_ids[:5],
+                )
+                all_gap_candidates.append(gap)
 
         # Sort by gap strength (strongest gaps = lowest strength first)
-        gaps.sort(key=lambda g: g.gap_strength)
+        all_gap_candidates.sort(key=lambda g: g.gap_strength)
 
-        logger.info(f"Detected {len(gaps)} structural gaps")
+        # v0.6.0: Apply adaptive threshold
+        if all_gap_candidates:
+            strengths = [g.gap_strength for g in all_gap_candidates]
+
+            # Calculate 25th percentile
+            import numpy as np
+            percentile_25 = np.percentile(strengths, 25)
+
+            # Adaptive threshold: min of 0.3 (absolute) or 25th percentile + 0.1
+            adaptive_threshold = min(0.3, percentile_25 + 0.1)
+
+            # Filter gaps using adaptive threshold
+            filtered_gaps = [g for g in all_gap_candidates if g.gap_strength < adaptive_threshold]
+
+            # v0.9.0: Ensure minimum number of gaps is returned (stronger enforcement)
+            # If adaptive threshold is too strict, always return at least min_gaps from candidates
+            if len(filtered_gaps) < min_gaps and len(all_gap_candidates) >= min_gaps:
+                # Threshold was too strict - return top min_gaps regardless
+                filtered_gaps = all_gap_candidates[:min_gaps]
+                logger.info(
+                    f"Adaptive threshold too strict ({adaptive_threshold:.2f}), "
+                    f"returning top {min_gaps} gaps instead"
+                )
+            elif len(filtered_gaps) < min_gaps and len(all_gap_candidates) > 0:
+                # Have some candidates but less than min_gaps
+                filtered_gaps = all_gap_candidates
+                logger.info(f"Only {len(all_gap_candidates)} gap candidates available")
+
+            gaps = filtered_gaps[:max_gaps]
+
+            # Log for monitoring
+            logger.info(
+                f"Gap detection: {len(gaps)}/{len(all_gap_candidates)} gaps "
+                f"(adaptive threshold: {adaptive_threshold:.2f}, 25th percentile: {percentile_25:.2f})"
+            )
+        else:
+            gaps = []
+            logger.info("Gap detection: No cluster pairs to analyze")
+
         return gaps
 
     def calculate_centrality(
@@ -816,9 +882,6 @@ Return ONLY the research questions, one per line, without numbering or bullets.
                 gap, a_names, b_names
             )
 
-        # Generate LLM-summarized cluster labels (if LLM available)
-        clusters = await self.generate_cluster_labels(clusters)
-
         # Generate summary
         summary = self._generate_summary(clusters, gaps)
 
@@ -830,7 +893,11 @@ Return ONLY the research questions, one per line, without numbering or bullets.
         }
 
     def _generate_summary(self, clusters: list[ConceptCluster], gaps: list[StructuralGap]) -> str:
-        """Generate a text summary of the gap analysis."""
+        """
+        Generate a text summary of the gap analysis.
+
+        v0.6.0: Added explanation for well-connected (dense) graphs.
+        """
 
         if not clusters:
             return "Insufficient data for gap analysis."
@@ -859,47 +926,38 @@ Return ONLY the research questions, one per line, without numbering or bullets.
 
                 lines.append(f"- Gap between '{a_name}' and '{b_name}' (connectivity: {gap.gap_strength:.1%})")
 
+            # v0.6.0: Add explanation for well-connected graphs
+            avg_connectivity = sum(g.gap_strength for g in gaps) / len(gaps) if gaps else 0
+            if avg_connectivity > 0.15:  # Higher than 15% average = well connected
+                lines.extend([
+                    "",
+                    "*Note: This graph is well-connected. The gaps shown represent *relatively* weaker connections between topic clusters, not complete disconnections.*",
+                ])
+
         return "\n".join(lines)
 
-    async def generate_cluster_labels(
-        self,
-        clusters: list[ConceptCluster],
-        timeout_per_label: float = 3.0,
-        total_timeout: float = 15.0,
-    ) -> list[ConceptCluster]:
-        """Generate LLM-summarized 3-5 word topic labels for clusters.
+    async def _generate_cluster_label(self, keywords: list[str]) -> str:
+        """LLM으로 클러스터 키워드를 3-5 단어 토픽 레이블로 요약."""
+        if not self.llm or not keywords:
+            filtered = [k for k in keywords[:3] if k and k.strip()]
+            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
 
-        Processes sequentially within total timeout budget. Falls back to
-        existing keyword-join name on LLM failure.
-        """
-        if not self.llm:
-            return clusters
-
-        import time
-        start = time.monotonic()
-
-        for cluster in clusters:
-            if time.monotonic() - start > total_timeout:
-                logger.warning("Total label timeout budget exceeded, using fallback for remaining")
-                break
-
-            if not cluster.keywords:
-                continue
-
-            try:
-                prompt = (
-                    "Summarize these academic concepts into a 3-5 word topic label:\n"
-                    f"{', '.join(cluster.keywords[:10])}\n\n"
-                    "Respond with ONLY the label, nothing else."
-                )
-                label = await asyncio.wait_for(
-                    self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
-                    timeout=timeout_per_label,
-                )
-                result = label.strip().strip('"').strip("'")
-                if 3 <= len(result) <= 60:
-                    cluster.name = result
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"LLM label generation failed for cluster {cluster.id}: {e}")
-
-        return clusters
+        try:
+            prompt = (
+                "Summarize these academic concepts into a 3-5 word topic label:\n"
+                f"{', '.join(keywords[:10])}\n\n"
+                "Respond with ONLY the label, nothing else."
+            )
+            label = await asyncio.wait_for(
+                self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
+                timeout=5.0
+            )
+            result = label.strip().strip('"').strip("'")
+            if len(result) < 3 or len(result) > 60:
+                filtered = [k for k in keywords[:3] if k and k.strip()]
+                return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
+            return result
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"LLM label generation failed: {e}")
+            filtered = [k for k in keywords[:3] if k and k.strip()]
+            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"

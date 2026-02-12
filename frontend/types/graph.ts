@@ -4,24 +4,24 @@
 
 // Entity Types (Hybrid Mode: Paper/Author + Concept-Centric + TTO)
 export type EntityType =
-  | 'Paper'      // Hybrid Mode - 논문 노드
-  | 'Author'     // Hybrid Mode - 저자 노드
-  | 'Concept'    // Primary - 핵심 개념
-  | 'Method'     // Primary - 연구 방법론
-  | 'Finding'    // Primary - 연구 결과
-  | 'Problem'    // Secondary - 연구 문제
-  | 'Dataset'    // Secondary - 데이터셋
-  | 'Metric'     // Secondary - 측정 지표
-  | 'Innovation' // Secondary - 혁신/기여
-  | 'Limitation' // Secondary - 한계점
+  | 'Paper'      // Hybrid Mode - Paper node
+  | 'Author'     // Hybrid Mode - Author node
+  | 'Concept'    // Primary - Core concept
+  | 'Method'     // Primary - Research methodology
+  | 'Finding'    // Primary - Research finding
+  | 'Problem'    // Secondary - Research problem
+  | 'Dataset'    // Secondary - Dataset
+  | 'Metric'     // Secondary - Measurement metric
+  | 'Innovation' // Secondary - Innovation/contribution
+  | 'Limitation' // Secondary - Limitation
   // TTO (Technology Transfer Office) entities
-  | 'Invention'  // TTO - 발명
-  | 'Patent'     // TTO - 특허
-  | 'Inventor'   // TTO - 발명가
-  | 'Technology' // TTO - 기술 영역
-  | 'License'    // TTO - 라이선스
-  | 'Grant'      // TTO - 연구비
-  | 'Department'; // TTO - 학과
+  | 'Invention'  // TTO - Invention
+  | 'Patent'     // TTO - Patent
+  | 'Inventor'   // TTO - Inventor
+  | 'Technology' // TTO - Technology area
+  | 'License'    // TTO - License
+  | 'Grant'      // TTO - Grant
+  | 'Department'; // TTO - Department
 
 // Relationship Types (Updated for Concept-Centric Design)
 export type RelationshipType =
@@ -37,6 +37,8 @@ export type RelationshipType =
   | 'BRIDGES_GAP'
   | 'APPLIES_TO'
   | 'ADDRESSES'
+  | 'MENTIONS'  // Phase 7A: Chunk->Entity provenance
+  | 'SAME_AS'   // Phase 10B: Cross-paper entity identity link
   // TTO relationship types
   | 'INVENTED_BY'
   | 'CITES_PRIOR_ART'
@@ -197,11 +199,21 @@ export interface Citation {
 export interface ChatResponse {
   conversation_id: string;
   answer: string;
+  intent?: string;
   citations: Citation[];
   highlighted_nodes: string[];
   highlighted_edges: string[];
   suggested_follow_ups?: string[];
   agent_trace?: Record<string, unknown>;
+  // Phase 11B: Search strategy metadata
+  meta?: ChatResponseMeta;
+}
+
+// Phase 11B: Search Strategy Metadata
+export interface ChatResponseMeta {
+  search_strategy?: 'vector' | 'graph_traversal' | 'hybrid';
+  hop_count?: number;
+  query_type?: string;
 }
 
 // Import
@@ -231,17 +243,31 @@ export interface ImportCheckpoint {
 export interface ImportJob {
   job_id: string;
   // BUG-028: Added 'interrupted' status for jobs killed by server restart
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted';
+  status:
+    | 'pending'
+    | 'running'
+    | 'validating'
+    | 'extracting'
+    | 'processing'
+    | 'building_graph'
+    | 'completed'
+    | 'failed'
+    | 'interrupted';
   progress: number;
   current_step?: string;
   total_steps?: number;
   completed_steps?: number;
   message?: string;
   error?: string;
+  project_id?: string;
+  stats?: Record<string, unknown>;
+  reliability_summary?: ImportReliabilitySummary;
   result?: {
-    project_id: string;
-    nodes_created: number;
-    edges_created: number;
+    project_id?: string;
+    nodes_created?: number;
+    edges_created?: number;
+    reliability_summary?: ImportReliabilitySummary;
+    stats?: Record<string, unknown>;
   };
   // BUG-028 Extension: Checkpoint for resume support
   checkpoint?: ImportCheckpoint;
@@ -254,6 +280,33 @@ export interface ImportJob {
     checkpoint?: ImportCheckpoint;
     [key: string]: unknown;
   };
+}
+
+export interface ImportReliabilitySummary {
+  raw_entities_extracted: number;
+  entities_after_resolution: number;
+  merges_applied: number;
+  canonicalization_rate: number;
+  llm_pairs_reviewed: number;
+  llm_pairs_confirmed: number;
+  llm_confirmation_accept_rate: number;
+  potential_false_merge_count: number;
+  potential_false_merge_ratio: number;
+  potential_false_merge_samples: Array<{
+    entity_type: string;
+    context_bucket: string;
+    left: string;
+    right: string;
+    similarity: number;
+  }>;
+  relationships_created: number;
+  evidence_backed_relationships: number;
+  provenance_coverage: number;
+  low_trust_edges: number;
+  low_trust_edge_ratio: number;
+  embedding_candidates_found?: number;
+  string_candidates_found?: number;
+  llm_confirmed_merges?: number;
 }
 
 // BUG-028 Extension: Resume info response
@@ -344,6 +397,42 @@ export interface GapAnalysisResult {
   total_relationships: number;
 }
 
+export interface GapReproBridgeRelationship {
+  relationship_id: string;
+  source_name: string;
+  target_name: string;
+  confidence: number;
+  hypothesis_title?: string | null;
+  ai_generated: boolean;
+}
+
+export interface GapReproRecommendationTrace {
+  status: 'success' | 'rate_limited' | 'timeout' | 'failed' | string;
+  query_used: string;
+  retry_after_seconds?: number | null;
+  error?: string | null;
+  papers: Array<{
+    title: string;
+    year: number | null;
+    citation_count: number;
+    url: string | null;
+    abstract_snippet: string;
+  }>;
+}
+
+export interface GapReproReport {
+  project_id: string;
+  gap_id: string;
+  generated_at: string;
+  gap_strength: number;
+  cluster_a_names: string[];
+  cluster_b_names: string[];
+  bridge_candidates: string[];
+  research_questions: string[];
+  bridge_relationships: GapReproBridgeRelationship[];
+  recommendation: GapReproRecommendationTrace;
+}
+
 // Extended Entity Type for Concept-Centric Design
 export type ConceptCentricEntityType =
   | 'Concept'
@@ -370,11 +459,19 @@ export interface ConceptCentricProperties {
   [key: string]: unknown;
 }
 
+// Table Source Metadata (Phase 9A: Table Extraction)
+export interface TableSourceMetadata {
+  source_type: 'table';
+  table_page?: number;
+  table_index?: number;
+  confidence?: number;
+}
+
 // View Mode Types (InfraNodus-style visualization modes)
 // - '3d': Full 3D force-directed graph
 // - 'topic': 2D cluster block visualization
 // - 'gaps': Gap-focused visualization with bridge highlighting
-export type ViewMode = '3d' | 'topic' | 'gaps' | 'citations';
+export type ViewMode = '3d' | 'topic' | 'gaps' | 'citations' | 'temporal';
 
 // Gaps View Configuration
 export interface GapsViewConfig {
@@ -440,6 +537,104 @@ export interface RelationshipEvidence {
   relationship_type: string;
   evidence_chunks: EvidenceChunk[];
   total_evidence: number;
+  error_code?: string | null;  // "table_missing", "permission_denied", "query_failed"
+  ai_explanation?: string;  // v0.11.0: AI-generated explanation when no text evidence found
+  provenance_source?: ProvenanceSource;  // Phase 11A: Which tier provided the evidence
+}
+
+// ============================================
+// Phase 11A: MENTIONS-based Source Tracking (Provenance Chain UI)
+// ============================================
+
+/** Identifies which tier of the 3-tier evidence cascade produced the chunks */
+export type ProvenanceSource =
+  | 'relationship_evidence'   // Tier 1: Direct relationship_evidence table
+  | 'source_chunk_ids'        // Tier 2: Entity property provenance (MENTIONS-based)
+  | 'text_search'             // Tier 3: Fallback text-search by entity name
+  | 'ai_explanation';         // Tier 4: LLM-generated explanation (no chunks)
+
+/** Provenance-specific chunk with MENTIONS metadata */
+export interface MentionsEvidence {
+  chunk_id: string;
+  chunk_text: string;
+  page_num?: number;
+  section_type?: string;
+  relevance_score: number;
+}
+
+// ============================================
+// Phase 11E: Gap Evaluation Report Types
+// ============================================
+
+export interface GapMatch {
+  ground_truth_id: string;
+  ground_truth_description: string;
+  detected_id: string;
+  gap_strength: number;
+  cluster_a_concepts: string[];
+  cluster_b_concepts: string[];
+}
+
+export interface UnmatchedGap {
+  gap_id: string;
+  description: string;
+  cluster_a_concepts: string[];
+  cluster_b_concepts: string[];
+}
+
+export interface UnmatchedDetected {
+  id: string;
+  gap_strength: number;
+  cluster_a_concepts: string[];
+  cluster_b_concepts: string[];
+}
+
+export interface GapEvaluationReport {
+  recall: number;
+  precision: number;
+  f1: number;
+  true_positives: number;
+  false_positives: number;
+  false_negatives: number;
+  matched_gaps: GapMatch[];
+  unmatched_gaps: UnmatchedGap[];
+  false_positives_list: UnmatchedDetected[];
+  ground_truth_count: number;
+  detected_count: number;
+}
+
+// ============================================
+// Phase 11E: Query Performance Metrics Types
+// ============================================
+
+export interface QueryMetricsByType {
+  [queryType: string]: {
+    count: number;
+    avg_latency_ms: number;
+    p95_latency_ms: number;
+  };
+}
+
+export interface QueryMetricsByHop {
+  [hopCount: string]: {
+    count: number;
+    avg_latency_ms: number;
+    p95_latency_ms: number;
+  };
+}
+
+export interface QueryMetrics {
+  total_queries: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  max_latency_ms: number;
+  by_query_type: QueryMetricsByType;
+  by_hop_count: QueryMetricsByHop;
+  graphdb_recommendation: string;
+  threshold_info: {
+    three_hop_target_ms: number;
+    description: string;
+  };
 }
 
 // ============================================
@@ -468,7 +663,7 @@ export interface DiversityMetrics {
   shannon_entropy: number;
   modularity: number;
   bias_score: number;
-  diversity_rating: 'high' | 'medium' | 'low';
+  diversity_rating: 'high' | 'medium' | 'low' | 'focused';  // v0.6.0: Added 'focused'
   cluster_sizes: number[];
 }
 

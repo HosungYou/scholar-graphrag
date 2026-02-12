@@ -13,15 +13,24 @@ import json
 import logging
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
+from time import perf_counter
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from enum import Enum
+import asyncpg.exceptions
+from datetime import datetime
+import io
 
 from database import db
+from graph.entity_resolution import EntityResolutionService
 from graph.graph_store import GraphStore
+from graph.metrics_cache import metrics_cache
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from routers.projects import check_project_access
+from routers.integrations import get_effective_api_key
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +61,10 @@ class RelationshipEvidenceResponse(BaseModel):
     relationship_type: str
     evidence_chunks: List[EvidenceChunkResponse]
     total_evidence: int
+    # v0.9.0: Error code for graceful degradation
+    error_code: Optional[str] = None  # "table_missing", "permission_denied", "query_failed"
+    # v0.11.0: AI-generated explanation when no text evidence
+    ai_explanation: Optional[str] = None
 
 
 def _parse_json_field(value) -> dict:
@@ -92,6 +105,60 @@ def _parse_embedding(value) -> list:
         return []
 
 
+def escape_sql_like(s: str) -> str:
+    """Escape special characters for SQL LIKE queries."""
+    if not s:
+        return s
+    return s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_').replace("'", "''")
+
+
+def _log_query_perf(
+    endpoint: str,
+    query_name: str,
+    started_at: float,
+    row_count: Optional[int] = None,
+    project_id: Optional[str] = None,
+) -> None:
+    """
+    Log lightweight query performance metrics for hotspot endpoints.
+    """
+    duration_ms = (perf_counter() - started_at) * 1000
+    message = (
+        "[QueryPerf] endpoint=%s query=%s project_id=%s rows=%s duration_ms=%.2f"
+    )
+    args = (
+        endpoint,
+        query_name,
+        project_id or "-",
+        row_count if row_count is not None else "-",
+        duration_ms,
+    )
+    if duration_ms >= 1000:
+        logger.warning(message, *args)
+    else:
+        logger.info(message, *args)
+
+
+def _log_gap_chain_event(event: str, **fields) -> None:
+    """
+    Structured trace log for GAP -> bridge -> recommendation pipeline.
+
+    Emits a compact JSON payload so downstream log tooling can filter by event.
+    """
+    payload = {"event": event, "ts": datetime.utcnow().isoformat() + "Z"}
+    for key, value in fields.items():
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            payload[key] = value
+        elif isinstance(value, list):
+            payload[key] = value[:10]
+            payload[f"{key}_count"] = len(value)
+        elif isinstance(value, dict):
+            payload[key] = value
+        else:
+            payload[key] = str(value)
+    logger.info("[GapChain] %s", json.dumps(payload, ensure_ascii=True))
+
+
 router = APIRouter()
 
 
@@ -112,6 +179,8 @@ class RelationshipType(str, Enum):
     SUPPORTS = "SUPPORTS"
     CONTRADICTS = "CONTRADICTS"
     RELATED_TO = "RELATED_TO"
+    MENTIONS = "MENTIONS"  # Phase 7A: Chunk→Entity provenance
+    SAME_AS = "SAME_AS"  # Phase 10B: Cross-paper entity identity link
 
 
 # Pydantic Models
@@ -242,6 +311,7 @@ async def get_nodes(
     await verify_project_access(database, project_id, current_user, "access")
 
     try:
+        query_started = perf_counter()
         if entity_type:
             rows = await database.fetch(
                 """
@@ -269,6 +339,13 @@ async def get_nodes(
                 limit,
                 offset,
             )
+        _log_query_perf(
+            endpoint="get_nodes",
+            query_name="entities_list",
+            started_at=query_started,
+            row_count=len(rows),
+            project_id=str(project_id),
+        )
 
         return [
             NodeResponse(
@@ -303,6 +380,7 @@ async def get_edges(
     await verify_project_access(database, project_id, current_user, "access")
 
     try:
+        query_started = perf_counter()
         if relationship_type:
             rows = await database.fetch(
                 """
@@ -330,6 +408,13 @@ async def get_edges(
                 limit,
                 offset,
             )
+        _log_query_perf(
+            endpoint="get_edges",
+            query_name="relationships_list",
+            started_at=query_started,
+            row_count=len(rows),
+            project_id=str(project_id),
+        )
 
         return [
             EdgeResponse(
@@ -356,7 +441,8 @@ async def get_edges(
 async def get_visualization_data(
     project_id: UUID,
     entity_types: Optional[List[str]] = Query(None),
-    max_nodes: int = Query(200, le=500),
+    max_nodes: int = Query(1000, le=5000),
+    max_edges: int = Query(15000, ge=1000, le=50000),
     database=Depends(get_db),
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
@@ -365,6 +451,7 @@ async def get_visualization_data(
     await verify_project_access(database, project_id, current_user, "access")
 
     try:
+        endpoint_started = perf_counter()
         # Build entity type filter
         type_filter = ""
         params = [str(project_id), max_nodes]
@@ -381,15 +468,22 @@ async def get_visualization_data(
             WHERE project_id = $1 {type_filter}
             ORDER BY
                 CASE entity_type::text
-                    WHEN 'Paper' THEN 1
-                    WHEN 'Concept' THEN 2
-                    WHEN 'Author' THEN 3
-                    ELSE 4
+                    WHEN 'Paper' THEN 5
+                    WHEN 'Author' THEN 5
+                    ELSE 1
                 END,
                 created_at DESC
             LIMIT $2
         """
+        nodes_query_started = perf_counter()
         node_rows = await database.fetch(nodes_query, *params)
+        _log_query_perf(
+            endpoint="get_visualization_data",
+            query_name="nodes_for_visualization",
+            started_at=nodes_query_started,
+            row_count=len(node_rows),
+            project_id=str(project_id),
+        )
 
         nodes = [
             NodeResponse(
@@ -414,11 +508,21 @@ async def get_visualization_data(
                 WHERE project_id = $1
                 AND source_id = ANY($2::uuid[])
                 AND target_id = ANY($2::uuid[])
+                LIMIT $3
             """
+            edges_query_started = perf_counter()
             edge_rows = await database.fetch(
                 edges_query,
                 str(project_id),
                 node_ids,
+                max_edges,
+            )
+            _log_query_perf(
+                endpoint="get_visualization_data",
+                query_name="edges_for_visualization",
+                started_at=edges_query_started,
+                row_count=len(edge_rows),
+                project_id=str(project_id),
             )
 
             edges = [
@@ -437,6 +541,13 @@ async def get_visualization_data(
         else:
             edges = []
 
+        _log_query_perf(
+            endpoint="get_visualization_data",
+            query_name="total_endpoint",
+            started_at=endpoint_started,
+            row_count=(len(nodes) + len(edges)),
+            project_id=str(project_id),
+        )
         return GraphDataResponse(nodes=nodes, edges=edges)
     except HTTPException:
         raise
@@ -458,7 +569,9 @@ async def get_subgraph(
 ):
     """Get subgraph centered around a specific node using BFS traversal. Requires auth in production."""
     try:
+        endpoint_started = perf_counter()
         # Validate node exists
+        center_query_started = perf_counter()
         center_node = await database.fetchrow(
             """
             SELECT id, entity_type::text, name, properties, project_id
@@ -466,6 +579,12 @@ async def get_subgraph(
             WHERE id = $1
             """,
             node_id,
+        )
+        _log_query_perf(
+            endpoint="get_subgraph",
+            query_name="center_node_lookup",
+            started_at=center_query_started,
+            row_count=1 if center_node else 0,
         )
 
         if not center_node:
@@ -492,10 +611,18 @@ async def get_subgraph(
                 WHERE project_id = $2
                 AND (source_id::text = ANY($1) OR target_id::text = ANY($1))
             """
+            neighbor_query_started = perf_counter()
             neighbor_rows = await database.fetch(
                 neighbors_query,
                 current_level,
                 str(project_id),
+            )
+            _log_query_perf(
+                endpoint="get_subgraph",
+                query_name="neighbor_expansion",
+                started_at=neighbor_query_started,
+                row_count=len(neighbor_rows),
+                project_id=str(project_id),
             )
 
             next_level = []
@@ -510,6 +637,7 @@ async def get_subgraph(
             current_level = next_level
 
         # Get all nodes
+        subgraph_nodes_started = perf_counter()
         node_rows = await database.fetch(
             """
             SELECT id, entity_type::text, name, properties
@@ -517,6 +645,13 @@ async def get_subgraph(
             WHERE id = ANY($1::uuid[])
             """,
             list(visited_ids),
+        )
+        _log_query_perf(
+            endpoint="get_subgraph",
+            query_name="subgraph_nodes",
+            started_at=subgraph_nodes_started,
+            row_count=len(node_rows),
+            project_id=str(project_id),
         )
 
         nodes = [
@@ -530,6 +665,7 @@ async def get_subgraph(
         ]
 
         # Get edges between visited nodes
+        subgraph_edges_started = perf_counter()
         edge_rows = await database.fetch(
             """
             SELECT id, source_id, target_id, relationship_type::text, properties, weight
@@ -540,6 +676,13 @@ async def get_subgraph(
             """,
             str(project_id),
             list(visited_ids),
+        )
+        _log_query_perf(
+            endpoint="get_subgraph",
+            query_name="subgraph_edges",
+            started_at=subgraph_edges_started,
+            row_count=len(edge_rows),
+            project_id=str(project_id),
         )
 
         edges = [
@@ -554,6 +697,13 @@ async def get_subgraph(
             for row in edge_rows
         ]
 
+        _log_query_perf(
+            endpoint="get_subgraph",
+            query_name="total_endpoint",
+            started_at=endpoint_started,
+            row_count=(len(nodes) + len(edges)),
+            project_id=str(project_id),
+        )
         return GraphDataResponse(nodes=nodes, edges=edges)
     except HTTPException:
         raise
@@ -609,6 +759,7 @@ async def search_nodes(
         else:
             type_filter = ""
 
+        search_started = perf_counter()
         rows = await database.fetch(
             f"""
             SELECT id, entity_type::text, name, properties
@@ -620,6 +771,13 @@ async def search_nodes(
             LIMIT $2
             """,
             *params,
+        )
+        _log_query_perf(
+            endpoint="search_nodes",
+            query_name="entity_name_like_search",
+            started_at=search_started,
+            row_count=len(rows),
+            project_id=request.project_id,
         )
 
         return [
@@ -825,7 +983,7 @@ async def get_entity(
 # ============================================
 
 class ConceptClusterResponse(BaseModel):
-    cluster_id: int
+    cluster_id: Optional[int] = None
     concepts: List[str]
     concept_names: List[str]
     size: int
@@ -872,6 +1030,8 @@ class GapAnalysisResponse(BaseModel):
     centrality_metrics: List[CentralityMetricsResponse]
     total_concepts: int
     total_relationships: int
+    # v0.9.0: Reason code when gaps is empty
+    no_gaps_reason: Optional[str] = None  # "no_clusters", "not_analyzed", "well_connected"
 
 
 @router.get("/gaps/{project_id}/analysis", response_model=GapAnalysisResponse)
@@ -995,12 +1155,21 @@ async def get_gap_analysis(
             str(project_id),
         )
 
+        # v0.9.0: Determine reason when no gaps found
+        no_gaps_reason = None
+        if len(gaps) == 0:
+            if len(clusters) < 2:
+                no_gaps_reason = "no_clusters"
+            else:
+                no_gaps_reason = "well_connected"  # Clusters exist but all are well-connected
+
         return GapAnalysisResponse(
             clusters=clusters,
             gaps=gaps,
             centrality_metrics=centrality_metrics,
             total_concepts=concept_count or 0,
             total_relationships=relationship_count or 0,
+            no_gaps_reason=no_gaps_reason,
         )
 
     except HTTPException:
@@ -1025,8 +1194,15 @@ async def refresh_gap_analysis(
 
     try:
         from graph.gap_detector import GapDetector
+        import numpy as np
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        min_concepts_for_embedding_path = 10
+        max_concepts_for_gap = 1200
+        max_tfidf_features = 64
 
         # Get all concepts with embeddings
+        # Try to get concepts with embeddings first
         concept_rows = await database.fetch(
             """
             SELECT id, name, properties, embedding
@@ -1034,18 +1210,86 @@ async def refresh_gap_analysis(
             WHERE project_id = $1
             AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
             AND embedding IS NOT NULL
+            ORDER BY id
+            LIMIT $2
             """,
             str(project_id),
+            max_concepts_for_gap,
         )
 
-        if not concept_rows:
-            return GapAnalysisResponse(
-                clusters=[],
-                gaps=[],
-                centrality_metrics=[],
-                total_concepts=0,
-                total_relationships=0,
+        use_tfidf_fallback = False
+
+        if not concept_rows or len(concept_rows) < min_concepts_for_embedding_path:
+            # TF-IDF fallback: fetch all concepts regardless of embedding status
+            logger.warning(
+                "Only %d concepts with embeddings (need %d+). Using TF-IDF fallback.",
+                len(concept_rows) if concept_rows else 0,
+                min_concepts_for_embedding_path,
             )
+            all_concept_rows = await database.fetch(
+                """
+                SELECT id, name, properties
+                FROM entities
+                WHERE project_id = $1
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                ORDER BY id
+                LIMIT $2
+                """,
+                str(project_id),
+                max_concepts_for_gap,
+            )
+
+            if not all_concept_rows or len(all_concept_rows) < 3:
+                return GapAnalysisResponse(
+                    clusters=[],
+                    gaps=[],
+                    centrality_metrics=[],
+                    total_concepts=len(all_concept_rows) if all_concept_rows else 0,
+                    total_relationships=0,
+                    no_gaps_reason="insufficient_concepts",
+                )
+
+            # Generate TF-IDF pseudo-embeddings
+            try:
+                concept_names = [(r["name"] or "").strip() for r in all_concept_rows]
+                concept_names = [n if n else "unknown concept" for n in concept_names]
+                vectorizer = TfidfVectorizer(
+                    max_features=max_tfidf_features,
+                    stop_words='english',
+                    dtype=np.float32,
+                )
+                tfidf_matrix = vectorizer.fit_transform(concept_names)
+                feature_count = tfidf_matrix.shape[1]
+                if feature_count == 0:
+                    raise ValueError("TF-IDF produced zero features")
+
+                # Create synthetic concept_rows with TF-IDF embeddings
+                concept_rows = []
+                for i, row in enumerate(all_concept_rows):
+                    concept_rows.append({
+                        "id": row["id"],
+                        "name": row["name"],
+                        "properties": row["properties"],
+                        "embedding": tfidf_matrix.getrow(i).toarray().astype(np.float32, copy=False).ravel().tolist(),
+                    })
+                use_tfidf_fallback = True
+                logger.info(
+                    "TF-IDF fallback: generated pseudo-embeddings for %d concepts "
+                    "(features=%d, concept_cap=%d)",
+                    len(concept_rows),
+                    feature_count,
+                    max_concepts_for_gap,
+                )
+            except Exception as e:
+                logger.error(f"TF-IDF fallback failed: {e}")
+                return GapAnalysisResponse(
+                    clusters=[],
+                    gaps=[],
+                    centrality_metrics=[],
+                    total_concepts=len(all_concept_rows),
+                    total_relationships=0,
+                    no_gaps_reason="embedding_unavailable",
+                )
 
         # Get relationships
         relationship_rows = await database.fetch(
@@ -1058,15 +1302,18 @@ async def refresh_gap_analysis(
         )
 
         # Convert to format expected by GapDetector
-        concepts = [
-            {
+        concepts = []
+        for row in concept_rows:
+            if use_tfidf_fallback:
+                embedding = row["embedding"]  # Already a list from TF-IDF
+            else:
+                embedding = _parse_embedding(row["embedding"]) or None
+            concepts.append({
                 "id": str(row["id"]),
                 "name": row["name"],
-                "embedding": _parse_embedding(row["embedding"]) or None,
-                "properties": row["properties"] or {},
-            }
-            for row in concept_rows
-        ]
+                "embedding": embedding,
+                "properties": row.get("properties") or {},
+            })
 
         relationships = [
             {
@@ -1080,12 +1327,8 @@ async def refresh_gap_analysis(
         ]
 
         # Run gap detection
-        # Get LLM provider for cluster label generation
-        from routers.import_ import get_llm_provider
-        try:
-            llm = get_llm_provider()
-        except Exception:
-            llm = None
+        from dependencies import get_llm_provider
+        llm = get_llm_provider()
         gap_detector = GapDetector(llm_provider=llm)
         analysis = await gap_detector.analyze_graph(concepts, relationships)
 
@@ -1111,6 +1354,17 @@ async def refresh_gap_analysis(
                 for cid in cluster.concept_ids
             ]
 
+            # Generate meaningful label using LLM (with fallback)
+            if cluster.keywords:
+                label = await gap_detector._generate_cluster_label(cluster.keywords)
+            elif cluster_concept_names:
+                filtered_names = [n for n in cluster_concept_names if n and n.strip()]
+                label = ", ".join(filtered_names[:3]) if filtered_names else f"Cluster {cluster.id + 1}"
+            else:
+                label = f"Cluster {cluster.id + 1}"
+
+            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}")
+
             await database.execute(
                 """
                 INSERT INTO concept_clusters (project_id, cluster_id, concepts, concept_names, size, density, label)
@@ -1122,7 +1376,7 @@ async def refresh_gap_analysis(
                 cluster_concept_names,  # Derived from concept_ids
                 len(cluster.concept_ids),  # Computed size
                 0.0,  # Default density (can be calculated if needed)
-                cluster.name or f"Cluster {cluster.id + 1}",
+                label,
             )
 
         # Store gaps
@@ -1140,9 +1394,29 @@ async def refresh_gap_analysis(
                 for pe in (gap.potential_edges or [])
             ]
 
-            # Convert concept IDs to strings
-            concept_a_ids_str = [str(cid) for cid in gap.concept_a_ids]
-            concept_b_ids_str = [str(cid) for cid in gap.concept_b_ids]
+            # Convert concept IDs to sets for efficient lookup
+            concept_ids_a = set(str(cid) for cid in gap.concept_a_ids)
+            concept_ids_b = set(str(cid) for cid in gap.concept_b_ids)
+            a_names = [c["name"] for c in concepts if c["id"] in concept_ids_a and c["name"]][:5]
+            b_names = [c["name"] for c in concepts if c["id"] in concept_ids_b and c["name"]][:5]
+
+            # Fallback 1: cluster keywords
+            if not a_names:
+                cl_a = next((cl for cl in analysis.get("clusters", [])
+                             if cl.id == gap.cluster_a_id), None)
+                if cl_a and cl_a.keywords:
+                    a_names = [k for k in cl_a.keywords[:3] if k and k.strip()]
+            if not b_names:
+                cl_b = next((cl for cl in analysis.get("clusters", [])
+                             if cl.id == gap.cluster_b_id), None)
+                if cl_b and cl_b.keywords:
+                    b_names = [k for k in cl_b.keywords[:3] if k and k.strip()]
+
+            # Fallback 2: default label
+            if not a_names:
+                a_names = [f"Cluster {gap.cluster_a_id + 1}"]
+            if not b_names:
+                b_names = [f"Cluster {gap.cluster_b_id + 1}"]
 
             await database.execute(
                 """
@@ -1156,10 +1430,10 @@ async def refresh_gap_analysis(
                 str(project_id),
                 gap.cluster_a_id,
                 gap.cluster_b_id,
-                concept_a_ids_str,
-                concept_b_ids_str,
-                [c["name"] for c in concepts if c["id"] in concept_a_ids_str][:5],
-                [c["name"] for c in concepts if c["id"] in concept_b_ids_str][:5],
+                list(concept_ids_a),
+                list(concept_ids_b),
+                a_names,
+                b_names,
                 gap.gap_strength,
                 gap.bridge_concepts or [],
                 gap.suggested_research_questions or [],
@@ -1181,6 +1455,8 @@ async def refresh_gap_analysis(
                 },
                 metric.concept_id,
             )
+
+        await metrics_cache.invalidate_project(str(project_id))
 
         # Return updated analysis
         return await get_gap_analysis(project_id, database, current_user)
@@ -1314,8 +1590,19 @@ async def generate_bridge_hypotheses(
         # Verify project access
         await verify_project_access(database, project_id, current_user, "access")
 
+        cluster_a_names = row["cluster_a_names"] or []
+        cluster_b_names = row["cluster_b_names"] or []
+        _log_gap_chain_event(
+            "bridge_generation_requested",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            cluster_a_terms=cluster_a_names,
+            cluster_b_terms=cluster_b_names,
+            gap_strength=row["gap_strength"],
+        )
+
         # Get LLM provider
-        from llm.base import get_llm_provider
+        from dependencies import get_llm_provider
 
         llm = get_llm_provider()
 
@@ -1335,8 +1622,17 @@ async def generate_bridge_hypotheses(
         # Generate hypotheses
         result = await gap_detector.generate_bridge_hypotheses(
             gap_model,
-            row["cluster_a_names"] or [],
-            row["cluster_b_names"] or [],
+            cluster_a_names,
+            cluster_b_names,
+        )
+
+        _log_gap_chain_event(
+            "bridge_generation_completed",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            bridge_type=result.get("bridge_type", "theoretical"),
+            hypothesis_count=len(result.get("hypotheses", [])),
+            key_insight=result.get("key_insight", ""),
         )
 
         # Convert to response model
@@ -1361,6 +1657,11 @@ async def generate_bridge_hypotheses(
     except HTTPException:
         raise
     except Exception as e:
+        _log_gap_chain_event(
+            "bridge_generation_failed",
+            gap_id=str(gap_id),
+            error=str(e),
+        )
         logger.error(f"Failed to generate bridge hypotheses: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate bridge hypotheses")
 
@@ -1426,6 +1727,14 @@ async def create_bridge_from_hypothesis(
 
         # Verify project access (write access needed)
         await verify_project_access(database, project_id, current_user, "write")
+        _log_gap_chain_event(
+            "bridge_creation_requested",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            hypothesis_title=request.hypothesis_title,
+            requested_concepts=request.connecting_concepts,
+            confidence=request.confidence,
+        )
 
         # Find concept entities by name
         concept_ids = []
@@ -1442,6 +1751,13 @@ async def create_bridge_from_hypothesis(
             if row:
                 concept_ids.append(str(row["id"]))
 
+        _log_gap_chain_event(
+            "bridge_creation_resolved_concepts",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            resolved_concept_ids=concept_ids,
+        )
+
         if len(concept_ids) < 2:
             raise HTTPException(
                 status_code=400,
@@ -1451,6 +1767,8 @@ async def create_bridge_from_hypothesis(
         # Create BRIDGES_GAP relationships between consecutive pairs
         import uuid
         relationship_ids = []
+        created_count = 0
+        reused_count = 0
 
         for i in range(len(concept_ids) - 1):
             source_id = concept_ids[i]
@@ -1471,6 +1789,7 @@ async def create_bridge_from_hypothesis(
 
             if existing:
                 relationship_ids.append(str(existing["id"]))
+                reused_count += 1
                 continue
 
             # Create new relationship
@@ -1497,8 +1816,17 @@ async def create_bridge_from_hypothesis(
             )
 
             relationship_ids.append(rel_id)
+            created_count += 1
 
         logger.info(f"Created {len(relationship_ids)} bridge relationships for gap {gap_id}")
+        _log_gap_chain_event(
+            "bridge_creation_completed",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            relationships_created=created_count,
+            relationships_reused=reused_count,
+            relationship_ids=relationship_ids,
+        )
 
         return BridgeCreationResponse(
             success=True,
@@ -1510,6 +1838,11 @@ async def create_bridge_from_hypothesis(
     except HTTPException:
         raise
     except Exception as e:
+        _log_gap_chain_event(
+            "bridge_creation_failed",
+            gap_id=str(gap_id),
+            error=str(e),
+        )
         logger.error(f"Failed to create bridge relationships: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create bridge relationships: {str(e)}")
 
@@ -1586,7 +1919,7 @@ async def generate_gap_questions(
 
 
 # ============================================================
-# Paper Recommendations for Research Gaps
+# Gap-Based Paper Recommendations
 # ============================================================
 
 class RecommendedPaperResponse(BaseModel):
@@ -1596,71 +1929,496 @@ class RecommendedPaperResponse(BaseModel):
     url: Optional[str] = None
     abstract_snippet: str = ""
 
-
 class GapRecommendationsResponse(BaseModel):
     gap_id: str
     query_used: str
     papers: List[RecommendedPaperResponse]
+
+
+class GapBridgeRelationshipTraceResponse(BaseModel):
+    relationship_id: str
+    source_name: str
+    target_name: str
+    confidence: float = 0.0
+    hypothesis_title: Optional[str] = None
+    ai_generated: bool = False
+
+
+class GapRecommendationTraceResponse(BaseModel):
+    status: str  # success | rate_limited | timeout | failed
+    query_used: str
+    retry_after_seconds: Optional[int] = None
     error: Optional[str] = None
+    papers: List[RecommendedPaperResponse] = []
 
 
-@router.get("/gaps/{project_id}/recommendations", response_model=GapRecommendationsResponse)
+class GapReproReportResponse(BaseModel):
+    project_id: str
+    gap_id: str
+    generated_at: str
+    gap_strength: float
+    cluster_a_names: List[str]
+    cluster_b_names: List[str]
+    bridge_candidates: List[str]
+    research_questions: List[str]
+    bridge_relationships: List[GapBridgeRelationshipTraceResponse]
+    recommendation: GapRecommendationTraceResponse
+
+
+def _build_gap_recommendation_query(
+    bridge_candidates: List[str],
+    cluster_a_names: List[str],
+    cluster_b_names: List[str],
+) -> str:
+    """Build deterministic recommendation query from gap context."""
+    query_parts = (bridge_candidates or [])[:3] + (cluster_a_names or [])[:2] + (cluster_b_names or [])[:2]
+    return " ".join(query_parts) if query_parts else "research gap"
+
+
+async def _fetch_gap_recommendations_bundle(
+    *,
+    query: str,
+    limit: int,
+    project_id: UUID,
+    gap_id: UUID,
+    current_user: Optional[User],
+    strict_rate_limit: bool = False,
+):
+    """
+    Fetch Semantic Scholar recommendations with consistent status envelope.
+
+    strict_rate_limit=True re-raises SemanticScholarRateLimitError so callers
+    can map it to HTTP 429.
+    """
+    import asyncio
+    from integrations.semantic_scholar import (
+        SemanticScholarClient,
+        SemanticScholarRateLimitError,
+    )
+
+    papers: List[RecommendedPaperResponse] = []
+    status = "success"
+    retry_after_seconds: Optional[int] = None
+    error_message: Optional[str] = None
+
+    try:
+        s2_key = await get_effective_api_key(
+            current_user,
+            "semantic_scholar",
+            settings.semantic_scholar_api_key,
+        )
+        async with SemanticScholarClient(api_key=s2_key or None) as client:
+            results = await asyncio.wait_for(
+                client.search_papers(query=query, limit=limit),
+                timeout=15.0,
+            )
+            for p in results:
+                url = None
+                if p.doi:
+                    url = f"https://doi.org/{p.doi}"
+                elif p.arxiv_id:
+                    url = f"https://arxiv.org/abs/{p.arxiv_id}"
+
+                snippet = ""
+                if p.abstract:
+                    snippet = p.abstract[:200] + ("..." if len(p.abstract) > 200 else "")
+
+                papers.append(
+                    RecommendedPaperResponse(
+                        title=p.title,
+                        year=p.year,
+                        citation_count=p.citation_count,
+                        url=url,
+                        abstract_snippet=snippet,
+                    )
+                )
+
+        _log_gap_chain_event(
+            "recommendation_fetch_completed",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            query=query,
+            papers_returned=len(papers),
+        )
+    except SemanticScholarRateLimitError as e:
+        status = "rate_limited"
+        retry_after_seconds = e.retry_after
+        error_message = "Semantic Scholar rate limited. Please retry later."
+        _log_gap_chain_event(
+            "recommendation_fetch_rate_limited",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            query=query,
+            retry_after_seconds=e.retry_after,
+        )
+        if strict_rate_limit:
+            raise
+    except asyncio.TimeoutError as e:
+        status = "timeout"
+        error_message = str(e)
+        _log_gap_chain_event(
+            "recommendation_fetch_timeout",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            query=query,
+            error=str(e),
+        )
+    except Exception as e:
+        status = "failed"
+        error_message = str(e)
+        _log_gap_chain_event(
+            "recommendation_fetch_failed",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            query=query,
+            error=str(e),
+        )
+
+    return {
+        "status": status,
+        "retry_after_seconds": retry_after_seconds,
+        "error": error_message,
+        "papers": papers,
+    }
+
+
+async def _build_gap_repro_report(
+    *,
+    project_id: UUID,
+    gap_id: UUID,
+    limit: int,
+    database,
+    current_user: Optional[User],
+) -> GapReproReportResponse:
+    """Build reproducible GAP->bridge->recommendation trace for one gap."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    gap_row = await database.fetchrow(
+        """
+        SELECT id, gap_strength, bridge_candidates, research_questions,
+               cluster_a_names, cluster_b_names
+        FROM structural_gaps
+        WHERE id = $1 AND project_id = $2
+        """,
+        str(gap_id),
+        str(project_id),
+    )
+    if not gap_row:
+        raise HTTPException(status_code=404, detail="Gap not found in this project")
+
+    bridge_rows = await database.fetch(
+        """
+        SELECT r.id, r.weight, r.properties, s.name AS source_name, t.name AS target_name
+        FROM relationships r
+        JOIN entities s ON s.id = r.source_id
+        JOIN entities t ON t.id = r.target_id
+        WHERE r.project_id = $1
+          AND r.relationship_type = 'BRIDGES_GAP'
+          AND COALESCE(r.properties->>'gap_id', '') = $2
+        ORDER BY r.id
+        LIMIT 50
+        """,
+        str(project_id),
+        str(gap_id),
+    )
+
+    bridge_relationships: List[GapBridgeRelationshipTraceResponse] = []
+    for row in bridge_rows:
+        props = _parse_json_field(row.get("properties"))
+        bridge_relationships.append(
+            GapBridgeRelationshipTraceResponse(
+                relationship_id=str(row["id"]),
+                source_name=row["source_name"] or "",
+                target_name=row["target_name"] or "",
+                confidence=float(props.get("confidence", row["weight"] or 0.0) or 0.0),
+                hypothesis_title=props.get("hypothesis_title"),
+                ai_generated=bool(props.get("ai_generated", False)),
+            )
+        )
+
+    bridge_candidates = gap_row["bridge_candidates"] or []
+    cluster_a_names = gap_row["cluster_a_names"] or []
+    cluster_b_names = gap_row["cluster_b_names"] or []
+    query = _build_gap_recommendation_query(bridge_candidates, cluster_a_names, cluster_b_names)
+    _log_gap_chain_event(
+        "recommendation_query_built",
+        project_id=str(project_id),
+        gap_id=str(gap_id),
+        bridge_terms=bridge_candidates,
+        cluster_a_terms=cluster_a_names,
+        cluster_b_terms=cluster_b_names,
+        query=query,
+    )
+
+    recommendation_bundle = await _fetch_gap_recommendations_bundle(
+        query=query,
+        limit=limit,
+        project_id=project_id,
+        gap_id=gap_id,
+        current_user=current_user,
+        strict_rate_limit=False,
+    )
+
+    report = GapReproReportResponse(
+        project_id=str(project_id),
+        gap_id=str(gap_id),
+        generated_at=datetime.utcnow().isoformat() + "Z",
+        gap_strength=float(gap_row["gap_strength"] or 0.0),
+        cluster_a_names=cluster_a_names,
+        cluster_b_names=cluster_b_names,
+        bridge_candidates=bridge_candidates,
+        research_questions=gap_row["research_questions"] or [],
+        bridge_relationships=bridge_relationships,
+        recommendation=GapRecommendationTraceResponse(
+            status=recommendation_bundle["status"],
+            query_used=query,
+            retry_after_seconds=recommendation_bundle["retry_after_seconds"],
+            error=recommendation_bundle["error"],
+            papers=recommendation_bundle["papers"],
+        ),
+    )
+
+    _log_gap_chain_event(
+        "repro_report_built",
+        project_id=str(project_id),
+        gap_id=str(gap_id),
+        bridge_relationships=len(bridge_relationships),
+        recommendation_status=report.recommendation.status,
+        papers_returned=len(report.recommendation.papers),
+    )
+    return report
+
+
+@router.get("/gaps/{project_id}/recommendations/{gap_id}",
+            response_model=GapRecommendationsResponse)
 async def get_gap_recommendations(
     project_id: UUID,
-    gap_id: UUID = Query(..., description="Gap UUID from analysis"),
+    gap_id: UUID,
     limit: int = Query(5, ge=1, le=10),
     database=Depends(get_db),
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Recommend papers that could bridge a research gap."""
+    """Get paper recommendations for a structural gap via Semantic Scholar."""
     await verify_project_access(database, project_id, current_user, "access")
 
-    gap = await database.fetchrow(
-        """SELECT bridge_candidates, cluster_a_names, cluster_b_names
-           FROM structural_gaps
-           WHERE id = $1 AND project_id = $2""",
-        str(gap_id), str(project_id),
-    )
-    if not gap:
-        raise HTTPException(404, "Gap not found")
-
-    bridge = (gap["bridge_candidates"] or [])[:3]
-    kw_a = (gap["cluster_a_names"] or [])[:2]
-    kw_b = (gap["cluster_b_names"] or [])[:2]
-    query = " ".join(bridge + kw_a + kw_b)
-
-    if not query.strip():
-        return GapRecommendationsResponse(gap_id=str(gap_id), query_used="", papers=[])
-
     try:
-        import asyncio
-        from integrations.semantic_scholar import SemanticScholarClient
-        async with SemanticScholarClient() as client:
-            papers = await asyncio.wait_for(
-                client.search_papers(query=query, limit=limit),
-                timeout=15.0,
-            )
-    except (asyncio.TimeoutError, Exception) as e:
-        logger.warning(f"Semantic Scholar search failed: {e}")
-        return GapRecommendationsResponse(
-            gap_id=str(gap_id), query_used=query, papers=[],
-            error="Paper search temporarily unavailable. Please try again later.",
+        # Fetch gap with project ownership check
+        row = await database.fetchrow(
+            """
+            SELECT bridge_candidates, cluster_a_names, cluster_b_names
+            FROM structural_gaps
+            WHERE id = $1 AND project_id = $2
+            """,
+            str(gap_id),
+            str(project_id),
         )
 
-    return GapRecommendationsResponse(
-        gap_id=str(gap_id),
-        query_used=query,
-        papers=[
-            RecommendedPaperResponse(
-                title=p.title,
-                year=p.year,
-                citation_count=p.citation_count,
-                url=f"https://doi.org/{p.doi}" if p.doi else
-                    (f"https://arxiv.org/abs/{p.arxiv_id}" if p.arxiv_id else None),
-                abstract_snippet=(p.abstract or "")[:200],
+        if not row:
+            raise HTTPException(status_code=404, detail="Gap not found in this project")
+
+        # Build search query from bridge candidates + cluster names
+        bridge = row["bridge_candidates"] or []
+        a_names = row["cluster_a_names"] or []
+        b_names = row["cluster_b_names"] or []
+
+        query = _build_gap_recommendation_query(bridge, a_names, b_names)
+        _log_gap_chain_event(
+            "recommendation_query_built",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            bridge_terms=bridge,
+            cluster_a_terms=a_names,
+            cluster_b_terms=b_names,
+            query=query,
+        )
+
+        papers: List[RecommendedPaperResponse] = []
+        try:
+            bundle = await _fetch_gap_recommendations_bundle(
+                query=query,
+                limit=limit,
+                project_id=project_id,
+                gap_id=gap_id,
+                current_user=current_user,
+                strict_rate_limit=True,
             )
-            for p in papers
-        ],
+            papers = bundle["papers"]
+        except Exception as e:
+            from integrations.semantic_scholar import SemanticScholarRateLimitError
+            if not isinstance(e, SemanticScholarRateLimitError):
+                raise
+            rate_limited_error: SemanticScholarRateLimitError = e
+            logger.warning(
+                "Semantic Scholar rate limited for project=%s gap=%s retry_after=%ss query=%s",
+                project_id,
+                gap_id,
+                rate_limited_error.retry_after,
+                query,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": "Semantic Scholar rate limited. Please retry later.",
+                    "retry_after_seconds": rate_limited_error.retry_after,
+                },
+                headers={"Retry-After": str(rate_limited_error.retry_after)},
+            )
+
+        return GapRecommendationsResponse(
+            gap_id=str(gap_id),
+            query_used=query,
+            papers=papers,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get gap recommendations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get recommendations")
+
+
+@router.get(
+    "/gaps/{project_id}/repro/{gap_id}",
+    response_model=GapReproReportResponse,
+)
+async def get_gap_repro_report(
+    project_id: UUID,
+    gap_id: UUID,
+    limit: int = Query(5, ge=1, le=10),
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Return reproducible trace for one structural gap.
+
+    Includes gap context, accepted bridge relationships, and recommendation status.
+    """
+    try:
+        _log_gap_chain_event(
+            "repro_report_requested",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            limit=limit,
+        )
+        return await _build_gap_repro_report(
+            project_id=project_id,
+            gap_id=gap_id,
+            limit=limit,
+            database=database,
+            current_user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log_gap_chain_event(
+            "repro_report_failed",
+            project_id=str(project_id),
+            gap_id=str(gap_id),
+            error=str(e),
+        )
+        logger.error("Failed to build gap reproducibility report: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to build gap reproducibility report")
+
+
+@router.get("/gaps/{project_id}/repro/{gap_id}/export")
+async def export_gap_repro_report(
+    project_id: UUID,
+    gap_id: UUID,
+    format: str = Query("markdown", pattern="^(markdown|json)$"),
+    limit: int = Query(5, ge=1, le=10),
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Export single-gap reproducibility report as markdown or JSON."""
+    report = await _build_gap_repro_report(
+        project_id=project_id,
+        gap_id=gap_id,
+        limit=limit,
+        database=database,
+        current_user=current_user,
+    )
+
+    if format == "json":
+        return report
+
+    lines = [
+        "# Gap Reproducibility Report",
+        "",
+        f"- **Project ID**: `{report.project_id}`",
+        f"- **Gap ID**: `{report.gap_id}`",
+        f"- **Generated**: {report.generated_at}",
+        f"- **Gap Strength**: {report.gap_strength:.1%}",
+        "",
+        "## Gap Context",
+        "",
+        f"- **Cluster A**: {', '.join(report.cluster_a_names[:5]) or 'N/A'}",
+        f"- **Cluster B**: {', '.join(report.cluster_b_names[:5]) or 'N/A'}",
+        f"- **Bridge Candidates**: {', '.join(report.bridge_candidates[:8]) or 'N/A'}",
+        "",
+    ]
+
+    if report.research_questions:
+        lines.extend(["## Research Questions", ""])
+        for i, q in enumerate(report.research_questions, 1):
+            lines.append(f"{i}. {q}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Bridge Relationships",
+            "",
+            "| Relationship ID | Source | Target | Confidence | Hypothesis | AI |",
+            "|---|---|---|---:|---|---|",
+        ]
+    )
+    if report.bridge_relationships:
+        for rel in report.bridge_relationships:
+            lines.append(
+                f"| `{rel.relationship_id}` | {rel.source_name} | {rel.target_name} | "
+                f"{rel.confidence:.2f} | {rel.hypothesis_title or '-'} | "
+                f"{'yes' if rel.ai_generated else 'no'} |"
+            )
+    else:
+        lines.append("| - | - | - | - | - | - |")
+    lines.append("")
+
+    rec = report.recommendation
+    lines.extend(
+        [
+            "## Recommendation Trace",
+            "",
+            f"- **Status**: {rec.status}",
+            f"- **Query**: `{rec.query_used}`",
+        ]
+    )
+    if rec.retry_after_seconds is not None:
+        lines.append(f"- **Retry After (seconds)**: {rec.retry_after_seconds}")
+    if rec.error:
+        lines.append(f"- **Error**: {rec.error}")
+    lines.append("")
+
+    lines.extend(
+        [
+            "| Title | Year | Citations | URL |",
+            "|---|---:|---:|---|",
+        ]
+    )
+    if rec.papers:
+        for paper in rec.papers:
+            lines.append(
+                f"| {paper.title} | {paper.year or '-'} | {paper.citation_count} | {paper.url or '-'} |"
+            )
+    else:
+        lines.append("| - | - | - | - |")
+    lines.append("")
+
+    content = "\n".join(lines)
+    buffer = io.BytesIO(content.encode("utf-8"))
+    filename = f"gap_repro_report_{gap_id}.md"
+    return StreamingResponse(
+        buffer,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'},
     )
 
 
@@ -1675,110 +2433,131 @@ async def export_gap_report(
     database=Depends(get_db),
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
-    """Export gap analysis as downloadable Markdown report."""
+    """Export gap analysis as a Markdown report."""
     await verify_project_access(database, project_id, current_user, "access")
 
-    from fastapi.responses import StreamingResponse
-    from datetime import datetime
-    import io
+    try:
+        # Get project info
+        project_row = await database.fetchrow(
+            "SELECT name, research_question FROM projects WHERE id = $1",
+            str(project_id),
+        )
+        project_name = project_row["name"] if project_row else "Unknown Project"
+        research_question = project_row.get("research_question", "") if project_row else ""
 
-    project = await database.fetchrow(
-        "SELECT name, research_question FROM projects WHERE id = $1",
-        project_id,
-    )
-    if not project:
-        raise HTTPException(404, "Project not found")
+        # Get clusters
+        cluster_rows = await database.fetch(
+            """
+            SELECT cluster_id, label, size, concept_names
+            FROM concept_clusters
+            WHERE project_id = $1
+            ORDER BY cluster_id
+            """,
+            str(project_id),
+        )
 
-    cluster_rows = await database.fetch(
-        """SELECT cluster_id, label, size, concept_names
-           FROM concept_clusters WHERE project_id = $1
-           ORDER BY cluster_id""",
-        str(project_id),
-    )
+        # Get gaps
+        gap_rows = await database.fetch(
+            """
+            SELECT gap_strength, bridge_candidates, research_questions,
+                   cluster_a_names, cluster_b_names
+            FROM structural_gaps
+            WHERE project_id = $1
+            ORDER BY gap_strength DESC
+            """,
+            str(project_id),
+        )
 
-    gap_rows = await database.fetch(
-        """SELECT cluster_a_id, cluster_b_id, cluster_a_names, cluster_b_names,
-                  gap_strength, bridge_candidates, research_questions
-           FROM structural_gaps WHERE project_id = $1
-           ORDER BY gap_strength DESC""",
-        str(project_id),
-    )
+        if not cluster_rows and not gap_rows:
+            raise HTTPException(
+                status_code=404,
+                detail="No gap analysis data. Run gap detection first."
+            )
 
-    if not cluster_rows and not gap_rows:
-        raise HTTPException(404, "No gap analysis data. Run gap detection first.")
-
-    # Build cluster label lookup
-    cluster_labels = {}
-    for row in cluster_rows:
-        cluster_labels[row["cluster_id"]] = row["label"] or f"Cluster {row['cluster_id'] + 1}"
-
-    # Build Markdown report
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    lines = [
-        f"# Gap Analysis Report",
-        f"",
-        f"**Project**: {project['name']}",
-    ]
-    if project.get("research_question"):
-        lines.append(f"**Research Question**: {project['research_question']}")
-    lines.extend([
-        f"**Generated**: {now}",
-        f"**Clusters**: {len(cluster_rows)} | **Gaps**: {len(gap_rows)}",
-        "",
-        "---",
-        "",
-        "## Cluster Overview",
-        "",
-        "| # | Label | Size | Top Concepts |",
-        "|---|-------|------|-------------|",
-    ])
-
-    for row in cluster_rows:
-        cid = row["cluster_id"]
-        label = cluster_labels.get(cid, f"Cluster {cid + 1}")
-        concepts = ", ".join((row["concept_names"] or [])[:5])
-        lines.append(f"| {cid + 1} | {label} | {row['size']} | {concepts} |")
-
-    lines.extend(["", "---", "", "## Structural Gaps", ""])
-
-    for i, row in enumerate(gap_rows, 1):
-        a_label = cluster_labels.get(row["cluster_a_id"], f"Cluster {row['cluster_a_id'] + 1}")
-        b_label = cluster_labels.get(row["cluster_b_id"], f"Cluster {row['cluster_b_id'] + 1}")
-        strength_pct = f"{row['gap_strength'] * 100:.0f}%"
-
-        lines.extend([
-            f"### Gap {i}: {a_label} ↔ {b_label}",
+        # Build Markdown
+        lines = [
+            f"# Gap Analysis Report: {project_name}",
             f"",
-            f"- **Connectivity**: {strength_pct}",
-            f"- **Cluster A concepts**: {', '.join((row['cluster_a_names'] or [])[:5])}",
-            f"- **Cluster B concepts**: {', '.join((row['cluster_b_names'] or [])[:5])}",
+            f"**Generated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            "",
+        ]
+
+        if research_question:
+            lines.extend([
+                f"**Research Question**: {research_question}",
+                "",
+            ])
+
+        # Clusters table
+        if cluster_rows:
+            lines.extend([
+                "## Concept Clusters",
+                "",
+                "| Cluster | Label | Size | Top Concepts |",
+                "|---------|-------|------|-------------|",
+            ])
+            for row in cluster_rows:
+                names = row["concept_names"] or []
+                top_concepts = ", ".join(names[:5])
+                if len(names) > 5:
+                    top_concepts += f" (+{len(names) - 5})"
+                lines.append(
+                    f"| {row['cluster_id']} | {row['label'] or 'N/A'} | {row['size']} | {top_concepts} |"
+                )
+            lines.append("")
+
+        # Gaps section
+        if gap_rows:
+            lines.extend([
+                "## Structural Gaps",
+                "",
+            ])
+            for i, row in enumerate(gap_rows, 1):
+                a_names = row["cluster_a_names"] or []
+                b_names = row["cluster_b_names"] or []
+                bridge = row["bridge_candidates"] or []
+                questions = row["research_questions"] or []
+
+                lines.extend([
+                    f"### Gap {i} (Strength: {row['gap_strength']:.1%})",
+                    "",
+                    f"- **Cluster A**: {', '.join(a_names[:3])}",
+                    f"- **Cluster B**: {', '.join(b_names[:3])}",
+                ])
+
+                if bridge:
+                    lines.append(f"- **Bridge Candidates**: {', '.join(bridge[:5])}")
+
+                if questions:
+                    lines.extend(["", "**Research Questions**:", ""])
+                    for q in questions:
+                        lines.append(f"1. {q}")
+
+                lines.append("")
+
+        # Summary stats
+        total_concepts = sum(row["size"] for row in cluster_rows)
+        lines.extend([
+            "---",
+            "",
+            f"*{total_concepts} concepts across {len(cluster_rows)} clusters, {len(gap_rows)} structural gaps identified.*",
         ])
 
-        if row.get("bridge_candidates"):
-            lines.append(f"- **Bridge candidates**: {', '.join(row['bridge_candidates'][:5])}")
+        content = "\n".join(lines)
+        buffer = io.BytesIO(content.encode("utf-8"))
 
-        if row.get("research_questions"):
-            lines.extend(["", "**Research Questions**:", ""])
-            for q in row["research_questions"]:
-                lines.append(f"- {q}")
+        filename = f"gap_report_{project_name.replace(' ', '_')}.md"
+        return StreamingResponse(
+            buffer,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
-        lines.append("")
-
-    lines.extend([
-        "---",
-        "",
-        f"*Report generated by ScholaRAG Graph v0.12.0*",
-    ])
-
-    report = "\n".join(lines)
-
-    safe_name = project["name"].replace(" ", "_")[:30]
-    buffer = io.BytesIO(report.encode("utf-8"))
-    return StreamingResponse(
-        buffer,
-        media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="gap_analysis_{safe_name}.md"'},
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export gap report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export report")
 
 
 # ============================================================
@@ -1835,6 +2614,11 @@ async def get_centrality(
         - centrality: dict mapping node_id to centrality score
         - top_bridges: list of (node_id, score) for top 10 nodes
     """
+    cache_key = f"centrality:{project_id}:{metric}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         from graph.centrality_analyzer import centrality_analyzer
 
@@ -1860,11 +2644,13 @@ async def get_centrality(
         )
 
         if not node_rows:
-            return {
+            payload = {
                 "metric": metric,
                 "centrality": {},
                 "top_bridges": [],
             }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format expected by analyzer
         nodes = [
@@ -1912,11 +2698,13 @@ async def get_centrality(
             for node_id, score in top_bridges
         ]
 
-        return {
+        payload = {
             "metric": metric,
             "centrality": centrality,
             "top_bridges": top_bridges_with_names,
         }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -1977,6 +2765,11 @@ async def get_diversity_metrics(
     # Verify project access
     await verify_project_access(database, project_id, current_user, "access")
 
+    cache_key = f"diversity:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         from graph.diversity_analyzer import diversity_analyzer
 
@@ -2013,16 +2806,18 @@ async def get_diversity_metrics(
         )
 
         if not node_rows:
-            return DiversityMetricsResponse(
-                shannon_entropy=0.0,
-                normalized_entropy=0.0,
-                modularity=0.0,
-                bias_score=1.0,
-                diversity_rating="low",
-                cluster_sizes=[],
-                dominant_cluster_ratio=1.0,
-                gini_coefficient=1.0,
-            )
+            payload = {
+                "shannon_entropy": 0.0,
+                "normalized_entropy": 0.0,
+                "modularity": 0.0,
+                "bias_score": 1.0,
+                "diversity_rating": "low",
+                "cluster_sizes": [],
+                "dominant_cluster_ratio": 1.0,
+                "gini_coefficient": 1.0,
+            }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format for analyzer
         nodes = [{"id": str(row["id"])} for row in node_rows]
@@ -2042,16 +2837,18 @@ async def get_diversity_metrics(
         # Compute metrics
         metrics = diversity_analyzer.analyze_from_data(nodes, edges, clusters)
 
-        return DiversityMetricsResponse(
-            shannon_entropy=metrics.shannon_entropy,
-            normalized_entropy=metrics.normalized_entropy,
-            modularity=metrics.modularity,
-            bias_score=metrics.bias_score,
-            diversity_rating=metrics.diversity_rating,
-            cluster_sizes=metrics.cluster_sizes,
-            dominant_cluster_ratio=metrics.dominant_cluster_ratio,
-            gini_coefficient=metrics.gini_coefficient,
-        )
+        payload = {
+            "shannon_entropy": metrics.shannon_entropy,
+            "normalized_entropy": metrics.normalized_entropy,
+            "modularity": metrics.modularity,
+            "bias_score": metrics.bias_score,
+            "diversity_rating": metrics.diversity_rating,
+            "cluster_sizes": metrics.cluster_sizes,
+            "dominant_cluster_ratio": metrics.dominant_cluster_ratio,
+            "gini_coefficient": metrics.gini_coefficient,
+        }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -2081,6 +2878,11 @@ async def get_graph_metrics(
     """
     # Verify project access
     await verify_project_access(database, project_id, current_user, "access")
+
+    cache_key = f"graph_metrics:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         from graph.centrality_analyzer import centrality_analyzer, ClusterResult
@@ -2119,16 +2921,18 @@ async def get_graph_metrics(
         )
 
         if not node_rows:
-            return GraphMetricsResponse(
-                modularity=0.0,
-                diversity=0.0,
-                density=0.0,
-                avg_clustering=0.0,
-                num_components=0,
-                node_count=0,
-                edge_count=0,
-                cluster_count=0,
-            )
+            payload = {
+                "modularity": 0.0,
+                "diversity": 0.0,
+                "density": 0.0,
+                "avg_clustering": 0.0,
+                "num_components": 0,
+                "node_count": 0,
+                "edge_count": 0,
+                "cluster_count": 0,
+            }
+            await metrics_cache.set(cache_key, payload)
+            return payload
 
         # Convert to format expected by analyzer
         nodes = [
@@ -2158,7 +2962,7 @@ async def get_graph_metrics(
                 node_ids=row["concepts"] or [],
                 node_names=[],
                 centroid=None,
-                size=row["size"] if row["size"] else len(row["concepts"] or []),
+                size=row["size"],
             )
             for row in cluster_rows
         ]
@@ -2166,16 +2970,18 @@ async def get_graph_metrics(
         # Compute graph metrics
         metrics = centrality_analyzer.compute_graph_metrics(nodes, edges, clusters)
 
-        return GraphMetricsResponse(
-            modularity=metrics["modularity"],
-            diversity=metrics["diversity"],
-            density=metrics["density"],
-            avg_clustering=metrics["avg_clustering"],
-            num_components=metrics["num_components"],
-            node_count=len(nodes),
-            edge_count=len(edges),
-            cluster_count=len(clusters),
-        )
+        payload = {
+            "modularity": metrics["modularity"],
+            "diversity": metrics["diversity"],
+            "density": metrics["density"],
+            "avg_clustering": metrics["avg_clustering"],
+            "num_components": metrics["num_components"],
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "cluster_count": len(clusters),
+        }
+        await metrics_cache.set(cache_key, payload)
+        return payload
 
     except HTTPException:
         raise
@@ -2406,6 +3212,8 @@ async def recompute_clusters(
                     json.dumps({"cluster_id": cluster.cluster_id}),
                     node_id,
                 )
+
+        await metrics_cache.invalidate_project(str(project_id))
 
         return {
             "clusters": formatted_clusters,
@@ -2658,6 +3466,130 @@ async def migrate_temporal_data(
 
 
 # ============================================
+# Temporal Timeline API (v0.12.1)
+# ============================================
+
+class YearBucket(BaseModel):
+    year: int
+    new_concepts: int
+    total_concepts: int
+    top_concepts: List[str]
+
+
+class TemporalTimelineResponse(BaseModel):
+    min_year: Optional[int] = None
+    max_year: Optional[int] = None
+    buckets: List[YearBucket]
+    total_with_year: int
+    total_without_year: int
+
+
+@router.get("/temporal/{project_id}/timeline", response_model=TemporalTimelineResponse)
+async def get_temporal_timeline(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Get aggregated timeline data for temporal visualization."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    # TTL cache reuse (metrics_cache singleton)
+    cache_key = f"timeline:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        year_rows = await database.fetch(
+            """
+            SELECT
+                first_seen_year as year,
+                COUNT(*) as concept_count,
+                (ARRAY_AGG(name ORDER BY
+                    CASE WHEN properties->>'centrality_pagerank' ~ '^-?\\d+(\\.\\d+)?$'
+                         THEN (properties->>'centrality_pagerank')::float
+                         ELSE 0 END
+                    DESC NULLS LAST
+                ))[1:5] as top_names
+            FROM entities
+            WHERE project_id = $1
+              AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                  'Dataset', 'Metric', 'Innovation', 'Limitation')
+              AND first_seen_year IS NOT NULL
+            GROUP BY first_seen_year
+            ORDER BY first_seen_year
+            """,
+            str(project_id),
+        )
+
+        if not year_rows:
+            # Fallback to source_year
+            year_rows = await database.fetch(
+                """
+                SELECT
+                    source_year as year,
+                    COUNT(*) as concept_count,
+                    (ARRAY_AGG(name ORDER BY name))[1:5] as top_names
+                FROM entities
+                WHERE project_id = $1
+                  AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                      'Dataset', 'Metric', 'Innovation', 'Limitation')
+                  AND source_year IS NOT NULL
+                GROUP BY source_year
+                ORDER BY source_year
+                """,
+                str(project_id),
+            )
+
+        total_without = await database.fetchval(
+            """
+            SELECT COUNT(*) FROM entities
+            WHERE project_id = $1
+              AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                  'Dataset', 'Metric', 'Innovation', 'Limitation')
+              AND first_seen_year IS NULL AND source_year IS NULL
+            """,
+            str(project_id),
+        )
+
+        if not year_rows:
+            result = TemporalTimelineResponse(
+                min_year=None, max_year=None,
+                buckets=[], total_with_year=0,
+                total_without_year=total_without or 0,
+            )
+            await metrics_cache.set(cache_key, result)
+            return result
+
+        buckets = []
+        cumulative = 0
+        for row in year_rows:
+            cumulative += row["concept_count"]
+            buckets.append(YearBucket(
+                year=row["year"],
+                new_concepts=row["concept_count"],
+                total_concepts=cumulative,
+                top_concepts=(row["top_names"] or [])[:5],
+            ))
+
+        result = TemporalTimelineResponse(
+            min_year=year_rows[0]["year"],
+            max_year=year_rows[-1]["year"],
+            buckets=buckets,
+            total_with_year=cumulative,
+            total_without_year=total_without or 0,
+        )
+        await metrics_cache.set(cache_key, result)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get temporal timeline: {e}")
+        raise HTTPException(500, "Failed to get temporal timeline data")
+
+
+# ============================================
 # Paper Citation Network (v0.13.0: On-Demand)
 # ============================================
 
@@ -2734,7 +3666,6 @@ async def build_citation_network_endpoint(
         for row in paper_rows
     ]
 
-    # Large project guard
     if len(papers) > MAX_PAPERS_FOR_BUILD:
         papers = papers[:MAX_PAPERS_FOR_BUILD]
 
@@ -2846,32 +3777,110 @@ async def get_relationship_evidence(
         # Verify project access
         await verify_project_access(database, project_id, current_user, "access")
 
-        # Try to get evidence from relationship_evidence table
-        evidence_rows = await database.fetch(
+        # v0.8.0: Check if relationship_evidence table exists before querying
+        table_exists = await database.fetchval(
             """
-            SELECT
-                re.id as evidence_id,
-                re.chunk_id,
-                sc.text,
-                sc.section_type,
-                pm.id as paper_id,
-                pm.title as paper_title,
-                pm.authors as paper_authors,
-                pm.publication_year as paper_year,
-                re.relevance_score,
-                re.context_snippet
-            FROM relationship_evidence re
-            JOIN semantic_chunks sc ON re.chunk_id = sc.id
-            JOIN paper_metadata pm ON sc.paper_id = pm.id
-            WHERE re.relationship_id = $1
-            ORDER BY re.relevance_score DESC
-            LIMIT 10
-            """,
-            relationship_id,
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public'
+                AND table_name = 'relationship_evidence'
+            )
+            """
         )
 
-        # If no evidence in dedicated table, try to find evidence from
-        # semantic chunks that mention both entities
+        evidence_rows = []
+        ai_explanation = None
+
+        if table_exists:
+            # Try to get evidence from relationship_evidence table
+            try:
+                evidence_rows = await database.fetch(
+                    """
+                    SELECT
+                        re.id as evidence_id,
+                        re.chunk_id,
+                        sc.text,
+                        sc.section_type,
+                        pm.id as paper_id,
+                        pm.title as paper_title,
+                        pm.authors as paper_authors,
+                        pm.year as paper_year,
+                        re.relevance_score,
+                        re.context_snippet
+                    FROM relationship_evidence re
+                    JOIN semantic_chunks sc ON re.chunk_id = sc.id
+                    JOIN paper_metadata pm ON sc.paper_id = pm.id
+                    WHERE re.relationship_id = $1
+                    ORDER BY re.relevance_score DESC
+                    LIMIT 10
+                    """,
+                    relationship_id,
+                )
+            except Exception as e:
+                # If query fails (e.g., RLS issues, missing columns), log and continue
+                logger.warning(f"Failed to query relationship_evidence table: {e}")
+                evidence_rows = []
+
+        # Phase 7A: Try provenance-based evidence using source_chunk_ids
+        # from entity properties. This finds chunks where both entities were
+        # actually extracted from, providing precise provenance.
+        if not evidence_rows:
+            try:
+                evidence_rows = await database.fetch(
+                    """
+                    WITH source_chunks AS (
+                        SELECT jsonb_array_elements_text(properties->'source_chunk_ids')::UUID AS cid
+                        FROM entities
+                        WHERE id = $2
+                          AND properties ? 'source_chunk_ids'
+                    ),
+                    target_chunks AS (
+                        SELECT jsonb_array_elements_text(properties->'source_chunk_ids')::UUID AS cid
+                        FROM entities
+                        WHERE id = $3
+                          AND properties ? 'source_chunk_ids'
+                    ),
+                    shared_chunks AS (
+                        SELECT cid FROM source_chunks
+                        INTERSECT
+                        SELECT cid FROM target_chunks
+                    ),
+                    all_chunks AS (
+                        -- Shared chunks first (higher relevance), then union of individual chunks
+                        SELECT cid, 0.9 AS relevance FROM shared_chunks
+                        UNION ALL
+                        SELECT cid, 0.6 AS relevance FROM source_chunks WHERE cid NOT IN (SELECT cid FROM shared_chunks)
+                        UNION ALL
+                        SELECT cid, 0.6 AS relevance FROM target_chunks WHERE cid NOT IN (SELECT cid FROM shared_chunks)
+                                                                          AND cid NOT IN (SELECT cid FROM source_chunks)
+                    )
+                    SELECT
+                        sc.id as evidence_id,
+                        sc.id as chunk_id,
+                        sc.text,
+                        sc.section_type,
+                        pm.id as paper_id,
+                        pm.title as paper_title,
+                        pm.authors as paper_authors,
+                        pm.year as paper_year,
+                        ac.relevance as relevance_score,
+                        NULL as context_snippet
+                    FROM all_chunks ac
+                    JOIN semantic_chunks sc ON sc.id = ac.cid
+                    LEFT JOIN paper_metadata pm ON sc.paper_id = pm.id
+                    WHERE sc.project_id = $1
+                    ORDER BY ac.relevance DESC, sc.sequence_order
+                    LIMIT 10
+                    """,
+                    str(project_id),
+                    str(relationship["source_id"]),
+                    str(relationship["target_id"]),
+                )
+            except Exception as e:
+                logger.debug(f"Phase 7A provenance lookup failed (non-critical): {e}")
+                evidence_rows = []
+
+        # Fallback: try to find evidence from semantic chunks that mention both entities by name
         if not evidence_rows:
             source_name = relationship["source_name"]
             target_name = relationship["target_name"]
@@ -2887,7 +3896,7 @@ async def get_relationship_evidence(
                     pm.id as paper_id,
                     pm.title as paper_title,
                     pm.authors as paper_authors,
-                    pm.publication_year as paper_year,
+                    pm.year as paper_year,
                     0.5 as relevance_score,
                     NULL as context_snippet
                 FROM semantic_chunks sc
@@ -2899,9 +3908,35 @@ async def get_relationship_evidence(
                 LIMIT 5
                 """,
                 str(project_id),
-                f"%{source_name}%",
-                f"%{target_name}%",
+                f"%{escape_sql_like(source_name)}%",
+                f"%{escape_sql_like(target_name)}%",
             )
+
+        # v0.11.0: AI explanation fallback for CO_OCCURS_WITH and no-evidence relationships
+        if not evidence_rows:
+            rel_type = relationship["relationship_type"]
+            source_name = relationship["source_name"]
+            target_name = relationship["target_name"]
+
+            # For CO_OCCURS_WITH, provide co-occurrence based explanation
+            if rel_type == "CO_OCCURS_WITH":
+                ai_explanation = (
+                    f"'{source_name}' and '{target_name}' frequently co-occur across multiple papers "
+                    f"in this collection. This co-occurrence relationship was detected through "
+                    f"statistical analysis of concept mentions within the same documents."
+                )
+            else:
+                # Try LLM-based explanation if available
+                try:
+                    from dependencies import get_llm_provider
+                    llm = get_llm_provider()
+                    if llm:
+                        ai_explanation = await llm.generate(
+                            f"Explain the academic relationship between '{source_name}' and '{target_name}' "
+                            f"in the context of research. Keep it to 2-3 sentences."
+                        )
+                except Exception as e:
+                    logger.warning(f"LLM explanation generation failed: {e}")
 
         evidence_chunks = [
             EvidenceChunkResponse(
@@ -2926,13 +3961,45 @@ async def get_relationship_evidence(
             relationship_type=relationship["relationship_type"],
             evidence_chunks=evidence_chunks,
             total_evidence=len(evidence_chunks),
+            ai_explanation=ai_explanation,
         )
 
     except HTTPException:
         raise
+    except asyncpg.exceptions.UndefinedTableError as e:
+        logger.warning(f"Relationship evidence table missing: {e}")
+        return RelationshipEvidenceResponse(
+            relationship_id=relationship_id,
+            source_name=relationship["source_name"] if relationship else "Unknown",
+            target_name=relationship["target_name"] if relationship else "Unknown",
+            relationship_type=relationship["relationship_type"] if relationship else "RELATED_TO",
+            evidence_chunks=[],
+            total_evidence=0,
+            error_code="table_missing",
+        )
+    except asyncpg.exceptions.InsufficientPrivilegeError as e:
+        logger.error(f"RLS permission denied for relationship evidence: {e}")
+        return RelationshipEvidenceResponse(
+            relationship_id=relationship_id,
+            source_name=relationship["source_name"] if relationship else "Unknown",
+            target_name=relationship["target_name"] if relationship else "Unknown",
+            relationship_type=relationship["relationship_type"] if relationship else "RELATED_TO",
+            evidence_chunks=[],
+            total_evidence=0,
+            error_code="permission_denied",
+        )
     except Exception as e:
         logger.error(f"Failed to get relationship evidence: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get relationship evidence")
+        # Return empty response with error code instead of 500
+        return RelationshipEvidenceResponse(
+            relationship_id=relationship_id,
+            source_name=relationship["source_name"] if relationship else "Unknown",
+            target_name=relationship["target_name"] if relationship else "Unknown",
+            relationship_type=relationship["relationship_type"] if relationship else "RELATED_TO",
+            evidence_chunks=[],
+            total_evidence=0,
+            error_code="query_failed",
+        )
 
 
 # ============================================
@@ -3239,4 +4306,64 @@ async def rebuild_embeddings_and_relationships(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to rebuild: {str(e)}"
+        )
+
+
+# ============================================
+# Phase 10B: Cross-Paper Entity Linking
+# ============================================
+
+class CrossPaperLinkRequest(BaseModel):
+    """Request body for cross-paper entity linking."""
+    entity_types: Optional[List[str]] = None  # Defaults to ["Method", "Dataset", "Concept"]
+
+
+@router.post("/api/graph/{project_id}/cross-paper-links")
+async def create_cross_paper_links(
+    project_id: UUID,
+    request: Optional[CrossPaperLinkRequest] = None,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Trigger cross-paper entity linking for a project.
+
+    Finds entities with the same canonical name across different source papers
+    and creates SAME_AS relationships between them.  This is a second-pass
+    operation that should be run after entity extraction and standard entity
+    resolution.
+
+    Returns:
+        JSON with groups_found, links_created, skipped_existing, entity_types.
+    """
+    try:
+        await verify_project_access(database, project_id, current_user, "edit")
+
+        entity_types = None
+        if request and request.entity_types:
+            entity_types = request.entity_types
+
+        service = EntityResolutionService()
+        result = await service.cross_paper_entity_linking(
+            project_id=str(project_id),
+            db=database,
+            entity_types=entity_types,
+        )
+
+        return {
+            "status": "success",
+            "message": (
+                f"Cross-paper linking complete: {result['links_created']} links "
+                f"created from {result['groups_found']} entity groups"
+            ),
+            **result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cross-paper entity linking failed for project {project_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cross-paper entity linking failed: {str(e)}"
         )

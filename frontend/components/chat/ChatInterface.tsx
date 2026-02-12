@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Loader2, Sparkles, Copy, Check, ArrowRight } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -24,6 +24,9 @@ interface Message {
   highlighted_nodes?: string[];
   highlighted_edges?: string[];
   timestamp: Date;
+  // Phase 11B: Search strategy metadata
+  searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+  hopCount?: number;
 }
 
 interface ChatInterfaceProps {
@@ -33,9 +36,19 @@ interface ChatInterfaceProps {
     citations?: string[];
     highlighted_nodes?: string[];
     highlighted_edges?: string[];
+    // Phase 11B: Search strategy metadata
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
   }>;
   onCitationClick?: (citation: string) => void;
   initialMessages?: Message[];
+  graphStats?: {
+    totalNodes?: number;
+    totalEdges?: number;
+    topConcepts?: string[];
+    clusterCount?: number;
+    gapCount?: number;
+  };
 }
 
 export function ChatInterface({
@@ -43,6 +56,7 @@ export function ChatInterface({
   onSendMessage,
   onCitationClick,
   initialMessages = [],
+  graphStats,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
@@ -83,6 +97,9 @@ export function ChatInterface({
         highlighted_nodes: response.highlighted_nodes,
         highlighted_edges: response.highlighted_edges,
         timestamp: new Date(),
+        // Phase 11B: Search strategy metadata
+        searchStrategy: response.searchStrategy,
+        hopCount: response.hopCount,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -123,13 +140,31 @@ export function ChatInterface({
     });
   };
 
-  // Suggested questions
-  const suggestedQuestions = [
-    'What are the main research methods?',
-    'Which concepts appear most frequently?',
-    'What are the key findings?',
-    'Identify research gaps',
-  ];
+  // v0.11.0: Dynamic suggested questions based on graph data
+  const suggestedQuestions = useMemo(() => {
+    const questions: string[] = [];
+
+    // Base questions that always apply
+    questions.push('What are the main research themes in this collection?');
+    questions.push('Which methodologies are most commonly used?');
+
+    // Graph-aware questions
+    if (graphStats?.topConcepts && graphStats.topConcepts.length >= 2) {
+      questions.push(
+        `How are "${graphStats.topConcepts[0]}" and "${graphStats.topConcepts[1]}" related?`
+      );
+    } else {
+      questions.push('What are the key findings across all papers?');
+    }
+
+    if (graphStats?.gapCount && graphStats.gapCount > 0) {
+      questions.push(`What research gaps exist between the ${graphStats.clusterCount || ''} concept clusters?`);
+    } else {
+      questions.push('Identify potential research gaps in this literature');
+    }
+
+    return questions;
+  }, [graphStats]);
 
   return (
     <div className="chat-container flex flex-col h-full bg-paper dark:bg-ink">
@@ -213,6 +248,51 @@ export function ChatInterface({
                     )}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* Search Strategy Badge (Phase 12A: Icon-only with hover expansion) */}
+            {message.role === 'assistant' && message.searchStrategy && (
+              <div className="mt-3 flex items-center gap-2">
+                <span
+                  className="group inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono bg-accent-teal/10 text-accent-teal border border-accent-teal/30 transition-all duration-200 hover:px-3"
+                  aria-label={`${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색 전략 사용'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? `그래프 탐색 전략 사용, ${message.hopCount || 2} 홉`
+                      : '하이브리드 검색 전략 사용'
+                  }`}
+                  title={`이 답변은 ${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? '그래프 탐색'
+                      : '하이브리드 검색'
+                  }으로 생성되었습니다`}
+                >
+                  {/* Icon only by default, expand text on hover */}
+                  {message.searchStrategy === 'vector' && (
+                    <>
+                      <span className="text-sm">🔍</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Vector Search</span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'graph_traversal' && (
+                    <>
+                      <span className="text-sm">🕸️</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">
+                        Graph Traversal{message.hopCount && ` (${message.hopCount}-hop)`}
+                      </span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'hybrid' && (
+                    <>
+                      <span className="text-sm">🔀</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Hybrid</span>
+                    </>
+                  )}
+                </span>
               </div>
             )}
 

@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { ImportJob, ImportResumeInfo } from '@/types';
+import type { ImportJob, ImportResumeInfo, ImportReliabilitySummary } from '@/types';
 
 /* ============================================================
    ImportProgress - VS Design Diverge Style
@@ -44,10 +44,93 @@ function getStepIndex(stepId: string): number {
   return IMPORT_STEPS.findIndex(s => s.id === stepId);
 }
 
+function getCompletedProjectId(job: ImportJob | null): string | null {
+  if (!job) return null;
+  return job.result?.project_id || job.project_id || null;
+}
+
+function formatPercent(value: number | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '0.0%';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+/* ============================================================
+   ERDetailSection - Entity Resolution Details (Phase 12A)
+   Collapsible section showing embedding-based ER statistics
+   DEFAULT: Collapsed (show only 3 key metrics in parent)
+   ============================================================ */
+
+interface ERDetailSectionProps {
+  summary: ImportReliabilitySummary;
+}
+
+function ERDetailSection({ summary }: ERDetailSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const hasERData =
+    typeof summary.embedding_candidates_found === 'number' ||
+    typeof summary.string_candidates_found === 'number' ||
+    typeof summary.llm_confirmed_merges === 'number';
+
+  if (!hasERData) return null;
+
+  return (
+    <div className="mt-4 border-l-2 border-accent-teal/20">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-label={isExpanded ? 'Collapse ER details' : 'Expand ER details'}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-surface/10 transition-all duration-200"
+      >
+        {isExpanded ? (
+          <ChevronDown className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        )}
+        <span className="font-mono text-xs uppercase tracking-wider text-accent-teal">
+          ER 상세
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 space-y-2 transition-all duration-200">
+          {typeof summary.embedding_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">Embedding Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.embedding_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.string_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">String Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.string_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.llm_confirmed_merges === 'number' && (
+            <div className="flex items-center justify-between py-2">
+              <span className="font-mono text-xs text-muted">LLM Confirmed Merges</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.llm_confirmed_merges}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ImportProgress({ jobId, onComplete, onError }: ImportProgressProps) {
   const [job, setJob] = useState<ImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isInterrupted, setIsInterrupted] = useState(false);
+  const [pollEpoch, setPollEpoch] = useState(0);
   const [resumeInfo, setResumeInfo] = useState<ImportResumeInfo | null>(null);
   const [isResuming, setIsResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
@@ -61,7 +144,8 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
       const resumedJob = await api.resumeImport(jobId);
       setJob(resumedJob);
       setIsInterrupted(false);
-      // Polling will restart automatically via useEffect
+      // Restart polling loop after interrupted -> running transition.
+      setPollEpoch(prev => prev + 1);
     } catch (err: any) {
       console.error('Failed to resume import:', err);
       setResumeError(err.message || 'Failed to resume import');
@@ -73,23 +157,41 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
   useEffect(() => {
     if (!jobId) return;
 
-    let intervalId: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout | null = null;
+    let stopped = false;
+    let inFlight = false;
 
-    const pollStatus = async () => {
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      timeoutId = setTimeout(runPoll, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (stopped || inFlight) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        scheduleNext(5000);
+        return;
+      }
+
+      inFlight = true;
       try {
         const status = await api.getImportStatus(jobId);
         setJob(status);
 
-        if (status.status === 'completed' && status.result?.project_id) {
-          clearInterval(intervalId);
-          onComplete?.(status.result.project_id);
+        const completedProjectId = getCompletedProjectId(status);
+
+        if (status.status === 'completed' && completedProjectId) {
+          stopped = true;
+          onComplete?.(completedProjectId);
+          return;
         } else if (status.status === 'failed') {
-          clearInterval(intervalId);
+          stopped = true;
           setError(status.error || 'Import failed');
           onError?.(status.error || 'Import failed');
+          return;
         } else if (status.status === 'interrupted') {
           // BUG-028: Handle interrupted state (server restart killed the task)
-          clearInterval(intervalId);
+          stopped = true;
           setIsInterrupted(true);
 
           // Fetch resume info
@@ -101,20 +203,25 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           }
 
           onError?.(status.error || 'Import interrupted');
+          return;
         }
       } catch (err) {
         console.error('Failed to fetch import status:', err);
+      } finally {
+        inFlight = false;
+        if (!stopped) {
+          scheduleNext(2000);
+        }
       }
     };
 
-    // Initial fetch
-    pollStatus();
+    runPoll();
 
-    // Poll every 2 seconds
-    intervalId = setInterval(pollStatus, 2000);
-
-    return () => clearInterval(intervalId);
-  }, [jobId, onComplete, onError]);
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [jobId, onComplete, onError, pollEpoch]);
 
   // BUG-028 Extension: Special UI for interrupted imports with checkpoint info
   if (isInterrupted) {
@@ -130,7 +237,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           <div>
             <h3 className="font-medium text-ink dark:text-paper">Import Interrupted</h3>
             <p className="text-sm text-muted">
-              서버 재시작으로 인해 Import가 중단되었습니다.
+              Import was interrupted by a server restart.
             </p>
           </div>
         </div>
@@ -138,7 +245,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         {checkpoint && (
           <div className="mb-4 p-4 bg-surface rounded-sm border border-ink/10 dark:border-paper/10">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted">진행 상황</span>
+              <span className="text-sm text-muted">Progress</span>
               <span className="font-mono text-sm text-accent-amber">{progressPct}%</span>
             </div>
             <div className="h-2 bg-ink/10 dark:bg-paper/10 rounded-full overflow-hidden mb-3">
@@ -149,14 +256,14 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             </div>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted">처리 완료</span>
+                <span className="text-muted">Processed</span>
                 <span className="font-mono text-ink dark:text-paper">
-                  {checkpoint.processed_count} / {checkpoint.total_papers} 논문
+                  {checkpoint.processed_count} / {checkpoint.total_papers} papers
                 </span>
               </div>
               {checkpoint.project_id && (
                 <div className="flex justify-between">
-                  <span className="text-muted">프로젝트 ID</span>
+                  <span className="text-muted">Project ID</span>
                   <span className="font-mono text-xs text-muted truncate max-w-[200px]">
                     {checkpoint.project_id}
                   </span>
@@ -164,7 +271,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
               )}
               {checkpoint.stage && (
                 <div className="flex justify-between">
-                  <span className="text-muted">중단 단계</span>
+                  <span className="text-muted">Interrupted at</span>
                   <span className="text-ink dark:text-paper capitalize">{checkpoint.stage}</span>
                 </div>
               )}
@@ -175,9 +282,9 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         <div className="space-y-3">
           <div className="p-3 bg-accent-teal/5 border border-accent-teal/20 rounded-sm">
             <p className="text-sm text-ink dark:text-paper">
-              <strong>재개 방법:</strong> 동일한 파일을 다시 업로드하면, 이미 처리된{' '}
-              <span className="font-mono text-accent-teal">{checkpoint?.processed_count || 0}</span>개의
-              논문은 자동으로 건너뛰고 나머지만 처리됩니다.
+              <strong>How to resume:</strong> Re-upload the same file. The{' '}
+              <span className="font-mono text-accent-teal">{checkpoint?.processed_count || 0}</span>{' '}
+              already processed papers will be skipped automatically.
             </p>
           </div>
 
@@ -192,17 +299,18 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             <button
               onClick={handleResumeImport}
               disabled={isResuming}
+              aria-label="Resume import"
               className="flex-1 flex items-center justify-center gap-2 py-3 bg-accent-teal text-white font-medium rounded-sm hover:bg-accent-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isResuming ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  재개 중...
+                  Resuming...
                 </>
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Import 재개
+                  Resume Import
                 </>
               )}
             </button>
@@ -210,20 +318,22 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             {/* Secondary: Re-upload files */}
             <button
               onClick={() => router.push('/import')}
+              aria-label="Upload new files"
               className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              새로 업로드
+              Upload New
             </button>
 
             {/* View partial results */}
             {checkpoint?.project_id && (
               <button
                 onClick={() => router.push(`/projects/${checkpoint.project_id}`)}
+                aria-label="View partial results"
                 className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
               >
                 <ArrowRight className="w-4 h-4" />
-                부분 결과
+                Partial Results
               </button>
             )}
           </div>
@@ -244,6 +354,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
         </div>
         <button
           onClick={() => router.back()}
+          aria-label="Retry import"
           className="btn btn--secondary"
         >
           Try Again
@@ -265,6 +376,19 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
   const currentStepIndex = job.current_step ? getStepIndex(job.current_step) : 0;
   const isComplete = job.status === 'completed';
+  const completedProjectId = getCompletedProjectId(job);
+  const reliabilitySummary = job.reliability_summary || job.result?.reliability_summary;
+  const summaryText = (() => {
+    const nodesCreated = job.result?.nodes_created;
+    const edgesCreated = job.result?.edges_created;
+    if (typeof nodesCreated === 'number' || typeof edgesCreated === 'number') {
+      return `Created ${nodesCreated || 0} nodes and ${edgesCreated || 0} edges`;
+    }
+    if (reliabilitySummary) {
+      return `Resolved ${reliabilitySummary.entities_after_resolution || 0} entities and ${reliabilitySummary.relationships_created || 0} relationships`;
+    }
+    return 'Knowledge graph import completed';
+  })();
 
   // BUG-027 FIX: Backend sends progress as 0.0-1.0 fraction, convert to 0-100 percent
   // Without this, Math.round(0.1) = 0 and width: "0.1%" makes the bar invisible
@@ -304,7 +428,7 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             </h3>
             <p className="text-white/80 text-sm mt-2">
               {isComplete
-                ? `Created ${job.result?.nodes_created || 0} nodes and ${job.result?.edges_created || 0} edges`
+                ? summaryText
                 : IMPORT_STEPS[currentStepIndex]?.description || 'Processing...'}
             </p>
           </div>
@@ -414,11 +538,62 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           })}
         </div>
 
+        {isComplete && reliabilitySummary && (
+          <>
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Canonicalization</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.canonicalization_rate)} ({reliabilitySummary.merges_applied} merges)
+                </p>
+              </div>
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Provenance Coverage</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.provenance_coverage)}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Entities</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.raw_entities_extracted} {'->'} {reliabilitySummary.entities_after_resolution}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Low-Trust Edges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.low_trust_edges} ({formatPercent(reliabilitySummary.low_trust_edge_ratio)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">LLM Merge Reviews</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.llm_pairs_confirmed}/{reliabilitySummary.llm_pairs_reviewed} ({formatPercent(reliabilitySummary.llm_confirmation_accept_rate)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Potential False Merges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.potential_false_merge_count} ({formatPercent(reliabilitySummary.potential_false_merge_ratio)})
+                </p>
+              </div>
+            </div>
+
+            {/* Entity Resolution Details - Collapsible Section */}
+            {(typeof reliabilitySummary.embedding_candidates_found === 'number' ||
+              typeof reliabilitySummary.string_candidates_found === 'number' ||
+              typeof reliabilitySummary.llm_confirmed_merges === 'number') && (
+              <ERDetailSection summary={reliabilitySummary} />
+            )}
+          </>
+        )}
+
         {/* Complete action */}
-        {isComplete && job.result?.project_id && (
+        {isComplete && completedProjectId && (
           <div className="mt-6 pt-6 border-t-2 border-accent-teal/20">
             <button
-              onClick={() => router.push(`/projects/${job.result!.project_id}`)}
+              onClick={() => router.push(`/projects/${completedProjectId}`)}
+              aria-label="Open project"
               className="group relative w-full py-4 bg-accent-teal text-white font-medium rounded-sm overflow-hidden transition-all hover:bg-accent-teal/90 hover:shadow-lg hover:shadow-accent-teal/20"
             >
               {/* Animated shine effect */}

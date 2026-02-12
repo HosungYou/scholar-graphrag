@@ -62,6 +62,20 @@ class GenerationMetrics:
 
 
 @dataclass
+class GapDetectionResult:
+    """Result of gap detection evaluation."""
+    gap_recall: float = 0.0  # What fraction of ground truth gaps were detected
+    gap_precision: float = 0.0  # What fraction of detected gaps match ground truth
+    gap_f1: float = 0.0  # Harmonic mean of recall and precision
+    true_positives: int = 0
+    false_positives: int = 0
+    false_negatives: int = 0
+    matched_gaps: list = field(default_factory=list)  # List of (ground_truth_gap, detected_gap) pairs
+    unmatched_ground_truth: list = field(default_factory=list)  # Ground truth gaps not found
+    unmatched_detected: list = field(default_factory=list)  # Detected gaps not matching ground truth
+
+
+@dataclass
 class EndToEndMetrics:
     """Combined end-to-end evaluation metrics."""
     overall_success_rate: float = 0.0
@@ -443,4 +457,115 @@ Output only a number from 1 to 5.
             execution=execution,
             retrieval=retrieval,
             generation=generation,
+        )
+
+
+class GapDetectionMetrics:
+    """Evaluate gap detection quality against ground truth."""
+
+    def __init__(self, concept_match_threshold: float = 0.3):
+        """
+        Initialize gap detection metrics calculator.
+
+        Args:
+            concept_match_threshold: Minimum Jaccard similarity for gap matching
+        """
+        self.concept_match_threshold = concept_match_threshold
+
+    def evaluate(
+        self,
+        ground_truth_gaps: list[dict],
+        detected_gaps: list[dict],
+    ) -> GapDetectionResult:
+        """
+        Compare detected gaps against ground truth.
+
+        A detected gap matches a ground truth gap if:
+        - Concept overlap between (cluster_a OR cluster_b) >= threshold
+
+        Args:
+            ground_truth_gaps: List of ground truth gap dicts with structure:
+                {
+                    "gap_id": str,
+                    "description": str,
+                    "cluster_a_concepts": list[str],
+                    "cluster_b_concepts": list[str],
+                    "severity": str,
+                    "annotator": str
+                }
+            detected_gaps: List of detected gap dicts with structure:
+                {
+                    "id": str,
+                    "cluster_a_id": int,
+                    "cluster_b_id": int,
+                    "gap_strength": float,
+                    "cluster_a_names": list[str],  # or cluster_a_concepts
+                    "cluster_b_names": list[str],  # or cluster_b_concepts
+                }
+
+        Returns:
+            GapDetectionResult with precision, recall, F1, and matched/unmatched lists
+        """
+        matched = []
+        matched_gt_indices = set()
+        matched_det_indices = set()
+
+        for i, gt_gap in enumerate(ground_truth_gaps):
+            gt_concepts = set()
+            for c in gt_gap.get("cluster_a_concepts", []):
+                gt_concepts.add(c.lower())
+            for c in gt_gap.get("cluster_b_concepts", []):
+                gt_concepts.add(c.lower())
+
+            best_match = None
+            best_overlap = 0.0
+
+            for j, det_gap in enumerate(detected_gaps):
+                if j in matched_det_indices:
+                    continue
+
+                det_concepts = set()
+                # Support both naming conventions
+                for c in det_gap.get("cluster_a_names", det_gap.get("cluster_a_concepts", [])):
+                    det_concepts.add(c.lower())
+                for c in det_gap.get("cluster_b_names", det_gap.get("cluster_b_concepts", [])):
+                    det_concepts.add(c.lower())
+
+                if not gt_concepts or not det_concepts:
+                    continue
+
+                # Jaccard similarity
+                overlap = len(gt_concepts & det_concepts) / len(gt_concepts | det_concepts)
+
+                if overlap > best_overlap and overlap >= self.concept_match_threshold:
+                    best_overlap = overlap
+                    best_match = j
+
+            if best_match is not None:
+                matched.append((gt_gap, detected_gaps[best_match]))
+                matched_gt_indices.add(i)
+                matched_det_indices.add(best_match)
+
+        tp = len(matched)
+        fp = len(detected_gaps) - len(matched_det_indices)
+        fn = len(ground_truth_gaps) - len(matched_gt_indices)
+
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        return GapDetectionResult(
+            gap_recall=round(recall, 4),
+            gap_precision=round(precision, 4),
+            gap_f1=round(f1, 4),
+            true_positives=tp,
+            false_positives=fp,
+            false_negatives=fn,
+            matched_gaps=matched,
+            unmatched_ground_truth=[
+                ground_truth_gaps[i] for i in range(len(ground_truth_gaps)) if i not in matched_gt_indices
+            ],
+            unmatched_detected=[
+                detected_gaps[j] for j in range(len(detected_gaps)) if j not in matched_det_indices
+            ],
         )

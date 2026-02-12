@@ -39,6 +39,19 @@ SLOW_API_THRESHOLD = 10.0
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 0.5
 
+# v0.10.0: Type-specific minimum confidence thresholds
+# Higher thresholds for types that need stronger evidence
+ENTITY_TYPE_CONFIDENCE_THRESHOLDS = {
+    "Concept": 0.6,       # Broad extraction - lower threshold
+    "Method": 0.7,        # Needs clear methodological evidence
+    "Finding": 0.7,       # Needs clear empirical evidence
+    "Problem": 0.65,      # Research questions are often implied
+    "Dataset": 0.7,       # Must be explicitly named
+    "Metric": 0.7,        # Must be explicitly mentioned
+    "Innovation": 0.65,   # Novel contributions can be subtle
+    "Limitation": 0.6,    # Often acknowledged briefly
+}
+
 
 class EntityType(str, Enum):
     """Entity types for academic knowledge graph."""
@@ -138,6 +151,18 @@ Study limitations acknowledged or implied.
 - What are the constraints of this research?
 - What couldn't be addressed?
 
+### DATASETS
+Named datasets used in the research.
+- Include specific dataset names (e.g., "ImageNet", "GLUE benchmark")
+- Include data collection instruments if named
+- Note size and domain if mentioned
+
+### METRICS
+Evaluation metrics used to measure outcomes.
+- Include specific metric names (e.g., "accuracy", "F1 score", "Cohen's d")
+- Include statistical measures if they are central to findings
+- Note both primary and secondary metrics
+
 ## Response Format
 
 Return a JSON object with this exact structure:
@@ -185,6 +210,20 @@ Return a JSON object with this exact structure:
             "description": "details and implications",
             "confidence": 0.7
         }}
+    ],
+    "datasets": [
+        {{
+            "name": "dataset name",
+            "description": "domain, size, characteristics",
+            "confidence": 0.7
+        }}
+    ],
+    "metrics": [
+        {{
+            "name": "metric name",
+            "description": "what it measures and context",
+            "confidence": 0.7
+        }}
     ]
 }}
 
@@ -201,9 +240,75 @@ JSON Response:"""
 
 # ============================================================================
 # Simplified Prompt for High-Speed Extraction (Claude 3.5 Haiku)
+# v0.6.0: Fixed to ensure all entity types are extracted, not just concepts
 # ============================================================================
 
-FAST_EXTRACTION_PROMPT = """Extract key entities from this academic paper.
+FAST_EXTRACTION_PROMPT = """You are an academic entity extraction system. Extract EXACTLY these 7 entity types from the paper. Return ALL categories, even if empty.
+
+## Paper
+Title: {title}
+Abstract: {abstract}
+
+## Required Entity Types (extract ALL 7):
+
+### 1. CONCEPTS (max 10)
+Key theoretical concepts, theories, domain terms.
+Example: "machine learning", "cognitive load"
+
+### 2. METHODS (max 3)
+Research methodologies, techniques, approaches.
+Example: "meta-analysis", "randomized controlled trial"
+
+### 3. FINDINGS (max 3)
+Key results, conclusions, discoveries.
+Example: "positive effect on learning outcomes"
+
+### 4. PROBLEMS (max 2)
+Research questions or problems addressed.
+Example: "gap in understanding ai adoption"
+
+### 5. INNOVATIONS (max 2)
+Novel contributions of this work.
+Example: "new framework for evaluation"
+
+### 6. LIMITATIONS (max 2)
+Study limitations acknowledged.
+Example: "small sample size"
+
+### 7. DATASETS (max 2)
+Datasets used or created.
+Example: "imagenet", "custom survey n=500"
+
+## Examples
+
+### Example 1: AI in Education Paper
+
+Title: "Effects of AI Chatbots on Second Language Speaking Skills: A Meta-Analysis"
+Abstract: "This meta-analysis examines 23 studies on AI chatbot interventions for second language acquisition. We analyzed speaking skills improvement through conversational AI agents. Results showed moderate positive effects (d=0.45, p<0.01) on speaking proficiency, with stronger effects for intermediate learners. Publication bias was detected but did not substantially alter findings."
+
+Expected output:
+{{"concepts": [{{"name": "ai chatbot", "confidence": 0.95}}, {{"name": "second language acquisition", "confidence": 0.9}}, {{"name": "speaking skills", "confidence": 0.85}}, {{"name": "conversational agent", "confidence": 0.8}}], "methods": [{{"name": "meta-analysis", "confidence": 0.95}}], "findings": [{{"name": "moderate positive effect on speaking", "confidence": 0.85}}, {{"name": "stronger effects for intermediate learners", "confidence": 0.8}}], "problems": [{{"name": "limited chatbot effectiveness research", "confidence": 0.7}}], "innovations": [], "limitations": [{{"name": "publication bias", "confidence": 0.75}}], "datasets": []}}
+
+### Example 2: Deep Learning Paper
+
+Title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+Abstract: "We introduce BERT, a new language representation model which stands for Bidirectional Encoder Representations from Transformers. BERT is designed to pre-train deep bidirectional representations by jointly conditioning on both left and right context. Our pre-trained BERT model can be fine-tuned with just one additional output layer to achieve state-of-the-art results on eleven natural language processing tasks including the GLUE benchmark."
+
+Expected output:
+{{"concepts": [{{"name": "language representation", "confidence": 0.95}}, {{"name": "transfer learning", "confidence": 0.9}}, {{"name": "pre-training", "confidence": 0.9}}, {{"name": "bidirectional transformer", "confidence": 0.95}}, {{"name": "contextualized embedding", "confidence": 0.85}}], "methods": [{{"name": "masked language modeling", "confidence": 0.9}}, {{"name": "next sentence prediction", "confidence": 0.85}}], "findings": [{{"name": "state of the art on 11 nlp tasks", "confidence": 0.9}}], "problems": [{{"name": "unidirectional language model limitations", "confidence": 0.8}}], "innovations": [{{"name": "bidirectional pre-training", "confidence": 0.9}}], "limitations": [], "datasets": [{{"name": "glue benchmark", "confidence": 0.9}}]}}
+
+## Output Format
+Return ONLY valid JSON. ALL 7 keys MUST be present. Use empty arrays [] if no entities found.
+
+{{"concepts": [...], "methods": [...], "findings": [...], "problems": [...], "innovations": [...], "limitations": [...], "datasets": [...]}}
+
+Each entity: {{"name": "lowercase 1-4 words", "confidence": 0.0-1.0}}
+
+JSON:"""
+
+
+# Legacy prompt (deprecated, kept for reference)
+FAST_EXTRACTION_PROMPT_LEGACY = """Extract key entities from this academic paper.
 
 Title: {title}
 Abstract: {abstract}
@@ -308,16 +413,18 @@ class EntityExtractor:
     Implements NLP-AKG methodology for academic knowledge graph construction.
     """
 
-    def __init__(self, llm_provider=None, use_fast_mode: bool = True):
+    def __init__(self, llm_provider=None, use_fast_mode: bool = True, extraction_provider: str = "default"):
         """
         Initialize entity extractor.
 
         Args:
             llm_provider: LLM provider instance (Claude, OpenAI, etc.)
             use_fast_mode: Use simplified prompt for faster extraction
+            extraction_provider: LLM provider preference ("default", "groq", "anthropic")
         """
         self.llm = llm_provider
         self.use_fast_mode = use_fast_mode
+        self.extraction_provider = extraction_provider
         self._extraction_cache: Dict[str, dict] = {}
 
     async def extract_from_paper(
@@ -404,7 +511,7 @@ class EntityExtractor:
         entities = []
 
         for entity_type, entity_list in result.items():
-            if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets"):
+            if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets", "metrics"):
                 type_map = {
                     "concepts": EntityType.CONCEPT,
                     "methods": EntityType.METHOD,
@@ -413,6 +520,7 @@ class EntityExtractor:
                     "innovations": EntityType.INNOVATION,
                     "limitations": EntityType.LIMITATION,
                     "datasets": EntityType.DATASET,
+                    "metrics": EntityType.METRIC,
                 }
                 for entity_data in entity_list:
                     if isinstance(entity_data, dict):
@@ -507,7 +615,15 @@ class EntityExtractor:
                             )
                             return result
                     except Exception as json_err:
-                        logger.debug(f"generate_json() failed, falling back to generate(): {json_err}")
+                        logger.warning(f"generate_json() failed: {json_err}")
+                        # If JSON parsing failed with generate_json(), try fallback with generate()
+                        # This handles cases where Groq returns malformed JSON
+                        if "JSON" in str(json_err) or "parse" in str(json_err).lower():
+                            logger.info(f"JSON parse error detected, falling back to generate() for '{title[:40]}...'")
+                            # Fall through to generate() below
+                        else:
+                            # Re-raise non-JSON errors
+                            raise
 
                 # Fallback to generate() with manual JSON parsing
                 # PERF-011: Reset timer for generate() fallback
@@ -631,11 +747,26 @@ class EntityExtractor:
         """
         BUG-031 Fix: Parse already-extracted JSON data into structured entities.
         Separated from _parse_llm_response for use with generate_json().
+
+        v0.6.0 Fix: Validates all expected keys are present and logs missing categories.
         """
         result = self._empty_result()
 
         if not data or not isinstance(data, dict):
             return result
+
+        # v0.6.0: Validate all expected keys are present
+        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets', 'metrics'}
+        missing_keys = expected_keys - set(data.keys())
+        if missing_keys:
+            logger.warning(f"Entity extraction missing categories: {missing_keys}")
+            for key in missing_keys:
+                data[key] = []
+
+        # Log extraction distribution for monitoring
+        non_empty_counts = {k: len(v) for k, v in data.items() if isinstance(v, list) and len(v) > 0}
+        if non_empty_counts:
+            logger.debug(f"Extraction distribution: {non_empty_counts}")
 
         try:
             # Parse concepts (primary nodes)
@@ -742,6 +873,31 @@ class EntityExtractor:
                         },
                     )
                 )
+
+            # v0.10.0: Parse metrics
+            for mt in data.get("metrics", [])[:3]:
+                if not mt.get("name"):
+                    continue
+                result["metrics"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.METRIC,
+                        name=mt.get("name", ""),
+                        description=mt.get("description", ""),
+                        confidence=float(mt.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # v0.10.0: Apply type-specific confidence thresholds
+            for type_key in result:
+                if isinstance(result[type_key], list):
+                    result[type_key] = [
+                        entity for entity in result[type_key]
+                        if entity.confidence >= ENTITY_TYPE_CONFIDENCE_THRESHOLDS.get(
+                            entity.entity_type.value if isinstance(entity.entity_type, EntityType) else entity.entity_type,
+                            0.5  # Default threshold if type not in map
+                        )
+                    ]
 
         except Exception as e:
             logger.error(f"Error parsing JSON data: {e}")
@@ -880,6 +1036,7 @@ class EntityExtractor:
             "innovations": [],
             "limitations": [],
             "datasets": [],
+            "metrics": [],
         }
 
     async def batch_extract(

@@ -36,6 +36,7 @@ import fitz  # PyMuPDF
 from database import Database
 from graph.graph_store import GraphStore
 from graph.entity_extractor import EntityExtractor, ExtractedEntity, EntityType
+from graph.entity_resolution import EntityResolutionService
 from graph.relationship_builder import ConceptCentricRelationshipBuilder
 from importers.semantic_chunker import SemanticChunker
 
@@ -128,6 +129,7 @@ class ZoteroRDFImporter:
 
         # Initialize processors
         self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
+        self.entity_resolution = EntityResolutionService(llm_provider=llm_provider)
         self.relationship_builder = ConceptCentricRelationshipBuilder(llm_provider=llm_provider)
         self.semantic_chunker = SemanticChunker()
 
@@ -156,6 +158,110 @@ class ZoteroRDFImporter:
 
         logger.info(f"[{self.progress.status}] {self.progress.progress:.0%} - {self.progress.message}")
 
+    async def _link_entities_to_chunks(
+        self,
+        project_id: str,
+        paper_id: str,
+        entity_ids_and_names: list[tuple[str, str]],
+    ) -> int:
+        """
+        Phase 7A: Link entities to their source chunks by matching entity names
+        against chunk text. Updates entity properties with source_chunk_ids.
+
+        Args:
+            project_id: Project UUID
+            paper_id: Paper UUID (to scope chunk lookup)
+            entity_ids_and_names: List of (entity_id, canonical_name) tuples
+
+        Returns:
+            Number of entity-chunk links created
+        """
+        if not self.graph_store or not entity_ids_and_names or not paper_id:
+            return 0
+
+        try:
+            # Fetch all chunks for this paper
+            chunks = await self.graph_store.get_chunks_by_paper(paper_id)
+            if not chunks:
+                return 0
+
+            links_created = 0
+
+            for entity_id, entity_name in entity_ids_and_names:
+                if not entity_name or len(entity_name) < 3:
+                    continue
+
+                # Find chunks that mention this entity (case-insensitive)
+                matching_chunk_ids = []
+                name_lower = entity_name.lower()
+                for chunk in chunks:
+                    chunk_text = (chunk.get("text") or "").lower()
+                    if name_lower in chunk_text:
+                        matching_chunk_ids.append(chunk["id"])
+
+                if matching_chunk_ids:
+                    try:
+                        if self.db:
+                            await self.db.execute(
+                                """
+                                UPDATE entities
+                                SET properties = jsonb_set(
+                                    COALESCE(properties, '{}'::jsonb),
+                                    '{source_chunk_ids}',
+                                    (
+                                        SELECT jsonb_agg(DISTINCT val)
+                                        FROM (
+                                            SELECT jsonb_array_elements_text(
+                                                COALESCE(properties->'source_chunk_ids', '[]'::jsonb)
+                                            ) AS val
+                                            UNION
+                                            SELECT unnest($2::text[]) AS val
+                                        ) combined
+                                    )
+                                )
+                                WHERE id = $1
+                                """,
+                                entity_id,
+                                matching_chunk_ids,
+                            )
+                            links_created += len(matching_chunk_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to update source_chunk_ids for entity {entity_id}: {e}")
+
+            if links_created > 0:
+                logger.info(
+                    f"Phase 7A: Linked {links_created} chunk-entity pairs "
+                    f"for {len(entity_ids_and_names)} entities in paper {paper_id}"
+                )
+
+            return links_created
+
+        except Exception as e:
+            logger.warning(f"Phase 7A: Chunk-entity linking failed for paper {paper_id}: {e}")
+            return 0
+
+    def _accumulate_resolution_stats(self, stats: Dict[str, Any], resolution) -> None:
+        """Accumulate shared entity-resolution metrics into import results."""
+        stats["raw_entities_extracted"] = stats.get("raw_entities_extracted", 0) + int(resolution.raw_entities)
+        stats["entities_after_resolution"] = stats.get("entities_after_resolution", 0) + int(
+            resolution.resolved_entities
+        )
+        stats["merges_applied"] = stats.get("merges_applied", 0) + int(resolution.merged_entities)
+        stats["llm_pairs_reviewed"] = stats.get("llm_pairs_reviewed", 0) + int(
+            getattr(resolution, "llm_pairs_reviewed", 0)
+        )
+        stats["llm_pairs_confirmed"] = stats.get("llm_pairs_confirmed", 0) + int(
+            getattr(resolution, "llm_pairs_confirmed", 0)
+        )
+        stats["potential_false_merge_count"] = stats.get("potential_false_merge_count", 0) + int(
+            getattr(resolution, "potential_false_merge_count", 0)
+        )
+        stats.setdefault("potential_false_merge_samples", [])
+        samples = getattr(resolution, "potential_false_merge_samples", []) or []
+        if samples:
+            stats["potential_false_merge_samples"].extend(samples)
+            stats["potential_false_merge_samples"] = stats["potential_false_merge_samples"][:15]
+
     def _parse_rdf_file(self, rdf_path: Path) -> List[ZoteroItem]:
         """Parse Zotero RDF/XML export file."""
         items = []
@@ -182,10 +288,10 @@ class ZoteroRDFImporter:
 
         except ET.ParseError as e:
             logger.error(f"RDF parse error: {e}")
-            self.progress.errors.append(f"RDF 파싱 오류: {e}")
+            self.progress.errors.append(f"RDF parsing error: {e}")
         except Exception as e:
             logger.error(f"Error parsing RDF: {e}")
-            self.progress.errors.append(f"RDF 처리 오류: {e}")
+            self.progress.errors.append(f"RDF processing error: {e}")
 
         return items
 
@@ -627,13 +733,13 @@ class ZoteroRDFImporter:
         }
 
         if not folder.exists():
-            validation["errors"].append(f"폴더가 존재하지 않습니다: {folder}")
+            validation["errors"].append(f"Folder does not exist: {folder}")
             return validation
 
         # Find RDF file (search recursively in case of nested folder structure)
         rdf_files = list(folder.glob("**/*.rdf"))
         if not rdf_files:
-            validation["errors"].append("RDF 파일을 찾을 수 없습니다. Zotero에서 RDF 형식으로 내보내기 해주세요.")
+            validation["errors"].append("RDF file not found. Please export from Zotero in RDF format.")
             return validation
 
         validation["rdf_file"] = str(rdf_files[0])
@@ -644,7 +750,7 @@ class ZoteroRDFImporter:
         validation["items_count"] = len(items)
 
         if len(items) == 0:
-            validation["errors"].append("RDF 파일에서 항목을 찾을 수 없습니다.")
+            validation["errors"].append("No items found in RDF file.")
             return validation
 
         # Check for files directory (relative to RDF file location)
@@ -653,7 +759,7 @@ class ZoteroRDFImporter:
 
         if not files_dir.exists():
             validation["warnings"].append(
-                "'files' 폴더가 없습니다. Zotero 내보내기 시 'Export Files' 옵션을 체크해주세요."
+                "'files' folder not found. Please check 'Export Files' option when exporting from Zotero."
             )
         else:
             # Count available PDFs - use rdf_parent (not folder) since files/ is relative to RDF
@@ -662,7 +768,7 @@ class ZoteroRDFImporter:
 
             if len(pdf_map) < len(items):
                 validation["warnings"].append(
-                    f"{len(items)}개 항목 중 {len(pdf_map)}개의 PDF만 발견되었습니다."
+                    f"Found only {len(pdf_map)} PDFs out of {len(items)} items."
                 )
 
         validation["valid"] = True
@@ -691,7 +797,7 @@ class ZoteroRDFImporter:
         Returns:
             Import result with project_id, statistics, errors
         """
-        self._update_progress("validating", 0.0, "폴더 검증 중...")
+        self._update_progress("validating", 0.0, "Validating folder...")
 
         # Validate folder
         folder = Path(folder_path)
@@ -703,7 +809,7 @@ class ZoteroRDFImporter:
                 "errors": validation["errors"],
             }
 
-        self._update_progress("parsing", 0.1, "RDF 메타데이터 파싱 중...")
+        self._update_progress("parsing", 0.1, "Parsing RDF metadata...")
 
         # Parse RDF
         rdf_path = Path(validation["rdf_file"])
@@ -712,17 +818,17 @@ class ZoteroRDFImporter:
         self.progress.papers_total = len(items)
 
         # Find PDFs - use rdf_parent since files/ is relative to RDF location
-        self._update_progress("scanning", 0.15, "PDF 파일 스캔 중...")
+        self._update_progress("scanning", 0.15, "Scanning PDF files...")
         pdf_map = self._find_pdf_files(rdf_parent, items)
 
         # Create or use existing project
         # BUG-028 Extension: Support resume with existing project
         if existing_project_id:
-            self._update_progress("creating_project", 0.2, "기존 프로젝트에 재개 중...")
+            self._update_progress("creating_project", 0.2, "Resuming to existing project...")
             project_id = existing_project_id
             logger.info(f"Resuming import to existing project: {project_id}")
         else:
-            self._update_progress("creating_project", 0.2, "프로젝트 생성 중...")
+            self._update_progress("creating_project", 0.2, "Creating project...")
 
             if not project_name:
                 project_name = f"Zotero Import {datetime.now().strftime('%Y-%m-%d')}"
@@ -746,7 +852,7 @@ class ZoteroRDFImporter:
                 project_id = str(uuid4())
 
         # Process items
-        self._update_progress("importing", 0.25, "논문 데이터 처리 중...")
+        self._update_progress("importing", 0.25, "Processing paper data...")
 
         results = {
             "success": True,
@@ -755,6 +861,14 @@ class ZoteroRDFImporter:
             "papers_imported": 0,
             "pdfs_processed": 0,
             "concepts_extracted": 0,
+            "raw_entities_extracted": 0,
+            "entities_after_resolution": 0,
+            "entities_stored_unique": 0,
+            "merges_applied": 0,
+            "llm_pairs_reviewed": 0,
+            "llm_pairs_confirmed": 0,
+            "potential_false_merge_count": 0,
+            "potential_false_merge_samples": [],
             "relationships_created": 0,
             "chunks_created": 0,
             "errors": [],
@@ -785,7 +899,7 @@ class ZoteroRDFImporter:
                 self._update_progress(
                     "importing",
                     progress_pct,
-                    f"논문 처리 중: {i+1}/{len(items)} - {item.title[:50]}..."
+                    f"Processing papers: {i+1}/{len(items)} - {item.title[:50]}..."
                 )
 
                 # PERF-011: Log paper processing start
@@ -853,6 +967,9 @@ class ZoteroRDFImporter:
                         logger.warning(f"Semantic chunking failed for {item.title}: {e}")
 
                 # Extract concepts if enabled - use full PDF text with chunking
+                # Phase 7A: Track entity_id -> name for chunk-entity linking
+                _entity_ids_and_names: list[tuple[str, str]] = []
+
                 if extract_concepts and self.llm and (item.abstract or pdf_text):
                     try:
                         # Use chunking strategy to process full PDF content
@@ -862,25 +979,49 @@ class ZoteroRDFImporter:
                             item=item,
                             research_question=research_question,
                         )
+                        resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
+                            entities,
+                            use_llm_confirmation=True,
+                        )
+                        self._accumulate_resolution_stats(results, resolution)
 
                         # Track entities per paper for co-occurrence relationships
                         paper_entity_tracker = PaperEntities(paper_id=paper_id)
 
                         # Store entities
-                        for entity in entities:
+                        for entity in resolved_entities:
                             if self.graph_store:
-                                entity_id = await self.graph_store.store_entity(
-                                    project_id=project_id,
-                                    name=entity.name,
-                                    entity_type=entity.entity_type.value,
-                                    description=entity.description or "",
-                                    source_paper_id=paper_id,
-                                    confidence=entity.confidence,
-                                    properties=entity.properties or {},
+                                entity_type = (
+                                    entity.entity_type.value
+                                    if hasattr(entity.entity_type, "value")
+                                    else str(entity.entity_type)
                                 )
+                                canonical_name = self.entity_resolution.canonicalize_name(entity.name)
+                                cache_key = f"{entity_type}:{canonical_name}"
+
+                                if cache_key in self._concept_cache:
+                                    entity_id = self._concept_cache[cache_key]["entity_id"]
+                                    results["merges_applied"] += 1
+                                else:
+                                    entity_id = await self.graph_store.store_entity(
+                                        project_id=project_id,
+                                        name=canonical_name,
+                                        entity_type=entity_type,
+                                        description=entity.description or "",
+                                        source_paper_id=paper_id,
+                                        confidence=entity.confidence,
+                                        properties=entity.properties or {},
+                                    )
+                                    self._concept_cache[cache_key] = {"entity_id": entity_id}
+                                    results["entities_stored_unique"] += 1
 
                                 # Track entity ID for co-occurrence relationships
-                                paper_entity_tracker.entity_ids.append(entity_id)
+                                if entity_id not in paper_entity_tracker.entity_ids:
+                                    paper_entity_tracker.entity_ids.append(entity_id)
+
+                                # Phase 7A: Track for chunk-entity linking
+                                if entity_id:
+                                    _entity_ids_and_names.append((entity_id, canonical_name))
 
                                 self.progress.concepts_extracted += 1
                                 results["concepts_extracted"] += 1
@@ -891,6 +1032,10 @@ class ZoteroRDFImporter:
 
                     except Exception as e:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
+
+                # Phase 7A: Link entities to source chunks for provenance
+                if paper_id and results.get("chunks_created", 0) > 0 and _entity_ids_and_names:
+                    await self._link_entities_to_chunks(project_id, paper_id, _entity_ids_and_names)
 
                 # PERF-011: Log paper processing completion with timing
                 paper_elapsed = time.time() - paper_start_time
@@ -906,7 +1051,7 @@ class ZoteroRDFImporter:
                     )
 
             except Exception as e:
-                error_msg = f"항목 처리 실패 ({item.title}): {e}"
+                error_msg = f"Item processing failed ({item.title}): {e}"
                 logger.error(error_msg)
                 self.progress.errors.append(error_msg)
                 results["errors"].append(error_msg)
@@ -927,12 +1072,13 @@ class ZoteroRDFImporter:
         # Create embeddings (optional - may fail if Cohere API unavailable)
         embeddings_created = 0
         if self.graph_store and self.progress.concepts_extracted > 0:
-            self._update_progress("embeddings", 0.85, "임베딩 생성 중 (Cohere)...")
+            self._update_progress("embeddings", 0.85, "Creating embeddings...")
             try:
                 embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
                 logger.info(f"Created {embeddings_created} embeddings")
             except Exception as e:
-                logger.warning(f"Embedding creation failed (continuing with co-occurrence relationships): {e}")
+                logger.error(f"Embedding creation failed: {e}. Gap detection will use TF-IDF fallback.")
+                self._update_progress("embeddings", 0.87, "Embedding failed - will use TF-IDF fallback")
 
         # Build relationships - ALWAYS build co-occurrence, optionally build semantic
         if extract_concepts and self.graph_store:
@@ -940,7 +1086,7 @@ class ZoteroRDFImporter:
 
             # Step 1: Build co-occurrence relationships (NO embeddings needed)
             # Entities that appear in the same paper are related
-            self._update_progress("building_relationships", 0.90, "공출현 관계 구축 중...")
+            self._update_progress("building_relationships", 0.90, "Building co-occurrence relationships...")
             try:
                 cooccurrence_count = await self._build_cooccurrence_relationships(
                     project_id=project_id
@@ -952,7 +1098,7 @@ class ZoteroRDFImporter:
 
             # Step 2: Build semantic relationships (ONLY if embeddings exist)
             if embeddings_created > 0:
-                self._update_progress("building_relationships", 0.95, "의미적 관계 구축 중...")
+                self._update_progress("building_relationships", 0.95, "Building semantic relationships...")
                 try:
                     semantic_count = await self.graph_store.build_concept_relationships(
                         project_id=project_id
@@ -967,7 +1113,222 @@ class ZoteroRDFImporter:
             self.progress.relationships_created = total_relationships
             results["relationships_created"] = total_relationships
 
-        self._update_progress("complete", 1.0, "Import 완료!")
+        # Phase: Clustering + Gap Detection + Centrality (v0.11.0)
+        if self.graph_store and results.get("concepts_extracted", 0) >= 10:
+            self._update_progress("analyzing", 0.97, "Clustering and gap analysis...")
+            try:
+                from graph.gap_detector import GapDetector
+                import numpy as np
+                from sklearn.feature_extraction.text import TfidfVectorizer
+
+                gap_detector = GapDetector()
+                min_concepts_for_gap = 10
+                max_concepts_for_gap = 1200
+                max_tfidf_features = 64
+
+                pid = project_id if isinstance(project_id, __import__('uuid').UUID) \
+                    else __import__('uuid').UUID(project_id)
+
+                # Fetch Concept entities with embeddings from DB
+                concept_rows = await self.db.fetch(
+                    """
+                    SELECT id::text, name, embedding
+                    FROM entities
+                    WHERE project_id = $1 AND entity_type::text = 'Concept'
+                    AND embedding IS NOT NULL
+                    ORDER BY id
+                    LIMIT $2
+                    """,
+                    pid,
+                    max_concepts_for_gap,
+                )
+
+                concepts_for_gap = []
+                for r in concept_rows:
+                    emb = r["embedding"]
+                    if emb is not None:
+                        # Handle pgvector embedding format
+                        if isinstance(emb, str):
+                            emb_list = [float(x) for x in emb.strip("[]").split(",")]
+                        elif isinstance(emb, (list, tuple)):
+                            emb_list = [float(x) for x in emb]
+                        else:
+                            continue
+                        concepts_for_gap.append({
+                            "id": r["id"],
+                            "name": r["name"],
+                            "embedding": emb_list,
+                        })
+
+                # TF-IDF fallback: if no embeddings available, generate pseudo-embeddings
+                if len(concepts_for_gap) < min_concepts_for_gap:
+                    logger.warning(
+                        f"Only {len(concepts_for_gap)} concepts with embeddings "
+                        f"(need {min_concepts_for_gap}+). Using TF-IDF fallback for clustering."
+                    )
+                    # Fetch ALL concepts (including those without embeddings)
+                    all_concept_rows = await self.db.fetch(
+                        """
+                        SELECT id::text, name
+                        FROM entities
+                        WHERE project_id = $1 AND entity_type::text = 'Concept'
+                        ORDER BY id
+                        LIMIT $2
+                        """,
+                        pid,
+                        max_concepts_for_gap,
+                    )
+
+                    if len(all_concept_rows) >= min_concepts_for_gap:
+                        try:
+                            concept_names = [(r["name"] or "").strip() for r in all_concept_rows]
+                            concept_names = [n if n else "unknown concept" for n in concept_names]
+                            vectorizer = TfidfVectorizer(
+                                max_features=max_tfidf_features,
+                                stop_words='english',
+                                dtype=np.float32,
+                            )
+                            tfidf_matrix = vectorizer.fit_transform(concept_names)
+                            feature_count = tfidf_matrix.shape[1]
+                            if feature_count == 0:
+                                raise ValueError("TF-IDF produced zero features")
+
+                            concepts_for_gap = []
+                            for i, r in enumerate(all_concept_rows):
+                                tfidf_vec = tfidf_matrix.getrow(i).toarray().astype(np.float32, copy=False).ravel().tolist()
+                                concepts_for_gap.append({
+                                    "id": r["id"],
+                                    "name": r["name"],
+                                    "embedding": tfidf_vec,
+                                })
+                            logger.info(
+                                "TF-IDF fallback: generated %d pseudo-embeddings "
+                                "(features=%d, concept_cap=%d)",
+                                len(concepts_for_gap),
+                                feature_count,
+                                max_concepts_for_gap,
+                            )
+                        except Exception as tfidf_err:
+                            logger.error(f"TF-IDF fallback failed: {tfidf_err}")
+
+                # Fetch relationships
+                rel_rows = await self.db.fetch(
+                    """
+                    SELECT source_id::text, target_id::text FROM relationships
+                    WHERE project_id = $1
+                    """,
+                    project_id if isinstance(project_id, __import__('uuid').UUID)
+                    else __import__('uuid').UUID(project_id)
+                )
+                relationships_for_gap = [
+                    {"source_id": r["source_id"], "target_id": r["target_id"]}
+                    for r in rel_rows
+                ]
+
+                if len(concepts_for_gap) >= min_concepts_for_gap:
+                    gap_analysis = await gap_detector.analyze_graph(
+                        concepts=concepts_for_gap,
+                        relationships=relationships_for_gap,
+                    )
+
+                    def _get_cluster_label(c):
+                        """Get meaningful cluster label, avoiding UUIDs."""
+                        if c.name and len(c.name) < 100 and not (len(c.name) == 36 and c.name.count('-') == 4):
+                            return c.name
+                        if c.keywords:
+                            return " / ".join(c.keywords[:3])
+                        return f"Cluster {c.id + 1}"
+
+                    # Store clusters
+                    for cluster in gap_analysis.get("clusters", []):
+                        try:
+                            await self.db.execute(
+                                """
+                                INSERT INTO concept_clusters (
+                                    id, project_id, name, color, concept_count, keywords
+                                ) VALUES ($1, $2, $3, $4, $5, $6)
+                                ON CONFLICT (id) DO NOTHING
+                                """,
+                                cluster.id,
+                                project_id if isinstance(project_id, __import__('uuid').UUID)
+                                else __import__('uuid').UUID(str(project_id)),
+                                _get_cluster_label(cluster)[:255],
+                                cluster.color,
+                                len(cluster.concept_ids),
+                                cluster.keywords[:10],
+                            )
+                            # Update entities with cluster_id
+                            for concept_id in cluster.concept_ids:
+                                await self.db.execute(
+                                    "UPDATE entities SET cluster_id = $1 WHERE id = $2",
+                                    cluster.id,
+                                    concept_id if isinstance(concept_id, __import__('uuid').UUID)
+                                    else __import__('uuid').UUID(concept_id),
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to store cluster: {e}")
+
+                    # Store gaps
+                    for gap in gap_analysis.get("gaps", []):
+                        try:
+                            await self.db.execute(
+                                """
+                                INSERT INTO structural_gaps (
+                                    id, project_id, cluster_a_id, cluster_b_id,
+                                    gap_strength, concept_a_ids, concept_b_ids,
+                                    suggested_bridge_concepts, suggested_research_questions, status
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                ON CONFLICT (id) DO NOTHING
+                                """,
+                                gap.id,
+                                project_id if isinstance(project_id, __import__('uuid').UUID)
+                                else __import__('uuid').UUID(str(project_id)),
+                                gap.cluster_a_id,
+                                gap.cluster_b_id,
+                                gap.gap_strength,
+                                gap.concept_a_ids,
+                                gap.concept_b_ids,
+                                gap.bridge_concepts,
+                                gap.suggested_research_questions,
+                                gap.status,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to store gap: {e}")
+
+                    # Update centrality metrics
+                    for metric in gap_analysis.get("centrality", []):
+                        try:
+                            await self.db.execute(
+                                """
+                                UPDATE entities SET
+                                    centrality_degree = $1,
+                                    centrality_betweenness = $2,
+                                    centrality_pagerank = $3
+                                WHERE id = $4
+                                """,
+                                metric.degree,
+                                metric.betweenness,
+                                metric.pagerank,
+                                metric.entity_id,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to update centrality: {e}")
+
+                    results["gaps_detected"] = len(gap_analysis.get("gaps", []))
+                    results["clusters_created"] = len(gap_analysis.get("clusters", []))
+                    logger.info(f"Gap analysis complete: {results.get('gaps_detected', 0)} gaps, {results.get('clusters_created', 0)} clusters")
+
+            except Exception as e:
+                logger.warning(f"Gap analysis failed (non-critical): {e}")
+
+        self._update_progress("complete", 1.0, "Import complete!")
+
+        if results["raw_entities_extracted"] > 0:
+            results["canonicalization_rate"] = (
+                results["merges_applied"] / results["raw_entities_extracted"]
+            )
+        else:
+            results["canonicalization_rate"] = 0.0
 
         return results
 
@@ -992,8 +1353,8 @@ class ZoteroRDFImporter:
         Returns:
             Sync result with statistics
         """
-        self._update_progress("validating", 0.0, "동기화 준비 중...")
-        
+        self._update_progress("validating", 0.0, "Preparing sync...")
+
         # Validate folder
         validation = await self.validate_folder(folder_path)
         if not validation["valid"]:
@@ -1001,13 +1362,13 @@ class ZoteroRDFImporter:
                 "success": False,
                 "errors": validation["errors"],
             }
-        
+
         # Parse RDF
         rdf_path = Path(validation["rdf_file"])
         items = self._parse_rdf_file(rdf_path)
-        
+
         # Get existing items from database
-        self._update_progress("comparing", 0.1, "기존 항목과 비교 중...")
+        self._update_progress("comparing", 0.1, "Comparing with existing items...")
         
         existing_keys = set()
         if self.db:
@@ -1030,14 +1391,14 @@ class ZoteroRDFImporter:
         new_items = [item for item in items if item.item_key not in existing_keys]
         
         if not new_items:
-            self._update_progress("complete", 1.0, "동기화 완료 - 새 항목 없음")
+            self._update_progress("complete", 1.0, "Sync complete - no new items")
             return {
                 "success": True,
                 "project_id": project_id,
                 "items_checked": len(items),
                 "items_added": 0,
                 "items_skipped": len(items),
-                "message": "모든 항목이 이미 동기화되어 있습니다.",
+                "message": "All items are already synced.",
             }
         
         logger.info(f"Found {len(new_items)} new items to sync (of {len(items)} total)")
@@ -1047,7 +1408,7 @@ class ZoteroRDFImporter:
         pdf_map = self._find_pdf_files(rdf_parent, new_items)
         
         # Process new items
-        self._update_progress("syncing", 0.2, f"새 항목 {len(new_items)}개 동기화 중...")
+        self._update_progress("syncing", 0.2, f"Syncing {len(new_items)} new items...")
         
         results = {
             "success": True,
@@ -1057,6 +1418,14 @@ class ZoteroRDFImporter:
             "items_skipped": len(existing_keys),
             "pdfs_processed": 0,
             "concepts_extracted": 0,
+            "raw_entities_extracted": 0,
+            "entities_after_resolution": 0,
+            "entities_stored_unique": 0,
+            "merges_applied": 0,
+            "llm_pairs_reviewed": 0,
+            "llm_pairs_confirmed": 0,
+            "potential_false_merge_count": 0,
+            "potential_false_merge_samples": [],
             "relationships_created": 0,
             "errors": [],
         }
@@ -1067,7 +1436,7 @@ class ZoteroRDFImporter:
                 self._update_progress(
                     "syncing",
                     progress_pct,
-                    f"동기화 중: {i+1}/{len(new_items)} - {item.title[:40]}..."
+                    f"Syncing: {i+1}/{len(new_items)} - {item.title[:40]}..."
                 )
                 
                 # Get PDF text if available
@@ -1110,22 +1479,43 @@ class ZoteroRDFImporter:
                             item=item,
                             research_question=None,  # sync_folder doesn't have research_question
                         )
+                        resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
+                            entities,
+                            use_llm_confirmation=True,
+                        )
+                        self._accumulate_resolution_stats(results, resolution)
 
                         # Track entities per paper for co-occurrence relationships
                         paper_entity_tracker = PaperEntities(paper_id=paper_id)
 
-                        for entity in entities:
+                        for entity in resolved_entities:
                             if self.graph_store:
-                                entity_id = await self.graph_store.store_entity(
-                                    project_id=project_id,
-                                    name=entity.name,
-                                    entity_type=entity.entity_type.value,
-                                    description=entity.description or "",
-                                    source_paper_id=paper_id,
-                                    confidence=entity.confidence,
-                                    properties=entity.properties or {},
+                                entity_type = (
+                                    entity.entity_type.value
+                                    if hasattr(entity.entity_type, "value")
+                                    else str(entity.entity_type)
                                 )
-                                paper_entity_tracker.entity_ids.append(entity_id)
+                                canonical_name = self.entity_resolution.canonicalize_name(entity.name)
+                                cache_key = f"{entity_type}:{canonical_name}"
+
+                                if cache_key in self._concept_cache:
+                                    entity_id = self._concept_cache[cache_key]["entity_id"]
+                                    results["merges_applied"] += 1
+                                else:
+                                    entity_id = await self.graph_store.store_entity(
+                                        project_id=project_id,
+                                        name=canonical_name,
+                                        entity_type=entity_type,
+                                        description=entity.description or "",
+                                        source_paper_id=paper_id,
+                                        confidence=entity.confidence,
+                                        properties=entity.properties or {},
+                                    )
+                                    self._concept_cache[cache_key] = {"entity_id": entity_id}
+                                    results["entities_stored_unique"] += 1
+
+                                if entity_id not in paper_entity_tracker.entity_ids:
+                                    paper_entity_tracker.entity_ids.append(entity_id)
                                 results["concepts_extracted"] += 1
 
                         # Store paper entities for later co-occurrence building
@@ -1136,14 +1526,14 @@ class ZoteroRDFImporter:
                         logger.warning(f"Entity extraction failed for {item.title}: {e}")
 
             except Exception as e:
-                error_msg = f"동기화 실패 ({item.title}): {e}"
+                error_msg = f"Sync failed ({item.title}): {e}"
                 logger.error(error_msg)
                 results["errors"].append(error_msg)
 
         # Create embeddings for new entities (optional - may fail)
         embeddings_created = 0
         if self.graph_store and results["concepts_extracted"] > 0:
-            self._update_progress("embeddings", 0.90, "새 항목 임베딩 생성 중...")
+            self._update_progress("embeddings", 0.90, "Creating embeddings for new items...")
             try:
                 embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
             except Exception as e:
@@ -1151,7 +1541,7 @@ class ZoteroRDFImporter:
 
         # Build co-occurrence relationships (works without embeddings)
         if self.graph_store and results["concepts_extracted"] > 0:
-            self._update_progress("building_relationships", 0.95, "관계 구축 중...")
+            self._update_progress("building_relationships", 0.95, "Building relationships...")
             try:
                 cooccurrence_count = await self._build_cooccurrence_relationships(
                     project_id=project_id
@@ -1161,7 +1551,14 @@ class ZoteroRDFImporter:
             except Exception as e:
                 logger.warning(f"Co-occurrence relationship building failed: {e}")
 
-        self._update_progress("complete", 1.0, "동기화 완료!")
+        self._update_progress("complete", 1.0, "Sync complete!")
+
+        if results["raw_entities_extracted"] > 0:
+            results["canonicalization_rate"] = (
+                results["merges_applied"] / results["raw_entities_extracted"]
+            )
+        else:
+            results["canonicalization_rate"] = 0.0
         
         return results
 

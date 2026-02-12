@@ -14,19 +14,23 @@ Quota headers are included in all responses:
 - X-Quota-Reset: ISO timestamp when quota resets
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from config import get_settings, Settings
+from config import get_settings, Settings, settings
 from auth.dependencies import require_auth_if_configured
 from auth.models import User
+from database import db
 from integrations.semantic_scholar import SemanticScholarClient, SemanticScholarPaper
 from integrations.openalex import OpenAlexClient, OpenAlexWork
 from integrations.zotero import ZoteroClient, ZoteroItem, ZoteroCollection
 from middleware.quota_middleware import QuotaDependency, add_quota_headers
 from middleware.quota_service import QuotaStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
@@ -149,6 +153,29 @@ class OpenAlexWorkResponse(BaseModel):
         )
 
 
+# ==================== Helpers ====================
+
+async def get_effective_api_key(
+    current_user: Optional[User],
+    provider: str,
+    fallback: Optional[str] = None,
+) -> Optional[str]:
+    """User preference key > server env key > fallback."""
+    if current_user:
+        try:
+            row = await db.fetch_one(
+                "SELECT preferences FROM user_profiles WHERE id = $1",
+                current_user.id,
+            )
+            if row and row["preferences"]:
+                user_key = row["preferences"].get("api_keys", {}).get(provider, "")
+                if user_key:
+                    return user_key
+        except Exception as e:
+            logger.warning(f"Failed to read user API key for {provider}: {e}")
+    return fallback
+
+
 # ==================== Semantic Scholar Endpoints ====================
 
 @router.post("/semantic-scholar/search", response_model=List[SemanticScholarPaperResponse])
@@ -166,7 +193,8 @@ async def search_semantic_scholar(
 
     **Quota**: This endpoint counts against your `semantic_scholar` daily quota.
     """
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         year_range = None
         if request.year_start or request.year_end:
             year_range = (
@@ -203,7 +231,8 @@ async def get_semantic_scholar_paper(
     - arXiv ID (prefixed with "arXiv:")
     - PMID (prefixed with "PMID:")
     """
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         paper = await client.get_paper(paper_id, include_embedding=include_embedding)
 
         if not paper:
@@ -228,7 +257,8 @@ async def enrich_paper_metadata(
             detail="Either doi or title must be provided"
         )
 
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         paper = await client.enrich_paper_metadata(
             doi=request.doi,
             title=request.title,
@@ -251,7 +281,8 @@ async def get_citation_graph(
 
     Returns nodes (papers) and edges (citation relationships) for visualization.
     """
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         graph = await client.get_citation_graph(
             paper_id=request.paper_id,
             depth=request.depth,
@@ -268,7 +299,8 @@ async def get_paper_references(
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """Get papers that this paper references."""
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         papers = await client.get_references(paper_id, limit=limit)
         return [SemanticScholarPaperResponse.from_paper(p) for p in papers]
 
@@ -280,7 +312,8 @@ async def get_paper_citations(
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """Get papers that cite this paper."""
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         papers = await client.get_citations(paper_id, limit=limit)
         return [SemanticScholarPaperResponse.from_paper(p) for p in papers]
 
@@ -292,7 +325,8 @@ async def get_recommendations(
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """Get paper recommendations based on a list of papers."""
-    async with SemanticScholarClient() as client:
+    s2_key = await get_effective_api_key(current_user, "semantic_scholar", settings.semantic_scholar_api_key)
+    async with SemanticScholarClient(api_key=s2_key or None) as client:
         papers = await client.get_recommendations(paper_ids, limit=limit)
         return [SemanticScholarPaperResponse.from_paper(p) for p in papers]
 

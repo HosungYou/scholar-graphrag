@@ -42,16 +42,20 @@ export interface BloomConfig {
 }
 
 /**
+ * Label visibility mode (InfraNodus-style adaptive labeling)
+ */
+export type LabelVisibility = 'none' | 'important' | 'all';
+
+/**
  * 3D View state
  */
 export interface View3DState {
   mode: '2d' | '3d';
-  showParticles: boolean;
-  particleSpeed: number;
   backgroundColor: string;
   lodEnabled: boolean;
   currentZoom: number;
   bloom: BloomConfig;
+  labelVisibility: LabelVisibility;
 }
 
 interface Graph3DStore {
@@ -74,14 +78,15 @@ interface Graph3DStore {
 
   // Actions
   setViewMode: (mode: '2d' | '3d') => void;
-  toggleParticles: () => void;
-  setParticleSpeed: (speed: number) => void;
   setBackgroundColor: (color: string) => void;
   toggleLOD: () => void;
   setCurrentZoom: (zoom: number) => void;
   toggleBloom: () => void;
   setBloomIntensity: (intensity: number) => void;
   setGlowSize: (size: number) => void;
+  // v0.8.0: Label visibility actions
+  cycleLabelVisibility: () => void;
+  setLabelVisibility: (mode: LabelVisibility) => void;
 
   // Slicing Actions
   setSliceCount: (count: number) => void;
@@ -104,8 +109,6 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
   // Initial 3D View State
   view3D: {
     mode: '3d',
-    showParticles: true,
-    particleSpeed: 0.005,
     backgroundColor: '#0d1117',
     lodEnabled: true,
     currentZoom: 1.0,
@@ -114,6 +117,7 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
       intensity: 0.5,
       glowSize: 1.3,
     },
+    labelVisibility: 'important' as LabelVisibility,  // v0.8.0: Default to 'important'
   },
   lodConfig: DEFAULT_LOD_CONFIG,
 
@@ -138,18 +142,6 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
   setViewMode: (mode) => {
     set(state => ({
       view3D: { ...state.view3D, mode },
-    }));
-  },
-
-  toggleParticles: () => {
-    set(state => ({
-      view3D: { ...state.view3D, showParticles: !state.view3D.showParticles },
-    }));
-  },
-
-  setParticleSpeed: (speed) => {
-    set(state => ({
-      view3D: { ...state.view3D, particleSpeed: speed },
     }));
   },
 
@@ -196,6 +188,26 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
         ...state.view3D,
         bloom: { ...state.view3D.bloom, glowSize: Math.max(1, Math.min(2, size)) },
       },
+    }));
+  },
+
+  // v0.8.0: Label Visibility Actions
+  cycleLabelVisibility: () => {
+    set(state => {
+      const currentMode = state.view3D.labelVisibility;
+      // Cycle: none -> important -> all -> none
+      const nextMode: LabelVisibility =
+        currentMode === 'none' ? 'important' :
+        currentMode === 'important' ? 'all' : 'none';
+      return {
+        view3D: { ...state.view3D, labelVisibility: nextMode },
+      };
+    });
+  },
+
+  setLabelVisibility: (mode) => {
+    set(state => ({
+      view3D: { ...state.view3D, labelVisibility: mode },
     }));
   },
 

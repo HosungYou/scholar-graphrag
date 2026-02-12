@@ -2,6 +2,14 @@
 
 ## 전체 진행률
 
+### Latest Update (v0.10.2, 2026-02-06)
+
+- ✅ Import progress backpressure/coalescing 적용 (`backend/routers/import_.py`)
+- ✅ lifecycle maintenance 강화 (quota flush + old job cleanup, `backend/main.py`)
+- ✅ frontend polling/interval 경량화 (`ImportProgress`, `StatusBar`, `Graph3D`)
+- ✅ 테스트 문서 체계 보강: `DOCS/testing/TDD.md` 신규 구축
+- ✅ 릴리즈 문서화: `RELEASE_NOTES_v0.10.2.md`
+
 ### MVP 완성도: 75%
 
 ```

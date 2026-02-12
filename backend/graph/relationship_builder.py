@@ -55,6 +55,16 @@ class ConceptCentricRelationshipBuilder:
     - ADDRESSES: Problem → Concept
     - EVALUATES_WITH: Method → Metric
 
+    Provenance Relationship Types:
+    - MENTIONS: Reserved for chunk→entity provenance edges (Phase 7A).
+      Currently, chunk provenance is tracked via entity properties
+      (source_chunk_ids) rather than explicit MENTIONS edges, because
+      semantic_chunks are not in the entities table. The enum value
+      exists for forward compatibility.
+
+    Cross-Paper Entity Linking:
+    - SAME_AS: Entity ↔ Entity (cross-paper identity link via canonical name)
+
     Metadata Relationships (not for visualization):
     - AUTHORED_BY: Paper → Author
     - DISCUSSES_CONCEPT: Paper → Concept
@@ -607,7 +617,7 @@ Return ONLY the answers, one per line, in format: "1. A->B" or "1. NONE"
         normalizes direction to ensure only one exists.
         """
         unique = {}
-        bidirectional_types = {"RELATED_TO", "CO_OCCURS_WITH"}
+        bidirectional_types = {"RELATED_TO", "CO_OCCURS_WITH", "SAME_AS"}
 
         for rel in relationships:
             # Normalize bidirectional relationships

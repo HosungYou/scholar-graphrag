@@ -22,6 +22,8 @@ from .metrics import (
     RetrievalMetrics,
     GenerationMetrics,
     EndToEndMetrics,
+    GapDetectionMetrics,
+    GapDetectionResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -430,3 +432,241 @@ async def run_full_benchmark(orchestrator, project_id: str = "test") -> Benchmar
 
     benchmark = ScholarQABenchmark(orchestrator=orchestrator, config=config)
     return await benchmark.run(project_id=project_id)
+
+
+async def evaluate_gap_detection(
+    gap_detector,
+    project_id: str,
+    ground_truth_path: str = None,
+    concept_match_threshold: float = 0.3,
+    output_dir: str = "evaluation_results/gap_detection",
+) -> dict:
+    """
+    Evaluate gap detection quality against ground truth.
+
+    Args:
+        gap_detector: GapDetector instance from backend.graph.gap_detector
+        project_id: Project ID to analyze
+        ground_truth_path: Path to ground truth JSON file (default: ai_education_gaps.json)
+        concept_match_threshold: Minimum Jaccard similarity for gap matching
+        output_dir: Directory to save evaluation results
+
+    Returns:
+        {
+            "result": GapDetectionResult,
+            "ground_truth_gaps": list,
+            "detected_gaps": list,
+            "summary": str
+        }
+    """
+    import json
+    from pathlib import Path
+
+    # Load ground truth
+    if ground_truth_path is None:
+        ground_truth_path = Path(__file__).parent / "gap_evaluation_data" / "ai_education_gaps.json"
+    else:
+        ground_truth_path = Path(ground_truth_path)
+
+    if not ground_truth_path.exists():
+        raise FileNotFoundError(f"Ground truth file not found: {ground_truth_path}")
+
+    with open(ground_truth_path, "r", encoding="utf-8") as f:
+        ground_truth_data = json.load(f)
+
+    ground_truth_gaps = ground_truth_data["ground_truth_gaps"]
+    logger.info(f"Loaded {len(ground_truth_gaps)} ground truth gaps from {ground_truth_path}")
+
+    # Run gap detection on the project
+    # NOTE: This assumes gap_detector has been initialized with project data
+    # In practice, you would load concepts and relationships from the database
+    logger.info(f"Running gap detection on project: {project_id}")
+
+    # This is a placeholder - actual implementation would fetch from database
+    # For now, we'll assume the caller has already run gap detection and provides the results
+    # Alternatively, you could integrate with the database here
+
+    # Example structure (would come from gap_detector.analyze_graph()):
+    # detected_gaps_raw = await gap_detector.analyze_graph(concepts, relationships)
+    # detected_gaps = detected_gaps_raw["gaps"]
+
+    # Since we don't have database access here, we return a placeholder structure
+    # The actual runner would need to be called from a context with database access
+
+    raise NotImplementedError(
+        "Gap evaluation requires database access to load project data. "
+        "Use evaluate_gap_detection_with_data() instead."
+    )
+
+
+async def evaluate_gap_detection_with_data(
+    ground_truth_gaps: list[dict],
+    detected_gaps: list[dict],
+    concept_match_threshold: float = 0.3,
+    output_dir: str = "evaluation_results/gap_detection",
+) -> dict:
+    """
+    Evaluate gap detection quality with pre-loaded data.
+
+    Args:
+        ground_truth_gaps: List of ground truth gap dicts
+        detected_gaps: List of detected gap dicts from GapDetector
+        concept_match_threshold: Minimum Jaccard similarity for gap matching
+        output_dir: Directory to save evaluation results
+
+    Returns:
+        {
+            "result": GapDetectionResult,
+            "ground_truth_count": int,
+            "detected_count": int,
+            "summary": str
+        }
+
+    Example usage:
+        >>> from backend.graph.gap_detector import GapDetector
+        >>> detector = GapDetector(llm_provider=llm)
+        >>> analysis = await detector.analyze_graph(concepts, relationships)
+        >>> detected_gaps_for_eval = [
+        ...     {
+        ...         "id": gap.id,
+        ...         "cluster_a_id": gap.cluster_a_id,
+        ...         "cluster_b_id": gap.cluster_b_id,
+        ...         "gap_strength": gap.gap_strength,
+        ...         "cluster_a_names": [concepts_by_id[cid]["name"] for cid in gap.concept_a_ids],
+        ...         "cluster_b_names": [concepts_by_id[cid]["name"] for cid in gap.concept_b_ids],
+        ...     }
+        ...     for gap in analysis["gaps"]
+        ... ]
+        >>> result = await evaluate_gap_detection_with_data(
+        ...     ground_truth_gaps=ground_truth_data["ground_truth_gaps"],
+        ...     detected_gaps=detected_gaps_for_eval,
+        ... )
+    """
+    import json
+    from pathlib import Path
+    from datetime import datetime
+
+    logger.info(
+        f"Evaluating gap detection: {len(ground_truth_gaps)} ground truth, "
+        f"{len(detected_gaps)} detected"
+    )
+
+    # Initialize metrics calculator
+    metrics = GapDetectionMetrics(concept_match_threshold=concept_match_threshold)
+
+    # Evaluate
+    result = metrics.evaluate(ground_truth_gaps, detected_gaps)
+
+    # Generate summary
+    summary_lines = [
+        "=" * 60,
+        "Gap Detection Evaluation Results",
+        f"Timestamp: {datetime.now().isoformat()}",
+        "=" * 60,
+        "",
+        f"Ground Truth Gaps: {len(ground_truth_gaps)}",
+        f"Detected Gaps: {len(detected_gaps)}",
+        f"Match Threshold: {concept_match_threshold:.2f} (Jaccard similarity)",
+        "",
+        "Metrics:",
+        f"  Precision: {result.gap_precision:.2%}",
+        f"  Recall: {result.gap_recall:.2%}",
+        f"  F1 Score: {result.gap_f1:.2%}",
+        "",
+        f"True Positives: {result.true_positives}",
+        f"False Positives: {result.false_positives}",
+        f"False Negatives: {result.false_negatives}",
+        "",
+    ]
+
+    if result.matched_gaps:
+        summary_lines.extend([
+            "Matched Gaps:",
+        ])
+        for gt_gap, det_gap in result.matched_gaps[:5]:  # Show top 5
+            summary_lines.append(f"  - {gt_gap['gap_id']}: {gt_gap['description'][:60]}...")
+
+    if result.unmatched_ground_truth:
+        summary_lines.extend([
+            "",
+            f"Unmatched Ground Truth ({len(result.unmatched_ground_truth)}):",
+        ])
+        for gap in result.unmatched_ground_truth[:5]:
+            summary_lines.append(f"  - {gap['gap_id']}: {gap['description'][:60]}...")
+
+    if result.unmatched_detected:
+        summary_lines.extend([
+            "",
+            f"Unmatched Detected Gaps ({len(result.unmatched_detected)}):",
+        ])
+        for gap in result.unmatched_detected[:5]:
+            gap_id = gap.get("id", "unknown")
+            summary_lines.append(f"  - {gap_id}: strength={gap.get('gap_strength', 0):.2f}")
+
+    summary_lines.append("=" * 60)
+    summary = "\n".join(summary_lines)
+
+    # Save results
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_file = output_path / f"gap_eval_{timestamp}.json"
+    summary_file = output_path / f"gap_eval_summary_{timestamp}.txt"
+
+    results_dict = {
+        "timestamp": datetime.now().isoformat(),
+        "config": {
+            "concept_match_threshold": concept_match_threshold,
+            "ground_truth_count": len(ground_truth_gaps),
+            "detected_count": len(detected_gaps),
+        },
+        "metrics": {
+            "precision": result.gap_precision,
+            "recall": result.gap_recall,
+            "f1": result.gap_f1,
+            "true_positives": result.true_positives,
+            "false_positives": result.false_positives,
+            "false_negatives": result.false_negatives,
+        },
+        "matched_gaps": [
+            {
+                "ground_truth": gt_gap,
+                "detected": {
+                    "id": det_gap.get("id"),
+                    "gap_strength": det_gap.get("gap_strength"),
+                    "cluster_a": det_gap.get("cluster_a_names", det_gap.get("cluster_a_concepts", [])),
+                    "cluster_b": det_gap.get("cluster_b_names", det_gap.get("cluster_b_concepts", [])),
+                }
+            }
+            for gt_gap, det_gap in result.matched_gaps
+        ],
+        "unmatched_ground_truth": result.unmatched_ground_truth,
+        "unmatched_detected": [
+            {
+                "id": gap.get("id"),
+                "gap_strength": gap.get("gap_strength"),
+                "cluster_a": gap.get("cluster_a_names", gap.get("cluster_a_concepts", [])),
+                "cluster_b": gap.get("cluster_b_names", gap.get("cluster_b_concepts", [])),
+            }
+            for gap in result.unmatched_detected
+        ],
+    }
+
+    with open(results_file, "w", encoding="utf-8") as f:
+        json.dump(results_dict, f, indent=2, ensure_ascii=False)
+
+    with open(summary_file, "w", encoding="utf-8") as f:
+        f.write(summary)
+
+    logger.info(f"Results saved to {results_file}")
+    logger.info(f"Summary saved to {summary_file}")
+
+    return {
+        "result": result,
+        "ground_truth_count": len(ground_truth_gaps),
+        "detected_count": len(detected_gaps),
+        "summary": summary,
+        "results_file": str(results_file),
+        "summary_file": str(summary_file),
+    }

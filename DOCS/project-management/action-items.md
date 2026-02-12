@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-12
+> **마지막 업데이트**: 2026-02-09
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 22 | 22 | 0 | 0 |
-| 🟡 Medium | 22 | 20 | 0 | 2 |
+| 🔴 High | 20 | 20 | 0 | 0 |
+| 🟡 Medium | 24 | 24 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **49** | **47** | **0** | **2** |
+| **Total** | **49** | **49** | **0** | **0** |
 
 ---
 
@@ -26,58 +26,124 @@
 
 ## 🟡 Medium Priority (Short-term)
 
-### AUTH-004: Orphaned 프로젝트 소유권 할당
-- **Source**: Auth Flow 완성 2026-02-12
-- **Status**: ⬜ Pending
-- **Priority**: 🟡 Medium
-- **Description**: Auth 추가 이전에 생성된 프로젝트(`owner_id = NULL`)에 첫 관리자 로그인 시 소유권을 자동 할당하는 기능
-- **Notes**: 현재 `OR p.owner_id IS NULL`로 모든 인증 사용자에게 노출. 멀티테넌트 환경에서 소유권 명확화 필요.
-- **Created**: 2026-02-12
+*모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
 
 ---
 
-### AUTH-005: 프로젝트 공유 UI
-- **Source**: Auth Flow 완성 2026-02-12
-- **Status**: ⬜ Pending
+## 📝 v0.15.1 Release - Infrastructure Maintenance (2026-02-09)
+
+### INFRA-008: Supabase Free Plan 용량 초과 해결 (1월 데이터 삭제)
+- **Source**: Supabase Dashboard 용량 경고 2026-02-09
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: Supabase Free Plan 500MB 한도 초과 (671.55 MB). 1월 테스트 프로젝트 26개 및 관련 데이터 ~104만 행 삭제
+- **Solution Applied**:
+  - [x] FK 순서대로 9개 테이블에서 데이터 삭제
+  - [x] 2월 프로젝트 4개 보존 확인
+- **Completed**: 2026-02-09
+
+### INFRA-009: VACUUM FULL 디스크 공간 회수
+- **Source**: INFRA-008 후속 작업
+- **Status**: ✅ Completed
 - **Priority**: 🟡 Medium
-- **Description**: 팀 협업을 위한 프로젝트 공유 UI 구현. `project_collaborators` 및 `team_projects` 테이블 활용.
-- **Notes**: 백엔드 접근 제어 로직은 이미 구현됨 (`check_project_access`).
-- **Created**: 2026-02-12
+- **Description**: DELETE 후 dead tuple이 차지하는 공간을 VACUUM FULL로 회수
+- **Solution Applied**:
+  - [x] relationships: 404 MB → 8.4 MB
+  - [x] semantic_chunks: 174 MB → 127 MB
+  - [x] entities: 65 MB → 31 MB
+  - [x] **Total: 671 MB → 181 MB (490 MB 회수)**
+- **Completed**: 2026-02-09
+
+### INFRA-010: Migration 021_cross_paper_links.sql 적용
+- **Source**: v0.15.0 릴리즈 마이그레이션
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Description**: Cross-paper entity linking을 위한 SAME_AS relationship type 추가 및 인덱스 생성
+- **Solution Applied**:
+  - [x] `ALTER TYPE relationship_type ADD VALUE IF NOT EXISTS 'SAME_AS'`
+  - [x] `CREATE INDEX idx_entities_name_type` (Method, Dataset, Concept)
+  - [x] `CREATE INDEX idx_relationships_same_as` (SAME_AS type)
+- **Completed**: 2026-02-09
+
+### INFRA-011: Render DATABASE_URL Session Pooler로 교체
+- **Source**: DB 연결 최적화
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Description**: Transaction Pooler (port 6543) → Session Pooler (port 5432) 교체. Prepared statement 지원 및 DDL 호환성 개선
+- **Solution Applied**:
+  - [x] Render MCP로 환경변수 업데이트
+  - [x] 자동 배포 트리거 확인 (`dep-d6533q24d50c73dlrid0`)
+- **Completed**: 2026-02-09
 
 ---
 
-## 📝 v0.13.3 Release - Completed Items (2026-02-12)
+## 📝 v0.13.1 Release - Completed Items (2026-02-07)
 
-### AUTH-002: GitHub OAuth 버튼 제거
-- **Source**: Auth Flow 완성 2026-02-12
+### FUNC-015: API Key Settings UI
+- **Source**: v0.13.1 Plan
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `backend/routers/settings.py` - New settings router (GET/PUT/POST)
+  - `backend/main.py` - Router registration
+  - `backend/routers/__init__.py` - Module export
+  - `backend/routers/integrations.py` - S2 API key wiring
+  - `backend/routers/graph.py` - S2 API key wiring
+  - `frontend/lib/api.ts` - 3 new API methods
+  - `frontend/app/settings/page.tsx` - Complete rewrite with functional API key management
+- **Description**:
+  - 사용자가 프론트엔드에서 직접 API 키를 관리할 수 있는 Settings 페이지 기능화
+  - `user_profiles.preferences` JSONB 컬럼 활용 (기존 migration 005)
+  - Semantic Scholar API 키를 SemanticScholarClient에 연결
+  - LLM provider 선택 및 저장 기능
+- **Solution Applied**:
+  - [x] Backend settings router 생성 (3 endpoints)
+  - [x] Frontend settings page 완전 기능화
+  - [x] S2 API key integration
+  - [x] Release notes 및 세션 로그 작성
+
+---
+
+## 📝 v0.10.2 Release - Completed Items (2026-02-06)
+
+### PERF-013: Import Progress Backpressure & Memory Hardening
+- **Source**: 반복 재진입/Import 부하 분석 2026-02-06
 - **Status**: ✅ Completed
 - **Priority**: 🔴 High
 - **Files**:
-  - `frontend/components/auth/LoginForm.tsx` - GitHub 버튼 제거, Google 전폭
-  - `frontend/components/auth/SignupForm.tsx` - GitHub 버튼 제거, Google 전폭
-- **Description**: Supabase에서 GitHub OAuth가 비활성화되었으나 UI에 버튼이 남아있어 사용자 혼란 발생
+  - `backend/routers/import_.py` - coalesced progress updater, checkpoint queue, legacy job cleanup
+  - `backend/main.py` - periodic maintenance + shutdown cleanup
+  - `frontend/components/import/ImportProgress.tsx` - single-flight visibility-aware polling
+  - `frontend/components/graph/StatusBar.tsx` - single-flight visibility-aware polling
+  - `frontend/components/graph/Graph3D.tsx` - interval frequency reduction + hidden-tab skip
+- **Description**:
+  - Import progress callback의 무제한 `create_task()` 패턴으로 인한 task burst 위험 완화
+  - legacy in-memory import state 및 quota buffer 누적 완화
+  - 프론트 hidden tab polling 부담 경감
 - **Solution Applied**:
-  - [x] LoginForm에서 GitHub OAuth 버튼 제거
-  - [x] SignupForm에서 GitHub OAuth 버튼 제거
-  - [x] Google OAuth 버튼 전폭 레이아웃
-- **Completed**: 2026-02-12
-- **Commit**: d22ce91
+  - [x] progress update coalescing worker 적용
+  - [x] checkpoint save queue 직렬화 적용
+  - [x] legacy import jobs cleanup 유틸 추가
+  - [x] periodic maintenance에 quota flush/old job cleanup 통합
+  - [x] polling loop를 single-flight timeout 기반으로 전환
+- **Completed**: 2026-02-06
 
 ---
 
-### AUTH-003: Orphaned 프로젝트 목록 노출 수정
-- **Source**: Auth Flow 완성 2026-02-12
+### DOC-012: SDD/TDD 구조 정비 및 릴리즈 문서화
+- **Source**: 문서 체계화 요청 2026-02-06
 - **Status**: ✅ Completed
-- **Priority**: 🔴 High
+- **Priority**: 🟡 Medium
 - **Files**:
-  - `backend/routers/projects.py` - SQL 쿼리에 `OR p.owner_id IS NULL` 추가
-- **Description**: Auth 추가 이전에 생성된 프로젝트(`owner_id = NULL`)가 인증된 사용자에게 표시되지 않아 빈 프로젝트 목록 노출
-- **Root Cause**: 프로젝트 리스팅 쿼리가 `owner_id = $1`만 체크하여 NULL 소유자 프로젝트 제외
-- **Solution Applied**:
-  - [x] `OR p.owner_id IS NULL` 조건 추가
-  - [x] 인증된 모든 사용자에게 orphaned 프로젝트 노출
-- **Completed**: 2026-02-12
-- **Commit**: 7d4225b (origin), ecf3568 (render)
+  - `RELEASE_NOTES_v0.10.2.md` - 신규 릴리즈 노트
+  - `DOCS/testing/TDD.md` - 신규 Test Design Document
+  - `DOCS/architecture/SDD.md` - v0.10.2 반영
+  - `DOCS/DOCUMENTATION_INDEX.md` - 문서 인덱스/버전 업데이트
+  - `DOCS/README.md` - TDD/릴리즈 링크 업데이트
+  - `backend/tests/README.md` - v0.10.2 회귀 테스트 실행 기준 추가
+  - `mkdocs.yml` - SDD/TDD nav 연결
+- **Description**: SDD-TDD 추적 가능성을 확보하고 release 문서 표준을 최신 상태로 정렬
+- **Completed**: 2026-02-06
 
 ---
 

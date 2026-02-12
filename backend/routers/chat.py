@@ -17,6 +17,7 @@ Storage:
 import os
 import json
 import logging
+import traceback
 from typing import List, Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, Depends
@@ -458,6 +459,8 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     include_trace: bool = False
+    selected_node_ids: Optional[List[str]] = None  # Currently selected nodes
+    pinned_node_ids: Optional[List[str]] = None    # User-pinned nodes for context
 
 
 class SimpleCitation(BaseModel):
@@ -478,6 +481,7 @@ class ChatResponse(BaseModel):
     """Flat response structure aligned with frontend expectations."""
     conversation_id: str
     answer: str
+    intent: Optional[str] = None
     citations: List[SimpleCitation] = []
     highlighted_nodes: List[str] = []
     highlighted_edges: List[str] = []
@@ -549,7 +553,7 @@ def get_orchestrator() -> AgentOrchestrator:
                 graph_store = GraphStore(db=db)
                 logger.info("Initialized GraphStore with DB connection")
         except Exception as e:
-            logger.warning(f"Failed to initialize GraphStore: {e}")
+            logger.error(f"Failed to initialize GraphStore: {e}\n{traceback.format_exc()}")
 
         # Create orchestrator with all dependencies
         _orchestrator = AgentOrchestrator(
@@ -594,6 +598,7 @@ async def chat_query(
     orchestrator = get_orchestrator()
 
     answer = ""
+    intent: Optional[str] = None
     citations: List[SimpleCitation] = []
     highlighted_nodes: List[str] = []
     highlighted_edges: List[str] = []
@@ -608,9 +613,12 @@ async def chat_query(
             project_id=str(request.project_id),
             conversation_id=conversation_id,
             include_processing_steps=request.include_trace,
+            selected_node_ids=request.selected_node_ids,
+            pinned_node_ids=request.pinned_node_ids,
         )
 
         answer = result.content
+        intent = result.intent
         # Convert string citations to SimpleCitation objects
         citations = [
             SimpleCitation(id=str(i), label=cite, entity_type="Concept")  # Concept-centric
@@ -619,6 +627,37 @@ async def chat_query(
         highlighted_nodes = result.highlighted_nodes or []
         highlighted_edges = result.highlighted_edges or []
         suggested_follow_ups = result.suggested_follow_ups or []
+
+        # v0.11.0: Generate graph-context follow-ups if orchestrator didn't provide any
+        if not suggested_follow_ups:
+            try:
+                top_concepts_rows = await db.fetch(
+                    """
+                    SELECT name FROM entities
+                    WHERE project_id = $1 AND entity_type = 'Concept'
+                    ORDER BY centrality_betweenness DESC NULLS LAST
+                    LIMIT 5
+                    """,
+                    str(request.project_id)
+                )
+                gap_count_val = await db.fetchval(
+                    "SELECT COUNT(*) FROM structural_gaps WHERE project_id = $1",
+                    str(request.project_id)
+                )
+
+                if top_concepts_rows:
+                    names = [r["name"] for r in top_concepts_rows]
+                    suggested_follow_ups = [
+                        f"How are {names[0]} and {names[min(1, len(names)-1)]} related in this research?",
+                        f"What are the key findings about {names[0]}?",
+                        "Which research methodologies are most commonly used?",
+                    ]
+                    if gap_count_val and gap_count_val > 0:
+                        suggested_follow_ups.append(
+                            f"There are {gap_count_val} research gaps detected. What are the main opportunities?"
+                        )
+            except Exception as e:
+                logger.debug(f"Failed to generate graph-context follow-ups: {e}")
 
         # Convert research gaps to response format
         research_gaps = [
@@ -670,6 +709,7 @@ async def chat_query(
     return ChatResponse(
         conversation_id=conversation_id,
         answer=answer,
+        intent=intent,
         citations=citations,
         highlighted_nodes=highlighted_nodes,
         highlighted_edges=highlighted_edges,
@@ -838,9 +878,32 @@ async def explain_node(
 
     orchestrator = get_orchestrator()
 
-    # Build context for explanation
-    node_name = request.node_name if request else node_id
-    node_type = request.node_type if request else "Entity"
+    # v0.9.0: Build context for explanation with DB fallback
+    node_name = None
+    node_type = "Concept"
+
+    if request and request.node_name:
+        node_name = request.node_name
+        node_type = request.node_type or "Concept"
+
+    # DB fallback if node_name not provided
+    if not node_name:
+        try:
+            entity = await db.fetchrow(
+                "SELECT name, entity_type FROM entities WHERE id = $1",
+                UUID(node_id)
+            )
+            if entity:
+                node_name = entity["name"]
+                node_type = entity["entity_type"] or "Concept"
+            else:
+                # Fallback to prevent UUID exposure
+                node_name = "this concept"
+                logger.warning(f"Entity not found for explain: {node_id}")
+        except Exception as e:
+            logger.warning(f"DB lookup failed for explain: {e}")
+            node_name = "this concept"
+
     properties = request.node_properties if request else {}
 
     # Generate explanation using orchestrator

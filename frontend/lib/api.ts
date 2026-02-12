@@ -17,8 +17,12 @@ import type {
   SearchResult,
   EntityType,
   GapAnalysisResult,
+  GapReproReport,
   StructuralGap,
   RelationshipEvidence,
+  ProvenanceSource,
+  GapEvaluationReport,
+  QueryMetrics,
 } from '@/types';
 import { getSession } from './supabase';
 
@@ -135,7 +139,29 @@ class ApiClient {
 
         if (!response.ok) {
           const error = await response.json().catch(() => ({}));
-          throw new Error(error.detail || `API Error: ${response.status}`);
+          const detail = error?.detail;
+          const message =
+            (typeof detail === 'string' && detail) ||
+            (typeof detail === 'object' && detail?.message) ||
+            error?.message ||
+            `API Error: ${response.status}`;
+
+          const apiError = new Error(message) as Error & {
+            status?: number;
+            retryAfterSeconds?: number;
+            detail?: unknown;
+          };
+          apiError.status = response.status;
+          apiError.detail = detail;
+
+          const retryHeader = response.headers.get('Retry-After');
+          if (retryHeader && !Number.isNaN(Number(retryHeader))) {
+            apiError.retryAfterSeconds = Number(retryHeader);
+          } else if (typeof detail === 'object' && detail?.retry_after_seconds) {
+            apiError.retryAfterSeconds = Number(detail.retry_after_seconds);
+          }
+
+          throw apiError;
         }
 
         return response.json();
@@ -223,7 +249,11 @@ class ApiClient {
   async sendChatMessage(
     projectId: string,
     message: string,
-    conversationId?: string
+    conversationId?: string,
+    graphContext?: {
+      selectedNodeIds?: string[];
+      pinnedNodeIds?: string[];
+    }
   ): Promise<ChatResponse> {
     return this.request<ChatResponse>('/api/chat/query', {
       method: 'POST',
@@ -231,6 +261,8 @@ class ApiClient {
         project_id: projectId,
         message,
         conversation_id: conversationId,
+        selected_node_ids: graphContext?.selectedNodeIds,
+        pinned_node_ids: graphContext?.pinnedNodeIds,
       }),
     });
   }
@@ -239,11 +271,23 @@ class ApiClient {
     return this.request<{ messages: ChatResponse[] }>(`/api/chat/history/${projectId}`);
   }
 
-  async explainNode(nodeId: string, projectId: string): Promise<{ explanation: string }> {
+  async explainNode(
+    nodeId: string,
+    projectId: string,
+    nodeName?: string,
+    nodeType?: string
+  ): Promise<{ explanation: string }> {
+    // v0.9.0: Send node name/type to avoid UUID in response
+    const body = nodeName ? {
+      node_name: nodeName,
+      node_type: nodeType || 'Concept',
+    } : undefined;
+
     return this.request<{ explanation: string }>(
       `/api/chat/explain/${nodeId}?project_id=${projectId}`,
       {
         method: 'POST',
+        ...(body && { body: JSON.stringify(body) }),
       }
     );
   }
@@ -488,6 +532,14 @@ class ApiClient {
     });
   }
 
+  /**
+   * Delete all interrupted import jobs.
+   * Clears jobs that were interrupted by server restarts.
+   */
+  async deleteInterruptedJobs(): Promise<{ deleted_count: number; message: string }> {
+    return this.request('/api/import/jobs/interrupted', { method: 'DELETE' });
+  }
+
   // Gap Detection
   async getGapAnalysis(projectId: string): Promise<GapAnalysisResult> {
     return this.request<GapAnalysisResult>(`/api/graph/gaps/${projectId}/analysis`);
@@ -516,7 +568,7 @@ class ApiClient {
     );
   }
 
-  // Paper Recommendations for Gaps
+  // Gap-Based Paper Recommendations (v0.12.0)
   async getGapRecommendations(
     projectId: string,
     gapId: string,
@@ -531,18 +583,55 @@ class ApiClient {
       url: string | null;
       abstract_snippet: string;
     }>;
-    error: string | null;
   }> {
-    const params = new URLSearchParams({
-      gap_id: gapId,
-      limit: limit.toString(),
-    });
     return this.request(
-      `/api/graph/gaps/${projectId}/recommendations?${params}`
+      `/api/graph/gaps/${projectId}/recommendations/${gapId}?limit=${limit}`
     );
   }
 
-  // Gap Analysis Report Export
+  // Gap Reproducibility Report (v0.15.0)
+  async getGapReproReport(
+    projectId: string,
+    gapId: string,
+    limit: number = 5
+  ): Promise<GapReproReport> {
+    return this.request<GapReproReport>(
+      `/api/graph/gaps/${projectId}/repro/${gapId}?limit=${limit}`
+    );
+  }
+
+  async exportGapReproReport(
+    projectId: string,
+    gapId: string,
+    format: 'markdown' | 'json' = 'markdown',
+    limit: number = 5
+  ): Promise<void> {
+    const authHeaders = await this.getAuthHeaders();
+    const response = await fetch(
+      `${this.baseUrl}/api/graph/gaps/${projectId}/repro/${gapId}/export?format=${format}&limit=${limit}`,
+      { headers: { ...authHeaders } }
+    );
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw new Error(error.detail || 'Export failed');
+    }
+
+    if (format === 'json') {
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gap_repro_report_${gapId}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }
+
+  // Gap Analysis Report Export (v0.12.0)
   async exportGapReport(projectId: string): Promise<void> {
     const authHeaders = await this.getAuthHeaders();
     const response = await fetch(
@@ -550,18 +639,17 @@ class ApiClient {
       { headers: { ...authHeaders } }
     );
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `Export failed: ${response.status}`);
+      const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw new Error(error.detail || 'Export failed');
     }
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = response.headers.get('content-disposition')
-      ?.split('filename=')[1]?.replace(/"/g, '') || 'gap_analysis.md';
+    a.download = `gap_report.md`;
     document.body.appendChild(a);
     a.click();
-    a.remove();
+    document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   }
 
@@ -640,11 +728,55 @@ class ApiClient {
   /**
    * Fetch evidence chunks that support a specific relationship.
    * Used for contextual edge exploration - clicking an edge shows source text.
+   *
+   * Phase 11A: Infers provenance source from response characteristics.
+   * The backend 3-tier cascade (relationship_evidence -> source_chunk_ids -> text_search)
+   * returns the same schema, but we can detect which tier provided the data:
+   * - Tier 1 (relationship_evidence): has evidence_id !== chunk_id
+   * - Tier 2 (source_chunk_ids): has evidence_id === chunk_id, relevance 0.6 or 0.9
+   * - Tier 3 (text_search): has evidence_id === chunk_id, relevance 0.5
+   * - Tier 4 (ai_explanation): no chunks, ai_explanation present
    */
   async fetchRelationshipEvidence(relationshipId: string): Promise<RelationshipEvidence> {
-    return this.request<RelationshipEvidence>(
+    const data = await this.request<RelationshipEvidence>(
       `/api/graph/relationships/${relationshipId}/evidence`
     );
+
+    // Infer provenance source if not already set by backend
+    if (!data.provenance_source) {
+      data.provenance_source = this.inferProvenanceSource(data);
+    }
+
+    return data;
+  }
+
+  /**
+   * Phase 11A: Infer which tier of the evidence cascade produced the chunks.
+   */
+  private inferProvenanceSource(data: RelationshipEvidence): ProvenanceSource {
+    // No chunks at all
+    if (!data.evidence_chunks || data.evidence_chunks.length === 0) {
+      return data.ai_explanation ? 'ai_explanation' : 'text_search';
+    }
+
+    const firstChunk = data.evidence_chunks[0];
+
+    // Tier 1: relationship_evidence table has separate evidence_id and chunk_id
+    if (firstChunk.evidence_id !== firstChunk.chunk_id) {
+      return 'relationship_evidence';
+    }
+
+    // Tier 2 vs 3: source_chunk_ids provenance uses 0.6/0.9 relevance scores
+    // Text-search fallback defaults to 0.5
+    const hasProvenanceScores = data.evidence_chunks.some(
+      (c) => c.relevance_score === 0.6 || c.relevance_score === 0.9
+    );
+    if (hasProvenanceScores) {
+      return 'source_chunk_ids';
+    }
+
+    // Default: text-search fallback
+    return 'text_search';
   }
 
   // ============================================
@@ -665,6 +797,25 @@ class ApiClient {
     if (yearEnd) params.set('year_end', yearEnd.toString());
     const queryString = params.toString();
     return this.request(`/api/graph/temporal/${projectId}${queryString ? `?${queryString}` : ''}`);
+  }
+
+  // ============================================
+  // Temporal Timeline (v0.12.1)
+  // ============================================
+
+  async getTemporalTimeline(projectId: string): Promise<{
+    min_year: number | null;
+    max_year: number | null;
+    buckets: Array<{
+      year: number;
+      new_concepts: number;
+      total_concepts: number;
+      top_concepts: string[];
+    }>;
+    total_with_year: number;
+    total_without_year: number;
+  }> {
+    return this.request(`/api/graph/temporal/${projectId}/timeline`);
   }
 
   // ============================================
@@ -701,7 +852,10 @@ class ApiClient {
       doi: string | null;
       is_local: boolean;
     }>;
-    edges: Array<{ source_id: string; target_id: string }>;
+    edges: Array<{
+      source_id: string;
+      target_id: string;
+    }>;
     papers_matched: number;
     papers_total: number;
     build_time_seconds: number;
@@ -768,7 +922,7 @@ class ApiClient {
     normalized_entropy: number;
     modularity: number;
     bias_score: number;
-    diversity_rating: 'high' | 'medium' | 'low';
+    diversity_rating: 'high' | 'medium' | 'low' | 'focused';  // v0.6.0: Added 'focused'
     cluster_sizes: number[];
     dominant_cluster_ratio: number;
     gini_coefficient: number;
@@ -818,6 +972,58 @@ class ApiClient {
   }> {
     return this.request(`/api/graph/compare/${projectAId}/${projectBId}`);
   }
+
+  // ============================================
+  // Settings - API Key Management (v0.13.1)
+  // ============================================
+
+  async getApiKeys(): Promise<Array<{
+    provider: string;
+    display_name: string;
+    is_set: boolean;
+    masked_key: string | null;
+    source: 'user' | 'server' | null;
+    usage: string;
+  }>> {
+    return this.request('/api/settings/api-keys');
+  }
+
+  async updateApiKeys(keys: Record<string, string>, options?: {
+    llm_provider?: string;
+    llm_model?: string;
+  }): Promise<{ success: boolean; updated: string[] }> {
+    return this.request('/api/settings/api-keys', {
+      method: 'PUT',
+      body: JSON.stringify({ ...keys, ...options }),
+    });
+  }
+
+  async validateApiKey(provider: string, key: string): Promise<{
+    valid: boolean;
+    message: string;
+  }> {
+    return this.request('/api/settings/api-keys/validate', {
+      method: 'POST',
+      body: JSON.stringify({ provider, key }),
+    });
+  }
+
+  // ============================================
+  // Evaluation Report (Phase 11E)
+  // ============================================
+
+  async getEvaluationReport(): Promise<GapEvaluationReport> {
+    return this.request<GapEvaluationReport>('/api/evaluation/report');
+  }
+
+  // ============================================
+  // Query Performance Metrics (Phase 11E)
+  // ============================================
+
+  async getQueryMetrics(): Promise<QueryMetrics> {
+    return this.request<QueryMetrics>('/api/system/query-metrics');
+  }
 }
 
 export const api = new ApiClient(API_URL);
+export default api;

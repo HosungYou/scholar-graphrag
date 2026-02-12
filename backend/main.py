@@ -16,10 +16,11 @@ from config import settings
 from database import db, init_db, close_db
 from cache import init_llm_cache, get_llm_cache
 from routers import auth, chat, graph, import_, integrations, prisma, projects, teams, system, quota
+from routers import settings as settings_router
 from auth.supabase_client import supabase_client
 from auth.middleware import AuthMiddleware
 from middleware.rate_limiter import RateLimiterMiddleware, init_rate_limit_store
-from middleware.quota_service import init_quota_service
+from middleware.quota_service import init_quota_service, get_quota_service
 from middleware.quota_middleware import QuotaTrackingMiddleware
 from middleware.error_tracking import ErrorTrackingMiddleware, init_error_tracker
 from middleware.cors_error_handler import CORSErrorHandlerMiddleware
@@ -38,13 +39,36 @@ async def periodic_cache_cleanup() -> None:
 
     Runs every 5 minutes to prevent unbounded memory growth.
     """
+    maintenance_tick = 0
     while True:
         try:
             await asyncio.sleep(300)  # 5 minutes
+            maintenance_tick += 1
+
             cache = get_llm_cache()
             cleaned = cache.cleanup_expired()
             if cleaned > 0:
                 logger.info(f"PERF-011: Cleaned {cleaned} expired cache entries")
+
+            # Flush quota usage buffer regularly to avoid in-memory growth.
+            quota_service = get_quota_service()
+            flushed = await quota_service.flush_buffer()
+            if flushed > 0:
+                logger.info(f"PERF-011: Flushed {flushed} quota usage buffer entries")
+
+            # Run heavier maintenance every hour.
+            if maintenance_tick % 12 == 0:
+                cleaned_legacy = import_.cleanup_legacy_import_jobs(max_age_hours=24)
+                if cleaned_legacy > 0:
+                    logger.info(f"PERF-011: Cleaned {cleaned_legacy} legacy in-memory import jobs")
+
+                try:
+                    job_store = await import_.get_job_store()
+                    cleaned_jobs = await job_store.cleanup_old_jobs(days=7)
+                    if cleaned_jobs > 0:
+                        logger.info(f"PERF-011: Cleaned {cleaned_jobs} old JobStore records")
+                except Exception as e:
+                    logger.warning(f"PERF-011: Failed periodic job cleanup: {e}")
         except asyncio.CancelledError:
             logger.debug("Cache cleanup task cancelled")
             break
@@ -204,6 +228,28 @@ async def lifespan(app: FastAPI):
             pass
         logger.info("   PERF-011: Cache cleanup task stopped")
 
+    # Flush and clear quota service caches
+    try:
+        quota_service = get_quota_service()
+        flushed = await quota_service.flush_buffer()
+        quota_service.clear_cache()
+        logger.info(f"   PERF-011: Quota cache cleared (flushed {flushed} buffered entries)")
+    except Exception as e:
+        logger.warning(f"   PERF-011: Failed to flush quota service buffer: {e}")
+
+    # Clean legacy in-memory import jobs and old persisted jobs
+    try:
+        cleaned_legacy = import_.cleanup_legacy_import_jobs(max_age_hours=0)
+        if cleaned_legacy > 0:
+            logger.info(f"   PERF-011: Cleared {cleaned_legacy} legacy in-memory import jobs")
+
+        job_store = await import_.get_job_store()
+        cleaned_jobs = await job_store.cleanup_old_jobs(days=7)
+        if cleaned_jobs > 0:
+            logger.info(f"   PERF-011: Cleaned {cleaned_jobs} old JobStore records on shutdown")
+    except Exception as e:
+        logger.warning(f"   PERF-011: Failed shutdown import/job cleanup: {e}")
+
     # PERF-011: Clean up LLM cache to free memory
     cache = get_llm_cache()
     cache_size = len(cache._cache)
@@ -298,6 +344,11 @@ app.include_router(prisma.router, prefix="/api/prisma", tags=["PRISMA"])
 app.include_router(integrations.router, tags=["Integrations"])
 app.include_router(quota.router, tags=["Quota"])
 app.include_router(system.router, tags=["System"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
+
+# Evaluation endpoints (Phase 11E)
+from routers import evaluation
+app.include_router(evaluation.router, tags=["Evaluation"])
 
 
 @app.get("/")
@@ -323,9 +374,10 @@ async def health_check():
     db_error = None
 
     try:
-        if await db.health_check():
+        health_snapshot = await db.get_health_snapshot()
+        if health_snapshot["db_ok"]:
             db_status = "connected"
-        if await db.check_pgvector():
+        if health_snapshot["pgvector_ok"]:
             pgvector_status = "available"
     except Exception as e:
         db_error = str(e)

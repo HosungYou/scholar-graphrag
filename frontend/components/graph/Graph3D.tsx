@@ -45,9 +45,11 @@ interface ForceGraphLink {
   source: string | ForceGraphNode;
   target: string | ForceGraphNode;
   weight: number;
+  confidence?: number;
   relationshipType: string;
   isHighlighted?: boolean;
   isGhost?: boolean;  // Ghost edge (potential edge) for InfraNodus-style visualization
+  isLowTrust?: boolean;
   similarity?: number;  // Similarity score for ghost edges
 }
 
@@ -87,6 +89,35 @@ const ENTITY_TYPE_COLORS: Record<string, string> = {
   Limitation: '#F97316',
 };
 
+// v0.10.0: Entity type shape mapping for visual differentiation
+// Each type gets a distinct Three.js geometry for at-a-glance recognition
+type EntityShape = 'sphere' | 'box' | 'octahedron' | 'cone' | 'dodecahedron' | 'cylinder' | 'torus' | 'tetrahedron';
+
+const ENTITY_TYPE_SHAPES: Record<string, EntityShape> = {
+  Concept: 'sphere',          // Default - round, fundamental
+  Method: 'box',              // Structured, systematic
+  Finding: 'octahedron',      // Diamond-like, valuable
+  Problem: 'cone',            // Pointed, directional
+  Innovation: 'dodecahedron', // Complex, multifaceted
+  Limitation: 'tetrahedron',  // Simple, constrained
+  Dataset: 'cylinder',        // Container-like
+  Metric: 'torus',            // Measurement, cyclical
+  Paper: 'sphere',            // Fallback
+  Author: 'sphere',           // Fallback
+};
+
+// v0.9.0: InfraNodus-style labeling configuration
+const LABEL_CONFIG = {
+  minFontSize: 10,
+  maxFontSize: 28,
+  minOpacity: 0.3,
+  maxOpacity: 1.0,
+  alwaysVisiblePercentile: 0.8,  // Top 20% always show labels
+  hoverRevealPercentile: 0.5,     // Top 50% on hover
+};
+
+const E2E_MOCK_3D = process.env.NEXT_PUBLIC_E2E_MOCK_3D === '1';
+
 export interface Graph3DProps {
   nodes: GraphEntity[];
   edges: GraphEdge[];
@@ -100,8 +131,6 @@ export interface Graph3DProps {
   onBackgroundClick?: () => void;
   // UI-011: Edge click handler for Relationship Evidence
   onEdgeClick?: (edge: GraphEdge) => void;
-  showParticles?: boolean;
-  particleSpeed?: number;
   // Ghost Edge props (InfraNodus-style)
   showGhostEdges?: boolean;
   potentialEdges?: PotentialEdge[];
@@ -109,6 +138,16 @@ export interface Graph3DProps {
   bloomEnabled?: boolean;
   bloomIntensity?: number;
   glowSize?: number;
+  // Phase 11F: SAME_AS edge filter
+  showSameAsEdges?: boolean;
+  // v0.7.0: Adaptive labeling props
+  labelVisibility?: 'none' | 'important' | 'all';
+  onLabelVisibilityChange?: (mode: 'none' | 'important' | 'all') => void;
+  // v0.7.0: Node pinning props
+  pinnedNodes?: string[];
+  onNodePin?: (nodeId: string) => void;
+  onNodeUnpin?: (nodeId: string) => void;
+  onClearPinnedNodes?: () => void;
 }
 
 export interface Graph3DRef {
@@ -117,6 +156,7 @@ export interface Graph3DRef {
   focusOnGap: (gap: StructuralGap) => void;
   resetCamera: () => void;
   getCamera: () => THREE.Camera | undefined;
+  clearPinnedNodes: () => void;
 }
 
 export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
@@ -131,16 +171,49 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   onNodeHover,
   onBackgroundClick,
   onEdgeClick,  // UI-011: Edge click handler for Relationship Evidence
-  showParticles = false,  // Disabled by default - particles have no academic meaning in knowledge graphs
-  particleSpeed = 0.005,
   showGhostEdges = false,
   potentialEdges = [],
   bloomEnabled = false,
   bloomIntensity = 0.5,
   glowSize = 1.3,
+  labelVisibility: labelVisibilityProp = 'important',
+  showSameAsEdges = true,
+  onLabelVisibilityChange,
+  pinnedNodes = [],
+  onNodePin,
+  onNodeUnpin,
+  onClearPinnedNodes,
 }, ref) => {
+  // All hooks must be called unconditionally at the top (React rules)
   const fgRef = useRef<any>(null);
+  const textureCache = useRef(new Map<string, THREE.CanvasTexture>());
+  // v0.14.1: nodeObjectCache removed — it cached grey nodes before cluster colors arrived
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+
+  // v0.11.0: Debounced hover to prevent jitter
+  const hoveredNodeRef = useRef<string | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // v0.7.0: Adaptive labeling state
+  const [labelVisibility, setLabelVisibility] = useState<'none' | 'important' | 'all'>('important');
+  const [currentZoom, setCurrentZoom] = useState<number>(500);
+  const currentZoomRef = useRef<number>(500);
+
+  // v0.7.0: Calculate label threshold based on zoom level
+  const calculateLabelThreshold = useCallback((zoomLevel: number): number => {
+    // zoomLevel: 100 (close) to 800 (far)
+    // Returns size threshold: higher = fewer labels shown
+    if (zoomLevel < 200) return 2;      // Very close: show most labels
+    if (zoomLevel < 350) return 4;      // Medium close: show important
+    if (zoomLevel < 500) return 5;      // Medium: show main topics
+    if (zoomLevel < 650) return 6;      // Far: show only major nodes
+    return 8;                           // Very far: show only largest nodes
+  }, []);
+
+  // v0.7.0: Sync label visibility with external prop
+  useEffect(() => {
+    setLabelVisibility(labelVisibilityProp);
+  }, [labelVisibilityProp]);
 
   // UI-010 FIX: Store node positions to persist across re-renders
   // This prevents the simulation from restarting when graphData is recreated
@@ -153,14 +226,30 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const lastClickRef = useRef<{ nodeId: string; timestamp: number } | null>(null);
   const DOUBLE_CLICK_THRESHOLD = 300; // ms
 
-  // Build cluster color map
+  // v0.8.0: Hash function for stable cluster color assignment
+  // Using cluster_id ensures same cluster always gets same color across refreshes
+  const hashClusterId = useCallback((clusterId: number): number => {
+    let hash = 0;
+    const str = `cluster_${clusterId}`;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }, []);
+
+  // Build cluster color map with hash-based color assignment for stability
   const clusterColorMap = useMemo(() => {
     const colorMap = new Map<number, string>();
-    clusters.forEach((cluster, index) => {
-      colorMap.set(cluster.cluster_id, CLUSTER_COLORS[index % CLUSTER_COLORS.length]);
+    clusters.forEach((cluster) => {
+      // v0.8.0: Use hash-based color selection instead of array index
+      // This ensures same cluster_id always gets same color regardless of array order
+      const colorIndex = hashClusterId(cluster.cluster_id) % CLUSTER_COLORS.length;
+      colorMap.set(cluster.cluster_id, CLUSTER_COLORS[colorIndex]);
     });
     return colorMap;
-  }, [clusters]);
+  }, [clusters, hashClusterId]);
 
   // Build centrality map
   const centralityMap = useMemo(() => {
@@ -184,8 +273,25 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return sortedCentralities[top20Index] || 0;
   }, [centralityMetrics]);
 
-  // Helper function: Create text sprite for node labels
-  const createTextSprite = useCallback((text: string, color: string, fontSize: number = 14) => {
+  // v0.9.0: Centrality percentile map for InfraNodus-style labeling
+  const centralityPercentileMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (centralityMetrics.length === 0) {
+      // No centrality data - assign default percentile
+      nodes.forEach(n => map.set(n.id, 0.5));
+      return map;
+    }
+    const sorted = [...centralityMetrics].sort(
+      (a, b) => a.betweenness_centrality - b.betweenness_centrality
+    );
+    sorted.forEach((m, i) => {
+      map.set(m.concept_id, i / (sorted.length - 1 || 1));
+    });
+    return map;
+  }, [centralityMetrics, nodes]);
+
+  // Helper function: Create text sprite for node labels (InfraNodus-style)
+  const createTextSprite = useCallback((text: string, color: string, fontSize: number = 14, opacity: number = 1.0) => {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) return null;
@@ -196,24 +302,20 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     canvas.height = 64 * scale;
     context.scale(scale, scale);
 
-    // Text styling
+    // v0.9.0: Text styling with shadow (no background box - InfraNodus style)
     context.font = `bold ${fontSize}px Arial, sans-serif`;
+
+    // Shadow for readability (instead of background box)
+    context.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    context.shadowBlur = 6;
+    context.shadowOffsetX = 1;
+    context.shadowOffsetY = 2;
+
+    // Draw text with opacity
     context.fillStyle = color;
+    context.globalAlpha = opacity;
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-
-    // Background for readability
-    const textWidth = context.measureText(text).width;
-    const padding = 8;
-    const bgX = (canvas.width / scale - textWidth) / 2 - padding;
-    const bgWidth = textWidth + padding * 2;
-
-    context.fillStyle = 'rgba(13, 17, 23, 0.85)';
-    context.roundRect(bgX, 12, bgWidth, 40, 4);
-    context.fill();
-
-    // Draw text
-    context.fillStyle = color;
     context.fillText(text, canvas.width / scale / 2, canvas.height / scale / 2);
 
     // Create sprite
@@ -235,6 +337,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // Build highlighted sets for O(1) lookup
   const highlightedNodeSet = useMemo(() => new Set(highlightedNodes), [highlightedNodes]);
   const highlightedEdgeSet = useMemo(() => new Set(highlightedEdges), [highlightedEdges]);
+
+  // v0.7.0: Pinned nodes set for O(1) lookup
+  const pinnedNodeSet = useMemo(() => new Set(pinnedNodes), [pinnedNodes]);
 
   // Build node -> cluster mapping for edge coloring
   const nodeClusterMap = useMemo(() => {
@@ -325,14 +430,26 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       return forceNode;
     });
 
-    const forceLinks: ForceGraphLink[] = edges.map(edge => ({
+    // Phase 11F: Filter SAME_AS edges based on showSameAsEdges flag
+    const filteredEdges = showSameAsEdges
+      ? edges
+      : edges.filter(edge => edge.relationship_type !== 'SAME_AS');
+
+    const forceLinks: ForceGraphLink[] = filteredEdges.map(edge => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
       weight: edge.weight || 1,
+      confidence: typeof edge.properties?.confidence === 'number'
+        ? edge.properties.confidence
+        : (edge.weight || 1),
       relationshipType: edge.relationship_type,
       isHighlighted: false, // Always false here - use edgeStyleMap for actual state
       isGhost: false,
+      isLowTrust: (
+        (typeof edge.properties?.confidence === 'number' && edge.properties.confidence < 0.6) ||
+        ((edge.weight || 1) < 0.6)
+      ),
     }));
 
     // Add ghost edges (potential edges) if enabled
@@ -351,31 +468,40 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     return { nodes: forceNodes, links: forceLinks };
-  }, [nodes, edges, clusterColorMap, centralityMap, showGhostEdges, potentialEdges]);
+  }, [nodes, edges, clusterColorMap, centralityMap, showGhostEdges, potentialEdges, showSameAsEdges]);
   // ⚠️ CRITICAL: highlightedNodeSet and highlightedEdgeSet REMOVED from dependencies!
 
   // UI-010 FIX: Separate style maps for highlighting (changes without triggering graph rebuild)
   const nodeStyleMap = useMemo(() => {
-    const styleMap = new Map<string, { isHighlighted: boolean; baseColor: string }>();
+    const styleMap = new Map<string, { isHighlighted: boolean; isPinned: boolean; baseColor: string }>();
     // Pre-populate with all nodes to ensure consistent lookup
     baseGraphData.nodes.forEach(node => {
       styleMap.set(node.id, {
         isHighlighted: highlightedNodeSet.has(node.id),
+        isPinned: pinnedNodeSet.has(node.id),
         baseColor: node.color,
       });
     });
     return styleMap;
-  }, [baseGraphData.nodes, highlightedNodeSet]);
+  }, [baseGraphData.nodes, highlightedNodeSet, pinnedNodeSet]);
 
   const edgeStyleMap = useMemo(() => {
-    const styleMap = new Map<string, { isHighlighted: boolean }>();
+    const styleMap = new Map<string, { isHighlighted: boolean; isPinnedEdge: boolean; isLowTrust: boolean }>();
     baseGraphData.links.forEach(link => {
+      const sourceId = typeof link.source === 'string' ? link.source : (link.source as ForceGraphNode).id;
+      const targetId = typeof link.target === 'string' ? link.target : (link.target as ForceGraphNode).id;
+
+      // v0.7.0: Edge is pinned if both source and target are pinned
+      const isPinnedEdge = pinnedNodeSet.has(sourceId) && pinnedNodeSet.has(targetId);
+
       styleMap.set(link.id, {
         isHighlighted: highlightedEdgeSet.has(link.id) || link.isGhost === true,
+        isPinnedEdge,
+        isLowTrust: link.isLowTrust === true,
       });
     });
     return styleMap;
-  }, [baseGraphData.links, highlightedEdgeSet]);
+  }, [baseGraphData.links, highlightedEdgeSet, pinnedNodeSet]);
 
   // Backward compatibility: graphData reference for ForceGraph3D
   // This is now stable - only changes when nodes/edges/clusters change, NOT when highlights change
@@ -384,6 +510,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // UI-010 FIX: Save node positions periodically to preserve across re-renders
   useEffect(() => {
     const savePositions = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       if (fgRef.current) {
         const currentNodes = fgRef.current.graphData()?.nodes;
         if (currentNodes) {
@@ -403,8 +532,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     };
 
-    // Save positions every 500ms while simulation is running
-    const intervalId = setInterval(savePositions, 500);
+    // Save positions less aggressively to reduce CPU/memory pressure.
+    const intervalId = setInterval(savePositions, 2000);
     return () => clearInterval(intervalId);
   }, []);
 
@@ -412,13 +541,25 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // UI-010 FIX: Uses nodeStyleMap instead of node.isHighlighted to prevent stale renders
   const nodeThreeObject = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode;
+
     const group = new THREE.Group();
+    group.userData.nodeId = node.id;
     const nodeSize = node.val || 5;
 
     // UI-010 FIX: Get highlight state from style map, not from node object
     const nodeStyle = nodeStyleMap.get(node.id);
     const isHighlighted = nodeStyle?.isHighlighted || false;
-    const displayColor = isHighlighted ? '#FFD700' : (node.color || '#888888');
+    const isPinned = nodeStyle?.isPinned || false;
+
+    // v0.7.0: Color priority: highlighted > pinned > normal
+    let displayColor: string;
+    if (isHighlighted) {
+      displayColor = '#FFD700'; // Gold for highlighted
+    } else if (isPinned) {
+      displayColor = '#00E5FF'; // Cyan for pinned
+    } else {
+      displayColor = node.color || '#888888';
+    }
 
     // Calculate emissive intensity based on bloom settings
     let emissiveIntensity = isHighlighted ? 0.6 : 0.2;
@@ -429,18 +570,46 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         : 0.15 + bloomIntensity * 0.45;
     }
 
-    // Main sphere
-    const geometry = new THREE.SphereGeometry(nodeSize, 16, 16);
+    // v0.10.0: Entity type-based geometry
+    const entityShape = ENTITY_TYPE_SHAPES[node.entityType] || 'sphere';
+    let geometry: THREE.BufferGeometry;
+
+    switch (entityShape) {
+      case 'box':
+        geometry = new THREE.BoxGeometry(nodeSize * 1.6, nodeSize * 1.6, nodeSize * 1.6);
+        break;
+      case 'octahedron':
+        geometry = new THREE.OctahedronGeometry(nodeSize * 1.1);
+        break;
+      case 'cone':
+        geometry = new THREE.ConeGeometry(nodeSize, nodeSize * 2, 8);
+        break;
+      case 'dodecahedron':
+        geometry = new THREE.DodecahedronGeometry(nodeSize * 1.1);
+        break;
+      case 'tetrahedron':
+        geometry = new THREE.TetrahedronGeometry(nodeSize * 1.2);
+        break;
+      case 'cylinder':
+        geometry = new THREE.CylinderGeometry(nodeSize * 0.8, nodeSize * 0.8, nodeSize * 1.6, 8);
+        break;
+      case 'torus':
+        geometry = new THREE.TorusGeometry(nodeSize * 0.8, nodeSize * 0.35, 8, 16);
+        break;
+      default:
+        geometry = new THREE.SphereGeometry(nodeSize, 16, 16);
+    }
+
     const material = new THREE.MeshPhongMaterial({
       color: displayColor,
       emissive: displayColor,
       emissiveIntensity,
       transparent: true,
-      opacity: isHighlighted ? 1 : 0.85,  // Removed hoveredNode check to prevent jitter
+      opacity: isHighlighted ? 1 : 0.85,
       shininess: bloomEnabled ? 50 : 30,
     });
-    const sphere = new THREE.Mesh(geometry, material);
-    group.add(sphere);
+    const mainMesh = new THREE.Mesh(geometry, material);
+    group.add(mainMesh);
 
     // Bloom outer glow sphere (always show when bloom is enabled)
     if (bloomEnabled) {
@@ -469,6 +638,22 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       group.add(bridgeGlow);
     }
 
+    // Phase 11D: Table-sourced entity indicator (subtle border ring)
+    const isTableSourced = (node.properties as any)?.source_type === 'table';
+    if (isTableSourced && !isHighlighted) {
+      const tableRingSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.25;
+      const tableRingGeometry = new THREE.RingGeometry(tableRingSize, tableRingSize + nodeSize * 0.1, 32);
+      const tableRingMaterial = new THREE.MeshBasicMaterial({
+        color: '#F59E0B', // Amber - indicates table extraction
+        transparent: true,
+        opacity: bloomEnabled ? 0.3 + bloomIntensity * 0.15 : 0.4,
+        side: THREE.DoubleSide,
+      });
+      const tableRing = new THREE.Mesh(tableRingGeometry, tableRingMaterial);
+      tableRing.rotation.x = Math.PI / 2;
+      group.add(tableRing);
+    }
+
     // Highlight ring for selected nodes
     if (isHighlighted) {
       const ringSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.3;
@@ -485,11 +670,30 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       group.add(ring);
     }
 
-    // UI-009 FIX: InfraNodus-style labels
-    // Show labels based on node SIZE (which reflects centrality), not centrality threshold
-    // This ensures labels show even when centralityMetrics is empty or IDs don't match
-    const nodeSizeThreshold = 4;  // Show labels for nodes larger than this
-    const shouldShowLabel = nodeSize >= nodeSizeThreshold && node.name;
+    // v0.7.0: Pinned node indicator (cyan ring)
+    if (isPinned && !isHighlighted) {
+      const pinnedRingSize = bloomEnabled ? nodeSize * glowSize * 0.9 : nodeSize * 1.25;
+      const pinnedRingGeometry = new THREE.RingGeometry(pinnedRingSize, pinnedRingSize + nodeSize * 0.15, 32);
+      const pinnedRingMaterial = new THREE.MeshBasicMaterial({
+        color: '#00E5FF',
+        transparent: true,
+        opacity: bloomEnabled ? 0.5 + bloomIntensity * 0.2 : 0.6,
+        side: THREE.DoubleSide,
+      });
+      const pinnedRing = new THREE.Mesh(pinnedRingGeometry, pinnedRingMaterial);
+      pinnedRing.rotation.x = Math.PI / 2;
+      group.add(pinnedRing);
+    }
+
+    // v0.9.0: InfraNodus-style labeling based on centrality percentile
+    const nodePercentile = centralityPercentileMap.get(node.id) || 0.3;
+    const isTopPercentile = nodePercentile >= LABEL_CONFIG.alwaysVisiblePercentile;
+
+    const shouldShowLabel = node.name && (
+      labelVisibility === 'all' ||
+      (labelVisibility === 'important' && (isTopPercentile || isHighlighted || isPinned || node.isBridge)) ||
+      (labelVisibility === 'none' && (isHighlighted || isPinned))
+    );
 
     if (shouldShowLabel) {
       // Truncate long names
@@ -498,29 +702,66 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         ? node.name.substring(0, maxLabelLength - 2) + '..'
         : node.name;
 
-      // Scale font size by node size (InfraNodus style: bigger nodes = bigger labels)
-      const minFontSize = 10;
-      const maxFontSize = 24;
-      const sizeNormalized = Math.min(1, (nodeSize - nodeSizeThreshold) / 10);
-      const fontSize = Math.round(minFontSize + (maxFontSize - minFontSize) * sizeNormalized);
+      // v0.9.0: Font size proportional to centrality percentile (InfraNodus style)
+      const fontSize = Math.round(
+        LABEL_CONFIG.minFontSize +
+        (LABEL_CONFIG.maxFontSize - LABEL_CONFIG.minFontSize) * nodePercentile
+      );
+
+      // v0.9.0: Opacity proportional to centrality (highlighted/pinned override to 1.0)
+      const labelOpacity = isHighlighted || isPinned ? 1.0 :
+        LABEL_CONFIG.minOpacity +
+        (LABEL_CONFIG.maxOpacity - LABEL_CONFIG.minOpacity) * nodePercentile;
 
       // InfraNodus style: Label color matches cluster color
-      // Highlighted nodes get gold, otherwise use node's cluster color
-      const labelColor = isHighlighted ? '#FFD700' : (node.color || '#FFFFFF');
-      const labelSprite = createTextSprite(displayName, labelColor, fontSize);
+      // Highlighted nodes get gold, pinned nodes get cyan
+      const labelColor = isHighlighted ? '#FFD700' : isPinned ? '#00E5FF' : (node.color || '#FFFFFF');
+      const labelSprite = createTextSprite(displayName, labelColor, fontSize, labelOpacity);
 
       if (labelSprite) {
         // Position label above the node - scale position with font size
-        const labelOffset = nodeSize + 4 + (fontSize - minFontSize) * 0.2;
+        const labelOffset = nodeSize + 4 + (fontSize - LABEL_CONFIG.minFontSize) * 0.2;
         labelSprite.position.set(0, labelOffset, 0);
         group.add(labelSprite);
       }
     }
 
     return group;
-  }, [nodeStyleMap, bloomEnabled, bloomIntensity, glowSize, createTextSprite]);
+  }, [bloomEnabled, bloomIntensity, glowSize, createTextSprite, labelVisibility, centralityPercentileMap]);
   // ⚠️ CRITICAL FIX: hoveredNode removed from dependencies to prevent full graph rebuild on hover
   // Hover effect is now handled via CSS cursor only (see container div style below)
+  // v0.9.0: Replaced currentZoom/calculateLabelThreshold with centralityPercentileMap for InfraNodus-style labeling
+
+  // v0.14.0: Update highlights without recreating node objects (prevents simulation reheat)
+  useEffect(() => {
+    if (!fgRef.current) return;
+    const scene = fgRef.current.scene();
+    if (!scene) return;
+
+    scene.traverse((obj: THREE.Object3D) => {
+      if (obj instanceof THREE.Mesh && obj.parent?.userData?.nodeId) {
+        const nodeId = obj.parent.userData.nodeId;
+        const style = nodeStyleMap.get(nodeId);
+        if (!style) return;
+
+        const mat = obj.material as THREE.MeshStandardMaterial;
+        if (!mat || !mat.color) return;
+
+        let targetColor: string;
+        if (style.isHighlighted) {
+          targetColor = '#FFD700';
+        } else if (style.isPinned) {
+          targetColor = '#00E5FF';
+        } else {
+          targetColor = style.baseColor || '#888888';
+        }
+
+        mat.color.set(targetColor);
+        mat.emissive.set(targetColor);
+        mat.emissiveIntensity = style.isHighlighted ? 0.6 : 0.2;
+      }
+    });
+  }, [nodeStyleMap]);
 
   // Link width based on weight
   // UI-010 FIX: Uses edgeStyleMap for highlight state
@@ -534,13 +775,26 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     // Get highlight state from style map
     const edgeStyle = edgeStyleMap.get(link.id);
     const isHighlighted = edgeStyle?.isHighlighted || false;
-    return isHighlighted ? baseWidth * 2 : baseWidth;
+    const isPinnedEdge = edgeStyle?.isPinnedEdge || false;
+    const isLowTrust = edgeStyle?.isLowTrust || false;
+
+    // v0.7.0: Pinned edges are thicker
+    if (isHighlighted) return baseWidth * 2;
+    if (isPinnedEdge) return baseWidth * 1.5;
+    if (isLowTrust) return Math.max(0.25, baseWidth * 0.75);
+    return baseWidth;
   }, [edgeStyleMap]);
 
   // Link color - Cluster-based coloring (InfraNodus-style)
   // UI-010 FIX: Uses edgeStyleMap for highlight state
+  // Phase 12B: SAME_AS edge LOD (hide when camera distance > 800)
   const linkColor = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
+
+    // Phase 12B: Hide SAME_AS edges when zoomed out (camera distance > 800)
+    if (link.relationshipType === 'SAME_AS' && showSameAsEdges && currentZoomRef.current > 800) {
+      return 'rgba(0, 0, 0, 0)'; // Fully transparent when LOD threshold exceeded
+    }
 
     // Ghost edges: amber/orange with transparency based on similarity
     if (link.isGhost) {
@@ -555,6 +809,16 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     // Highlighted edges: gold
     if (isHighlighted) {
       return 'rgba(255, 215, 0, 0.8)';
+    }
+
+    // v0.7.0: Pinned edges (between pinned nodes) - cyan
+    if (edgeStyle?.isPinnedEdge) {
+      return 'rgba(0, 229, 255, 0.7)';  // Cyan for pinned edges
+    }
+
+    // Low-trust edges: subdued amber for caution visibility.
+    if (edgeStyle?.isLowTrust) {
+      return 'rgba(245, 158, 11, 0.28)';
     }
 
     // Get source and target node IDs
@@ -584,11 +848,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
     // Default: white with low opacity
     return 'rgba(255, 255, 255, 0.15)';
-  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors]);
+  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors, showSameAsEdges]);
 
-  // Custom link rendering for ghost edges (dashed lines)
+  // Custom link rendering for ghost edges and SAME_AS edges (dashed lines)
   const linkThreeObject = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
+
+    // Phase 11F: Render SAME_AS edges as dashed purple lines
+    if (link.relationshipType === 'SAME_AS') {
+      const geometry = new THREE.BufferGeometry();
+      const material = new THREE.LineDashedMaterial({
+        color: 0x9D4EDD, // Purple (accent-violet)
+        dashSize: 2,
+        gapSize: 1.5,
+        opacity: 0.7,
+        transparent: true,
+      });
+
+      const line = new THREE.Line(geometry, material);
+      line.computeLineDistances();
+
+      return line;
+    }
 
     if (!link.isGhost) {
       return null; // Use default rendering for regular edges
@@ -610,11 +891,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return line;
   }, []);
 
-  // Update ghost edge positions
+  // Update ghost edge and SAME_AS edge positions
   const linkPositionUpdate = useCallback((line: THREE.Object3D, coords: { start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number } }, linkData: unknown) => {
     const link = linkData as ForceGraphLink;
 
-    if (link.isGhost && line instanceof THREE.Line) {
+    // Phase 11F: Handle SAME_AS edges (dashed lines)
+    if ((link.isGhost || link.relationshipType === 'SAME_AS') && line instanceof THREE.Line) {
       const positions = new Float32Array([
         coords.start.x, coords.start.y, coords.start.z,
         coords.end.x, coords.end.y, coords.end.z
@@ -639,9 +921,19 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, []);
 
   // Node click handler - selects node, double-click focuses camera
-  const handleNodeClick = useCallback((nodeData: unknown) => {
+  const handleNodeClick = useCallback((nodeData: unknown, event: MouseEvent) => {
     const node = nodeData as ForceGraphNode;
     const now = Date.now();
+
+    // v0.7.0: Shift+click to toggle pin
+    if (event.shiftKey) {
+      if (pinnedNodeSet.has(node.id)) {
+        onNodeUnpin?.(node.id);
+      } else {
+        onNodePin?.(node.id);
+      }
+      return; // Don't proceed with normal click behavior
+    }
 
     // Check for double-click
     if (
@@ -669,7 +961,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     }
     // Note: Camera focus only happens on double-click for stable UX
-  }, [nodes, onNodeClick, focusCameraOnNode]);
+  }, [nodes, onNodeClick, focusCameraOnNode, pinnedNodeSet, onNodePin, onNodeUnpin]);
 
   // Node right-click handler - alternative way to focus camera on node
   const handleNodeRightClick = useCallback((nodeData: unknown) => {
@@ -677,17 +969,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     focusCameraOnNode(node);
   }, [focusCameraOnNode]);
 
-  // Node hover handler
+  // Node hover handler - v0.11.0: debounced to prevent jitter
   const handleNodeHover = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode | null;
-    setHoveredNode(node?.id || null);
-    if (onNodeHover) {
-      if (node) {
-        const originalNode = nodes.find(n => n.id === node.id);
-        onNodeHover(originalNode || null);
-      } else {
-        onNodeHover(null);
-      }
+    const newId = node?.id || null;
+
+    // Only process if actually changed
+    if (newId !== hoveredNodeRef.current) {
+      hoveredNodeRef.current = newId;
+
+      // Debounce the state update to prevent jitter
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = setTimeout(() => {
+        setHoveredNode(newId);
+        if (onNodeHover) {
+          if (node) {
+            const originalNode = nodes.find(n => n.id === node.id);
+            onNodeHover(originalNode || null);
+          } else {
+            onNodeHover(null);
+          }
+        }
+      }, 50);
     }
   }, [nodes, onNodeHover]);
 
@@ -784,7 +1087,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     },
     getCamera: () => fgRef.current?.camera(),
-  }), [graphData]);
+    clearPinnedNodes: () => {
+      onClearPinnedNodes?.();
+    },
+  }), [graphData, onClearPinnedNodes]);
 
   // Auto-focus on gap when selected
   useEffect(() => {
@@ -831,6 +1137,117 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
   }, []);
 
+  // v0.7.0: Track camera zoom level for adaptive labels
+  // v0.10.0: Bucket-based updates to prevent jitter (only update state on threshold change)
+  useEffect(() => {
+    if (!fgRef.current) return;
+
+    const checkCameraDistance = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      const camera = fgRef.current?.camera();
+      if (camera) {
+        const distance = camera.position.length();
+        // Only update React state when zoom crosses a 50-unit bucket boundary
+        const bucket = Math.round(distance / 50) * 50;
+        if (bucket !== currentZoomRef.current) {
+          currentZoomRef.current = bucket;
+          setCurrentZoom(bucket);
+        }
+      }
+    };
+
+    // Check periodically (controls event listener may not be accessible)
+    const intervalId = setInterval(checkCameraDistance, 750);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // Cleanup hover timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
+  // v0.14.1: Hardened WebGL cleanup — try-catch prevents INVALID_OPERATION on context change
+  useEffect(() => {
+    return () => {
+      // 1. Dispose all cached textures
+      textureCache.current.forEach((texture) => {
+        try { texture.dispose(); } catch { /* context changed */ }
+      });
+      textureCache.current.clear();
+
+      // 2. Dispose scene resources
+      if (fgRef.current) {
+        try {
+          const scene = fgRef.current.scene();
+          if (scene) {
+            scene.traverse((obj: THREE.Object3D) => {
+              try {
+                if (obj instanceof THREE.Mesh) {
+                  obj.geometry?.dispose();
+                  if (obj.material instanceof THREE.Material) {
+                    (obj.material as any).map?.dispose();
+                    obj.material.dispose();
+                  } else if (Array.isArray(obj.material)) {
+                    obj.material.forEach((m) => {
+                      try { (m as any).map?.dispose(); m.dispose(); } catch { /* already disposed */ }
+                    });
+                  }
+                }
+                if (obj instanceof THREE.Sprite) {
+                  obj.material.map?.dispose();
+                  obj.material.dispose();
+                }
+              } catch { /* disposed or wrong context */ }
+            });
+          }
+        } catch { /* scene unavailable */ }
+
+        // 3. Renderer explicit disposal
+        try {
+          const renderer = fgRef.current.renderer();
+          if (renderer) {
+            renderer.dispose();
+            renderer.forceContextLoss();
+          }
+        } catch { /* already disposed */ }
+      }
+
+      // 4. Clear position cache
+      nodePositionsRef.current.clear();
+    };
+  }, []);
+
+  // E2E Mock Mode - Early return AFTER all hooks have been called
+  if (E2E_MOCK_3D) {
+    const lowTrustEdgeCount = edges.filter((edge) => {
+      const confidence = typeof edge.properties?.confidence === 'number'
+        ? edge.properties.confidence
+        : (edge.weight || 1);
+      return confidence < 0.6;
+    }).length;
+
+    const ghostEdgeCount = showGhostEdges ? potentialEdges.length : 0;
+
+    return (
+      <div className="w-full h-full bg-[#0d1117] p-4 border border-white/10" data-testid="graph3d-e2e-mock">
+        <div className="font-mono text-xs text-accent-teal uppercase tracking-wide mb-2">
+          Graph3D E2E Mock Mode
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs text-muted">
+          <div data-testid="graph3d-node-count">nodes: {nodes.length}</div>
+          <div data-testid="graph3d-edge-count">edges: {edges.length}</div>
+          <div data-testid="graph3d-low-trust-count">low_trust_edges: {lowTrustEdgeCount}</div>
+          <div data-testid="graph3d-ghost-edge-count">ghost_edges: {ghostEdgeCount}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="w-full h-full bg-[#0d1117]"
@@ -844,12 +1261,26 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         nodeThreeObject={nodeThreeObject}
         nodeLabel={(nodeData: unknown) => {
           const node = nodeData as ForceGraphNode;
+          const isTableSourced = (node.properties as any)?.source_type === 'table';
+          const tablePage = (node.properties as any)?.table_page;
+          const tableIndex = (node.properties as any)?.table_index;
+
+          // Phase 11F: Check for SAME_AS connections (cross-paper entities)
+          const sameAsEdges = graphData.links.filter(link =>
+            link.relationshipType === 'SAME_AS' &&
+            (link.source === node.id || (typeof link.source === 'object' && (link.source as ForceGraphNode).id === node.id) ||
+             link.target === node.id || (typeof link.target === 'object' && (link.target as ForceGraphNode).id === node.id))
+          );
+          const crossPaperCount = sameAsEdges.length > 0 ? sameAsEdges.length + 1 : 0;
+
           return `
             <div style="background: rgba(0,0,0,0.8); padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 12px;">
               <div style="font-weight: bold; color: ${node.color || '#888'};">${node.name || 'Unknown'}</div>
               <div style="color: #888; margin-top: 4px;">${node.entityType || 'Entity'}</div>
               ${node.centrality ? `<div style="color: #4ECDC4; margin-top: 2px;">Centrality: ${(node.centrality * 100).toFixed(1)}%</div>` : ''}
               ${node.isBridge ? '<div style="color: #FFD700; margin-top: 2px;">Bridge Node</div>' : ''}
+              ${crossPaperCount > 0 ? `<div style="color: #9D4EDD; margin-top: 2px;">🔗 이 개념은 ${crossPaperCount}편의 논문에서 공통으로 언급됩니다</div>` : ''}
+              ${isTableSourced ? `<div style="color: #F59E0B; margin-top: 2px;">📊 From Table${tablePage ? ` (p.${tablePage})` : ''}${tableIndex !== undefined ? ` #${tableIndex + 1}` : ''}</div>` : ''}
             </div>
           `;
         }}
@@ -858,10 +1289,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         linkOpacity={0.6}
         linkThreeObject={linkThreeObject as never}
         linkPositionUpdate={linkPositionUpdate as never}
-        linkDirectionalParticles={showParticles ? 2 : 0}
-        linkDirectionalParticleSpeed={particleSpeed}
-        linkDirectionalParticleWidth={1.5}
-        linkDirectionalParticleColor={() => '#FFD700'}
         backgroundColor="#0d1117"
         onNodeClick={handleNodeClick}
         onNodeRightClick={handleNodeRightClick}  // Right-click also focuses camera on node
@@ -891,21 +1318,20 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
           }
         }}
         onNodeDragEnd={(node) => {
-          // CRITICAL: Keep node pinned after drag - this prevents snap-back!
-          // Setting fx/fy/fz to current position locks the node in place
-          node.fx = node.x;
-          node.fy = node.y;
-          node.fz = node.z;
-          // Save final position to ref for persistence
+          // v0.9.0: Release node to physics after drag (user can re-drag to reposition)
+          node.fx = undefined;
+          node.fy = undefined;
+          node.fz = undefined;
+          // Save position but don't pin
           const nodeId = String(node.id);
           if (nodeId && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
             nodePositionsRef.current.set(nodeId, {
               x: node.x,
               y: node.y,
               z: node.z,
-              fx: node.fx,
-              fy: node.fy,
-              fz: node.fz,
+              fx: undefined,
+              fy: undefined,
+              fz: undefined,
             });
           }
         }}
@@ -913,29 +1339,31 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         // Problem: Nodes vibrate rapidly, rubber-banding effect, struggling to settle
         // Solution: HIGH damping + MODERATE cooling = stable without being sluggish
         //
-        // UI-010 FIX: Use isInitialRenderRef to determine warmup/cooldown behavior
-        // - Initial render: More warmup for stable layout
-        // - Subsequent renders: Minimal warmup to prevent simulation restart
-        warmupTicks={isInitialRenderRef.current ? 50 : 0}
-        cooldownTicks={isInitialRenderRef.current ? 200 : 0}  // 0 prevents simulation restart on highlight changes
-        d3AlphaDecay={0.02}         // Slower cooldown (0.02 instead of 0.05) for smoother settling
-        d3VelocityDecay={0.9}       // Very high damping (0.9 = strong friction, kills oscillation)
-        d3AlphaMin={0.001}          // Lower threshold for finer settling
+        // v0.9.0: Physics parameters optimized for natural floating feel
+        warmupTicks={50}
+        cooldownTicks={200}            // Fast stabilization, freeze after
+        d3AlphaDecay={0.0228}          // D3 default
+        d3VelocityDecay={0.75}         // Strong damping, minimal drift
+        d3AlphaMin={0.001}             // Lower threshold for finer settling
         // CRITICAL: Disable auto-refresh of simulation when data changes
         // This prevents the "explosion" effect when highlighting changes
         enableNodeDrag={true}
         onEngineStop={() => {
           // Mark initial render as complete
           isInitialRenderRef.current = false;
-          // Save all positions when simulation stops
+          // Freeze all nodes in place to prevent micro-drift
           if (fgRef.current) {
             const currentNodes = fgRef.current.graphData()?.nodes;
             if (currentNodes) {
               currentNodes.forEach((n: ForceGraphNode) => {
                 if (n.x !== undefined && n.y !== undefined && n.z !== undefined) {
+                  // Pin nodes at their final positions
+                  n.fx = n.x;
+                  n.fy = n.y;
+                  n.fz = n.z;
                   nodePositionsRef.current.set(n.id, {
                     x: n.x, y: n.y, z: n.z,
-                    fx: n.fx, fy: n.fy, fz: n.fz,
+                    fx: n.x, fy: n.y, fz: n.z,
                   });
                 }
               });

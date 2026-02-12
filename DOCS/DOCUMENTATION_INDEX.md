@@ -1,7 +1,7 @@
 # ScholaRAG_Graph Documentation Index
 
-**Last Updated**: 2026-01-25
-**Documentation Version**: 3.1.0
+**Last Updated**: 2026-02-06
+**Documentation Version**: 3.2.0
 **Status**: Complete & Verified ✅
 
 ## Quick Navigation
@@ -82,6 +82,12 @@
 2. **Progress Tracker**: `DOCS/project-management/progress-tracker.md`
 3. **Action Items**: `DOCS/project-management/improvement-plan.md`
 
+### For QA / Testing
+
+1. **TDD Baseline**: `DOCS/testing/TDD.md` ⭐ NEW
+2. **Backend Test Suite**: `backend/tests/README.md`
+3. **E2E Test Cases**: `DOCS/testing/infranodus-e2e-test-cases.md`
+
 ### For Deployment & Operations
 
 1. **Main Instructions**: `/CLAUDE.md` (Environment Variables section)
@@ -102,7 +108,11 @@ DOCS/
 │   ├── overview.md                    System components overview
 │   ├── multi-agent-system.md         6-Agent pipeline + Groq LLM ⭐ UPDATED
 │   ├── graph-visualization.md        View Modes architecture ⭐ UPDATED
+│   ├── SDD.md                        Software Design Document ⭐ UPDATED
 │   └── database-schema.md            PostgreSQL + pgvector schema
+├── testing/
+│   ├── TDD.md                        Test Design Document ⭐ NEW
+│   └── infranodus-e2e-test-cases.md  End-to-end manual test catalog
 ├── development/
 │   ├── LLM_CONFIGURATION.md          ⭐ NEW - Groq setup guide
 │   ├── VIEW_MODES_REFERENCE.md       ⭐ NEW - Developer quick ref
@@ -131,39 +141,28 @@ DOCS/
 
 ---
 
-## What's New (2026-01-25)
+## What's New (2026-02-06)
 
 ### Documentation Added
 
 | Document | Purpose | Location |
 |----------|---------|----------|
-| **ARCHITECTURE_UPDATE_SUMMARY.md** | Comprehensive overview of all changes | `/DOCS/` |
-| **LLM_CONFIGURATION.md** | Groq API setup and management guide | `/DOCS/development/` |
-| **VIEW_MODES_REFERENCE.md** | Developer quick reference for 3 modes | `/DOCS/development/` |
+| **TDD.md** | Test design baseline, SDD-TDD traceability, release quality gates | `/DOCS/testing/` |
+| **RELEASE_NOTES_v0.10.2.md** | Stability/memory hardening release 기록 | `/` |
 
 ### Documentation Updated
 
 | Document | Changes | Impact |
 |----------|---------|--------|
-| **multi-agent-system.md** | Added Groq provider details, cost analysis, rate limiting | LLM section completely rewritten |
-| **graph-visualization.md** | Added View Modes architecture, 3D/Topic/Gaps sections | +400 lines, now 600+ line reference |
+| **SDD.md** | v0.10.2 변경사항 및 문서 메타데이터 갱신 | 설계/릴리즈 문서 동기화 |
+| **backend/tests/README.md** | v0.10.2 안정화 회귀 테스트 실행 기준 추가 | 릴리즈 검증 절차 표준화 |
+| **DOCUMENTATION_INDEX.md** | Testing/TDD 탐색 경로 추가 | 문서 접근성 향상 |
 
 ### Key Improvements
 
-#### 1. LLM Configuration Clarity
-- Before: Generic "Anthropic, OpenAI, Google" list
-- After: Groq as primary with full setup guide
-- Includes: API keys, rate limits, cost analysis, monitoring
-
-#### 2. Visualization Architecture
-- Before: React Flow focused, incomplete
-- After: Three complete view modes documented
-- Includes: Component locations, props, use cases, code examples
-
-#### 3. Developer Experience
-- Added LLM_CONFIGURATION.md for API management
-- Added VIEW_MODES_REFERENCE.md for quick lookup
-- All documents cross-referenced
+1. SDD↔TDD 추적 매트릭스 기반 검증 체계 수립
+2. 안정화 릴리즈(v0.10.2) 기준 회귀 테스트 절차 문서화
+3. 릴리즈 노트/아키텍처/테스트 문서 간 참조 연결 강화
 
 ---
 
@@ -331,6 +330,7 @@ DOCS/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **3.2.0** | 2026-02-06 | ⭐ Added TDD baseline and v0.10.2 documentation sync |
 | **3.1.0** | 2026-01-25 | ⭐ Major update: LLM configuration docs, View Modes architecture, 2 new guides |
 | 3.0.0 | 2026-01-20 | Project setup, basic architecture |
 | 2.0.0 | 2025-12-15 | Backend refactor, database migrations |
@@ -418,7 +418,7 @@ When adding new features:
 
 | Metric | Value |
 |--------|-------|
-| **Total Documents** | 30+ files |
+| **Total Documents** | 32+ files |
 | **Architecture Docs** | 4 files |
 | **Development Guides** | 5 files |
 | **Getting Started** | 2 files |
@@ -432,8 +432,8 @@ When adding new features:
 
 ---
 
-**Documentation Version**: 3.1.0
-**Last Updated**: 2026-01-25
+**Documentation Version**: 3.2.0
+**Last Updated**: 2026-02-06
 **Maintainer**: Claude Code
 **Status**: Complete & Verified ✅
 

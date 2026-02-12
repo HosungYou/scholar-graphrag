@@ -76,7 +76,12 @@ class OpenAIEmbeddingProvider:
                 batch = texts[i:i + batch_size]
 
                 # Clean texts (OpenAI doesn't like empty strings)
-                cleaned_batch = [t.strip() if t.strip() else "empty" for t in batch]
+                # E2 fix: Truncate to ~8191 tokens (approx 4 chars/token for English)
+                MAX_CHARS = 30000  # ~7500 tokens, safe margin under 8191 limit
+                cleaned_batch = [
+                    (t.strip()[:MAX_CHARS] if t.strip() else "empty")
+                    for t in batch
+                ]
 
                 response = await self.client.embeddings.create(
                     input=cleaned_batch,

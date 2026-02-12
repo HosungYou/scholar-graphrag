@@ -42,6 +42,12 @@ interface GraphStore {
   // View Mode State (3D vs Topic View)
   viewMode: ViewMode;
 
+  // Pinned Nodes State (Graph-to-Prompt)
+  pinnedNodes: string[];
+
+  // Phase 11F: SAME_AS Edge Filter
+  showSameAsEdges: boolean;
+
   // Actions
   fetchGraphData: (projectId: string) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
@@ -65,6 +71,17 @@ interface GraphStore {
 
   // View Mode Actions
   setViewMode: (mode: ViewMode) => void;
+  getRecommendedViewMode: (intent?: string | null) => ViewMode;
+  applyRecommendedViewMode: (intent?: string | null) => void;
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds: string[]) => void;
+  addPinnedNode: (nodeId: string) => void;
+  removePinnedNode: (nodeId: string) => void;
+  clearPinnedNodes: () => void;
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => void;
 }
 
 // Default filters (Hybrid Mode: Paper/Author + Concept-Centric)
@@ -77,6 +94,22 @@ const defaultFilters: FilterState = {
   yearRange: null,
   searchQuery: '',
 };
+
+// Prevent repeated heavy gap re-analysis calls on every project reopen.
+const gapAutoRefreshAttempted = new Set<string>();
+
+function inferViewModeFromIntent(intent?: string | null): ViewMode {
+  if (!intent) return '3d';
+
+  const normalized = intent.toLowerCase();
+
+  // Gap intent takes priority because it needs dedicated bridge context.
+  if (normalized.includes('gap')) return 'gaps';
+  if (normalized.includes('timeline') || normalized.includes('temporal')) return 'temporal';
+  if (normalized.includes('cluster') || normalized.includes('topic')) return 'topic';
+
+  return '3d';
+}
 
 export const useGraphStore = create<GraphStore>((set, get) => ({
   // Initial state
@@ -101,6 +134,12 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   // View Mode State
   viewMode: '3d' as ViewMode,
+
+  // Pinned Nodes State
+  pinnedNodes: [],
+
+  // Phase 11F: SAME_AS Edge Filter State
+  showSameAsEdges: true,
 
   // Actions
   fetchGraphData: async (projectId: string) => {
@@ -216,7 +255,25 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   fetchGapAnalysis: async (projectId: string) => {
     set({ isGapLoading: true });
     try {
-      const analysis = await api.getGapAnalysis(projectId);
+      let analysis = await api.getGapAnalysis(projectId);
+
+      // v0.9.0: Auto-refresh when no gaps but clusters exist
+      // This handles the case where gap analysis wasn't computed yet
+      if (
+        analysis.gaps.length === 0 &&
+        analysis.clusters.length > 1 &&
+        !gapAutoRefreshAttempted.has(projectId)
+      ) {
+        gapAutoRefreshAttempted.add(projectId);
+        console.log('[GapAnalysis] No gaps found with multiple clusters, triggering refresh...');
+        try {
+          analysis = await api.refreshGapAnalysis(projectId);
+        } catch (refreshError) {
+          console.warn('[GapAnalysis] Refresh failed:', refreshError);
+          // Continue with original analysis
+        }
+      }
+
       set({
         gaps: analysis.gaps,
         clusters: analysis.clusters,
@@ -265,4 +322,28 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   setViewMode: (mode) => {
     set({ viewMode: mode });
   },
+
+  getRecommendedViewMode: (intent) => inferViewModeFromIntent(intent),
+
+  applyRecommendedViewMode: (intent) => {
+    set({ viewMode: inferViewModeFromIntent(intent) });
+  },
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds) => set({ pinnedNodes: nodeIds }),
+
+  addPinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.includes(nodeId)
+      ? state.pinnedNodes
+      : [...state.pinnedNodes, nodeId]
+  })),
+
+  removePinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.filter(id => id !== nodeId)
+  })),
+
+  clearPinnedNodes: () => set({ pinnedNodes: [] }),
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => set((state) => ({ showSameAsEdges: !state.showSameAsEdges })),
 }));

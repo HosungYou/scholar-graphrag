@@ -57,6 +57,12 @@ You analyze a concept-centric knowledge graph where:
 - Papers and Authors are metadata attached to concepts (not visible as separate nodes)
 - Relationships show how concepts relate across the literature
 
+CRITICAL RULES:
+- If research gap data is provided in the context below, you MUST analyze and present it. NEVER claim the graph is unavailable or not initialized when data is present.
+- Base your response ONLY on the provided data. Do not fabricate error messages.
+- If data shows gaps between clusters, describe them clearly with the cluster names.
+- If evidence is sparse, add a short 'Reliability note' warning in the final conclusion.
+
 Apply step-by-step reasoning to answer the user's question.
 When relevant, identify research gaps - areas where concept clusters have weak connections.
 
@@ -101,6 +107,28 @@ Respond with JSON:
     def __init__(self, llm_provider=None, db_connection=None):
         self.llm = llm_provider
         self.db = db_connection
+
+    def _build_provenance_warning(self, execution_result) -> Optional[str]:
+        """
+        Build a reliability warning when provenance/evidence signals are weak.
+        """
+        results = execution_result.results or []
+        successful_with_data = sum(1 for r in results if r.success and r.data)
+        signal_count = len(execution_result.nodes_accessed) + len(execution_result.edges_traversed)
+
+        if successful_with_data == 0:
+            return (
+                "Reliability note: No directly supporting graph evidence was retrieved for this answer. "
+                "Treat this as exploratory guidance."
+            )
+
+        if signal_count < 3:
+            return (
+                "Reliability note: Evidence coverage is limited (few supporting nodes/edges). "
+                "Please verify with additional sources."
+            )
+
+        return None
 
     async def reason(
         self,
@@ -192,14 +220,16 @@ Data: {results_summary[:3]}"""
         # Add gap context if available
         if gap_context and gap_context.get("gaps"):
             gap_text = "\n".join([
-                f"- Gap between '{g['cluster_a'][:2]}...' and '{g['cluster_b'][:2]}...' (strength: {g['strength']:.2f})"
-                for g in gap_context["gaps"][:3]
+                f"- Gap between clusters [{', '.join(g['cluster_a'])}] and [{', '.join(g['cluster_b'])}] (strength: {g['strength']:.2f})"
+                + (f"\n  Suggested questions: {'; '.join(g.get('questions', []))}" if g.get('questions') else "")
+                + (f"\n  Bridge concepts: {', '.join(g.get('bridges', []))}" if g.get('bridges') else "")
+                for g in gap_context["gaps"][:5]
             ])
-            context += f"\n\nResearch Gaps Detected:\n{gap_text}"
+            context += f"\n\nResearch Gaps Detected ({gap_context.get('total', 0)} total):\n{gap_text}"
 
         prompt = f"Analyze this research query and results:\n{context}"
         response = await self.llm.generate(
-            prompt=prompt, system_prompt=self.SYSTEM_PROMPT, max_tokens=1500, temperature=0.3
+            prompt=prompt, system_prompt=self.SYSTEM_PROMPT, max_tokens=1500, temperature=0.1
         )
 
         try:
@@ -230,7 +260,14 @@ Data: {results_summary[:3]}"""
 
             return ReasoningResult(
                 steps=steps,
-                final_conclusion=data.get("final_conclusion", "Analysis complete."),
+                final_conclusion=(
+                    data.get("final_conclusion", "Analysis complete.")
+                    + (
+                        "\n\n" + warning
+                        if (warning := self._build_provenance_warning(execution_result))
+                        else ""
+                    )
+                ),
                 confidence=float(data.get("confidence", 0.7)),
                 supporting_nodes=execution_result.nodes_accessed,
                 supporting_edges=execution_result.edges_traversed,
@@ -247,9 +284,42 @@ Data: {results_summary[:3]}"""
         execution_result,
         gap_context: Optional[dict] = None
     ) -> ReasoningResult:
-        """Fallback structured reasoning with gap awareness."""
+        """
+        Fallback structured reasoning with gap awareness.
+
+        v0.6.0 Fix: Uses actual execution_result data instead of generic templates.
+        """
         num_results = len(execution_result.results)
         successful = sum(1 for r in execution_result.results if r.success)
+
+        # v0.6.0: Extract actual findings from execution results
+        actual_findings = []
+        entity_names = []
+        relationship_count = 0
+
+        for result in execution_result.results:
+            if result.success and result.data:
+                if isinstance(result.data, dict):
+                    # Extract entities if available
+                    if 'entities' in result.data:
+                        entities = result.data['entities'][:5]
+                        entity_names.extend([e.get('name', 'unknown') for e in entities if isinstance(e, dict)])
+                    # Count relationships
+                    if 'relationships' in result.data:
+                        rel_count = len(result.data['relationships'])
+                        relationship_count += rel_count
+                    # Extract any summary or description
+                    if 'summary' in result.data:
+                        actual_findings.append(result.data['summary'][:200])
+                    if 'description' in result.data:
+                        actual_findings.append(result.data['description'][:200])
+                elif isinstance(result.data, list):
+                    for item in result.data[:3]:
+                        if isinstance(item, dict) and 'name' in item:
+                            entity_names.append(item['name'])
+
+        # Remove duplicates and limit
+        entity_names = list(dict.fromkeys(entity_names))[:10]
 
         steps = [
             ReasoningStep(
@@ -261,13 +331,16 @@ Data: {results_summary[:3]}"""
             ReasoningStep(
                 step_number=2,
                 description="Synthesizing findings from concept network",
-                evidence=[f"Accessed {len(execution_result.nodes_accessed)} concept nodes"],
+                evidence=[
+                    f"Accessed {len(execution_result.nodes_accessed)} concept nodes",
+                    f"Found {len(entity_names)} related concepts" if entity_names else "No direct matches"
+                ],
                 conclusion="Patterns analyzed",
             ),
             ReasoningStep(
                 step_number=3,
                 description="Formulating response",
-                evidence=[],
+                evidence=actual_findings[:2] if actual_findings else [],
                 conclusion="Ready to present findings",
             ),
         ]
@@ -295,10 +368,35 @@ Data: {results_summary[:3]}"""
                     )
                 )
 
+        # v0.6.0: Build data-based conclusion instead of generic template
+        if entity_names:
+            concepts_str = ', '.join(entity_names[:5])
+            conclusion = f"Analysis of '{query}' in the knowledge graph:\n"
+            conclusion += f"• Related concepts: {concepts_str}\n"
+            if relationship_count > 0:
+                conclusion += f"• Found {relationship_count} relationship(s) between concepts\n"
+            if len(entity_names) > 5:
+                conclusion += f"• {len(entity_names) - 5} additional related concepts available"
+            confidence = 0.6 + min(0.3, len(entity_names) * 0.03)
+        else:
+            conclusion = (
+                f"No direct matches found for '{query}' in the knowledge graph. "
+                "Try using different keywords or broader concepts. "
+                f"The graph contains {len(execution_result.nodes_accessed)} accessible nodes."
+            )
+            confidence = 0.3
+
         return ReasoningResult(
             steps=steps,
-            final_conclusion=f"Based on analyzing the concept-centric knowledge graph for '{query}', relevant information was found.",
-            confidence=0.6,
+            final_conclusion=(
+                conclusion
+                + (
+                    "\n\n" + warning
+                    if (warning := self._build_provenance_warning(execution_result))
+                    else ""
+                )
+            ),
+            confidence=confidence,
             supporting_nodes=execution_result.nodes_accessed,
             supporting_edges=execution_result.edges_traversed,
             research_gaps=research_gaps,

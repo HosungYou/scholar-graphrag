@@ -33,11 +33,11 @@ interface FilterPanelProps {
 const entityTypeConfig: Record<string, { color: string; icon: React.ReactNode }> = {
   // Primary entities (Hybrid Mode: visualized)
   Paper: {
-    color: '#6366F1', // Indigo - 논문 노드
+    color: '#6366F1', // Indigo - Paper node
     icon: <Square className="w-3 h-3" strokeWidth={2} />
   },
   Author: {
-    color: '#A855F7', // Purple - 저자 노드
+    color: '#A855F7', // Purple - Author node
     icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
   },
   // Concept-centric entities (always visualized)

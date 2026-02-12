@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -20,10 +20,14 @@ import {
   Zap,
   BookOpen,
   Download,
+  Search,
+  MessageSquare,
 } from 'lucide-react';
 import type { StructuralGap, ConceptCluster, GraphEntity, BridgeHypothesis, BridgeGenerationResult } from '@/types';
 import { api } from '@/lib/api';
 import { BridgeHypothesisList } from './BridgeHypothesisCard';
+import { DragHandle } from '../ui/DraggablePanel';
+import { useToast } from '../ui/Toast';
 
 /* ============================================================
    GapPanel - VS Design Diverge Style
@@ -49,6 +53,7 @@ interface GapPanelProps {
   gaps: StructuralGap[];
   clusters: ConceptCluster[];
   nodes?: GraphEntity[];  // For mapping bridge candidate UUIDs to names
+  edges?: { source: string; target: string; relationship_type: string }[];  // Phase 11F: For SAME_AS detection
   onGapSelect: (gap: StructuralGap) => void;
   onHighlightNodes: (nodeIds: string[]) => void;
   onClearHighlights: () => void;
@@ -57,6 +62,7 @@ interface GapPanelProps {
   // Minimize toggle - controlled by parent for MiniMap offset coordination
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
+  onAskQuestion?: (question: string) => void;
 }
 
 export function GapPanel({
@@ -64,6 +70,7 @@ export function GapPanel({
   gaps,
   clusters,
   nodes = [],
+  edges = [],
   onGapSelect,
   onHighlightNodes,
   onClearHighlights,
@@ -71,7 +78,14 @@ export function GapPanel({
   onRefresh,
   isMinimized = false,
   onToggleMinimize,
+  onAskQuestion,
 }: GapPanelProps) {
+  type ApiErrorLike = Error & {
+    status?: number;
+    retryAfterSeconds?: number;
+    response?: { status?: number };
+  };
+
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedGap, setSelectedGap] = useState<StructuralGap | null>(null);
   const [expandedGapId, setExpandedGapId] = useState<string | null>(null);
@@ -81,13 +95,65 @@ export function GapPanel({
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeGenerationResult>>({});
   const [generatingBridgeFor, setGeneratingBridgeFor] = useState<string | null>(null);
   const [showBridgeFor, setShowBridgeFor] = useState<string | null>(null);
-  // Paper Recommendations state (Phase 2)
+  // v0.12.0: Paper recommendations
   const [recommendations, setRecommendations] = useState<Record<string, {
-    papers: Array<{ title: string; year: number | null; citation_count: number; url: string | null; abstract_snippet: string }>;
+    papers: Array<{
+      title: string;
+      year: number | null;
+      citation_count: number;
+      url: string | null;
+      abstract_snippet: string;
+    }>;
     query_used: string;
-    error: string | null;
   }>>({});
   const [loadingRecsFor, setLoadingRecsFor] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+
+  // v0.14.0: Toast notifications
+  const { showToast } = useToast();
+
+  // Improvement B: Keyboard navigation
+  const [focusedGapIndex, setFocusedGapIndex] = useState<number>(-1);
+  const gapListRef = useRef<HTMLDivElement>(null);
+
+  // Improvement C: S2 429 auto-retry with countdown
+  const [retryCountdown, setRetryCountdown] = useState<Record<string, number>>({});
+  const retryTimers = useRef<Record<string, NodeJS.Timeout>>({});
+
+  // v0.11.0: Resizable panel
+  const [panelWidth, setPanelWidth] = useState(320);
+  const isResizing = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(320);
+
+  // Handle resize drag
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    startX.current = e.clientX;
+    startWidth.current = panelWidth;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      const delta = e.clientX - startX.current;
+      const newWidth = Math.max(256, Math.min(500, startWidth.current + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizing.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [panelWidth]);
 
   // Sort gaps by strength (highest first)
   const sortedGaps = [...gaps].sort((a, b) => b.gap_strength - a.gap_strength);
@@ -96,26 +162,16 @@ export function GapPanel({
   // Get cluster label or generate one
   const getClusterLabel = useCallback((clusterId: number) => {
     const cluster = clusters.find(c => c.cluster_id === clusterId);
-    // Priority 1: LLM-generated label (skip UUID-like strings)
+    // v0.11.0: Skip UUID-like labels, prefer concept names
     if (cluster?.label && !/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(cluster.label)) {
       return cluster.label;
     }
-    // Priority 2: concept_names from cluster
     if (cluster?.concept_names && cluster.concept_names.length > 0) {
       const filtered = cluster.concept_names.filter((n: string) => n && n.trim());
       if (filtered.length > 0) return filtered.slice(0, 3).join(' / ');
     }
-    // Priority 3: names from gaps data (always populated)
-    for (const gap of gaps) {
-      if (gap.cluster_a_id === clusterId && gap.cluster_a_names?.length > 0) {
-        return gap.cluster_a_names.slice(0, 3).join(' / ');
-      }
-      if (gap.cluster_b_id === clusterId && gap.cluster_b_names?.length > 0) {
-        return gap.cluster_b_names.slice(0, 3).join(' / ');
-      }
-    }
     return `Cluster ${clusterId + 1}`;
-  }, [clusters, gaps]);
+  }, [clusters]);
 
   // Get cluster color
   const getClusterColor = useCallback((clusterId: number) => {
@@ -128,10 +184,25 @@ export function GapPanel({
     return node?.name || nodeId.slice(0, 8) + '...';  // Fallback to truncated UUID
   }, [nodes]);
 
+  // Phase 11F: Check if gap involves cross-paper entities (SAME_AS connections)
+  const hasCrossPaperEntities = useCallback((gap: StructuralGap): boolean => {
+    const gapEntityIds = new Set([
+      ...gap.cluster_a_concepts,
+      ...gap.cluster_b_concepts,
+      ...gap.bridge_candidates,
+    ]);
+
+    return edges.some(edge =>
+      edge.relationship_type === 'SAME_AS' &&
+      (gapEntityIds.has(edge.source) || gapEntityIds.has(edge.target))
+    );
+  }, [edges]);
+
   // Handle gap click
   const handleGapClick = useCallback((gap: StructuralGap) => {
+    const isToggling = gap.id === expandedGapId;
     setSelectedGap(gap);
-    setExpandedGapId(gap.id === expandedGapId ? null : gap.id);
+    setExpandedGapId(isToggling ? null : gap.id);
     onGapSelect(gap);
 
     // Highlight all concepts in both clusters
@@ -141,14 +212,64 @@ export function GapPanel({
       ...gap.bridge_candidates,
     ];
     onHighlightNodes(allConceptIds);
-  }, [expandedGapId, onGapSelect, onHighlightNodes]);
+
+    // v0.14.0: Auto-load paper recommendations when expanding
+    if (!isToggling && !recommendations[gap.id] && loadingRecsFor !== gap.id) {
+      setLoadingRecsFor(gap.id);
+      api.getGapRecommendations(projectId, gap.id, 5)
+        .then(result => {
+          setRecommendations(prev => ({
+            ...prev,
+            [gap.id]: { papers: result.papers, query_used: result.query_used },
+          }));
+        })
+        .catch((err: unknown) => {
+          const apiErr = err as ApiErrorLike;
+          console.error('Auto-load papers failed:', apiErr);
+          const status = apiErr?.response?.status || apiErr?.status;
+          if (status === 429) {
+            const retryAfter = Math.max(1, Number(apiErr?.retryAfterSeconds || 60));
+            showToast(`Semantic Scholar rate limited. Retry in ${retryAfter}s.`, 'error');
+          }
+        })
+        .finally(() => setLoadingRecsFor(null));
+    }
+  }, [expandedGapId, onGapSelect, onHighlightNodes, recommendations, loadingRecsFor, projectId, showToast]);
 
   // Handle clear highlights
   const handleClearHighlights = useCallback(() => {
     setSelectedGap(null);
     setExpandedGapId(null);
+    setFocusedGapIndex(-1);
     onClearHighlights();
   }, [onClearHighlights]);
+
+  // Improvement B: Keyboard navigation handler
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!displayedGaps.length) return;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusedGapIndex(prev => Math.min(prev + 1, displayedGaps.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusedGapIndex(prev => Math.max(prev - 1, 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (focusedGapIndex >= 0 && focusedGapIndex < displayedGaps.length) {
+          handleGapClick(displayedGaps[focusedGapIndex]);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        handleClearHighlights();
+        setFocusedGapIndex(-1);
+        break;
+    }
+  }, [displayedGaps, focusedGapIndex, handleGapClick, handleClearHighlights]);
 
   // Handle copy question
   const handleCopyQuestion = useCallback(async (question: string, gapId: string, qIndex: number) => {
@@ -192,6 +313,13 @@ export function GapPanel({
     message: string;
   } | null>(null);
 
+  // Improvement C: Clean up retry timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(retryTimers.current).forEach(clearInterval);
+    };
+  }, []);
+
   // Handle accepting a bridge hypothesis
   const handleAcceptBridge = useCallback(async (hypothesis: BridgeHypothesis) => {
     if (!selectedGap || creatingBridge) return;
@@ -227,28 +355,14 @@ export function GapPanel({
     }
   }, [selectedGap, creatingBridge, onRefresh]);
 
-  // Find papers for a gap (Phase 2)
-  const handleFindPapers = useCallback(async (gapId: string) => {
-    if (loadingRecsFor || recommendations[gapId]) return;
-    setLoadingRecsFor(gapId);
-    try {
-      const result = await api.getGapRecommendations(projectId, gapId, 5);
-      setRecommendations(prev => ({ ...prev, [gapId]: result }));
-    } catch (error) {
-      console.error('Failed to fetch recommendations:', error);
-      setRecommendations(prev => ({
-        ...prev,
-        [gapId]: { papers: [], query_used: '', error: 'Failed to load recommendations' },
-      }));
-    } finally {
-      setLoadingRecsFor(null);
-    }
-  }, [loadingRecsFor, projectId, recommendations]);
-
   return (
-    <div className={`absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 max-h-[80vh] overflow-hidden z-20 transition-all duration-300 ${
-      isMinimized ? 'w-12' : 'w-64'
-    }`}>
+    <div
+      className={`bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 max-h-[80vh] overflow-hidden z-20 transition-all duration-300 ${
+        isMinimized ? 'w-12' : ''
+      }`}
+      style={!isMinimized ? { width: panelWidth } : undefined}
+    >
+      <DragHandle />
       {/* Decorative corner accent - only show when not minimized */}
       {!isMinimized && (
         <div className="absolute top-0 right-0 w-16 h-16 bg-accent-amber/10 transform rotate-45 translate-x-8 -translate-y-8" />
@@ -267,6 +381,15 @@ export function GapPanel({
             <ChevronLeft className="w-3 h-3 text-muted" />
           )}
         </button>
+      )}
+
+      {/* Resize Handle */}
+      {!isMinimized && (
+        <div
+          className="absolute top-0 right-0 bottom-0 w-1.5 cursor-col-resize hover:bg-accent-teal/30 active:bg-accent-teal/50 transition-colors z-30"
+          onMouseDown={handleResizeStart}
+          title="Drag to resize"
+        />
       )}
 
       {/* Minimized State - Icon only */}
@@ -343,25 +466,43 @@ export function GapPanel({
 
           {/* Gaps List */}
           {gaps.length === 0 ? (
-            <div className="p-8 text-center">
-              <div className="w-16 h-16 flex items-center justify-center bg-surface/5 mx-auto mb-4">
-                <Sparkles className="w-8 h-8 text-muted" />
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 flex items-center justify-center bg-accent-amber/5 border border-accent-amber/20 mx-auto mb-4">
+                <Sparkles className="w-7 h-7 text-accent-amber/50" />
               </div>
               <p className="font-mono text-xs text-muted uppercase tracking-wider mb-2">No Gaps Detected</p>
-              <p className="text-sm text-muted">
-                Import more papers to discover potential research opportunities
+              <p className="text-xs text-muted leading-relaxed mb-4">
+                Gaps appear when your knowledge graph has distinct topic clusters with weak connections between them.
               </p>
+              {onRefresh && (
+                <button
+                  onClick={onRefresh}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal transition-colors disabled:opacity-50"
+                >
+                  {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  Refresh Analysis
+                </button>
+              )}
             </div>
           ) : (
-            <div className="p-3 space-y-2">
+            <div
+              className="p-3 space-y-2"
+              tabIndex={0}
+              onKeyDown={handleKeyDown}
+              ref={gapListRef}
+            >
               {displayedGaps.map((gap, gapIndex) => {
                 const isSelected = selectedGap?.id === gap.id;
                 const isExpandedItem = expandedGapId === gap.id;
+                const isCrossPaper = hasCrossPaperEntities(gap);
 
                 return (
                   <div
                     key={gap.id}
                     className={`border transition-all relative ${
+                      focusedGapIndex === gapIndex ? 'ring-1 ring-accent-teal/50' : ''
+                    } ${
                       isSelected
                         ? 'border-accent-amber/50 bg-accent-amber/5'
                         : 'border-ink/10 dark:border-paper/10 hover:border-ink/20 dark:hover:border-paper/20'
@@ -372,44 +513,161 @@ export function GapPanel({
                       {String(gapIndex + 1).padStart(2, '0')}
                     </div>
 
+                    {/* Phase 11F: Cross-Paper badge */}
+                    {isCrossPaper && (
+                      <div className="absolute -top-2 -right-2 flex flex-col sm:flex-row items-center gap-0.5 px-1.5 py-0.5 bg-[#9D4EDD] text-white font-mono text-[10px]">
+                        <span>🔗</span>
+                        <span className="hidden sm:inline">Cross-Paper</span>
+                      </div>
+                    )}
+
                     {/* Gap Header */}
-                    <button
+                    <div
+                      role="button"
+                      data-testid={`gap-card-toggle-${gap.id}`}
+                      tabIndex={0}
+                      aria-label={`${getClusterLabel(gap.cluster_a_id)} ${getClusterLabel(gap.cluster_b_id)} ${formatGapStrength(gap.gap_strength)}`}
                       onClick={() => handleGapClick(gap)}
-                      className="w-full p-4 pt-3 text-left"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleGapClick(gap);
+                        }
+                      }}
+                      className="w-full p-4 pt-3 text-left cursor-pointer"
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
+                      {/* Row 1: Cluster labels (Improvement F: Pill-style chips) */}
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
+                          style={{
+                            backgroundColor: `${getClusterColor(gap.cluster_a_id)}15`,
+                            color: getClusterColor(gap.cluster_a_id),
+                            border: `1px solid ${getClusterColor(gap.cluster_a_id)}30`,
+                          }}
+                          title={getClusterLabel(gap.cluster_a_id)}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }} />
+                          {getClusterLabel(gap.cluster_a_id)}
+                        </span>
+                        <ArrowRight className="w-3 h-3 text-muted flex-shrink-0" />
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs truncate max-w-full sm:max-w-[140px]"
+                          style={{
+                            backgroundColor: `${getClusterColor(gap.cluster_b_id)}15`,
+                            color: getClusterColor(gap.cluster_b_id),
+                            border: `1px solid ${getClusterColor(gap.cluster_b_id)}30`,
+                          }}
+                          title={getClusterLabel(gap.cluster_b_id)}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }} />
+                          {getClusterLabel(gap.cluster_b_id)}
+                        </span>
+                      </div>
+                      {/* Row 2: Strength gradient + percentage + Find Papers (Improvement G) */}
+                      <div className="flex items-center gap-2 mb-2">
+                        {/* Gradient progress bar */}
+                        <div className="flex-1 h-1.5 bg-surface/10 overflow-hidden">
                           <div
-                            className="w-3 h-3"
-                            style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }}
+                            className="h-full transition-all duration-500"
+                            style={{
+                              width: `${Math.round(gap.gap_strength * 100)}%`,
+                              background: gap.gap_strength > 0.7
+                                ? 'linear-gradient(90deg, #F59E0B, #EF4444)'
+                                : gap.gap_strength > 0.4
+                                ? 'linear-gradient(90deg, #14B8A6, #F59E0B)'
+                                : 'linear-gradient(90deg, #14B8A6, #06B6D4)',
+                            }}
                           />
-                          <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[70px]">
-                            {getClusterLabel(gap.cluster_a_id)}
-                          </span>
-                          <ArrowRight className="w-3 h-3 text-muted" />
-                          <div
-                            className="w-3 h-3"
-                            style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }}
-                          />
-                          <span className="font-mono text-xs text-ink dark:text-paper truncate max-w-[70px]">
-                            {getClusterLabel(gap.cluster_b_id)}
-                          </span>
                         </div>
-                        <span className={`font-mono text-xs px-2 py-0.5 ${
-                          gap.gap_strength > 0.7
-                            ? 'bg-accent-red/10 text-accent-red'
-                            : gap.gap_strength > 0.4
-                            ? 'bg-accent-amber/10 text-accent-amber'
-                            : 'bg-accent-teal/10 text-accent-teal'
+                        {/* Strength percentage */}
+                        <span className={`font-mono text-xs flex-shrink-0 ${
+                          gap.gap_strength > 0.7 ? 'text-accent-red'
+                          : gap.gap_strength > 0.4 ? 'text-accent-amber'
+                          : 'text-accent-teal'
                         }`}>
                           {formatGapStrength(gap.gap_strength)}
                         </span>
+                        {/* Find Papers button (Improvement C: Retry countdown) */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLoadingRecsFor(gap.id);
+                            (async () => {
+                              try {
+                                const result = await api.getGapRecommendations(projectId, gap.id, 5);
+                                setRecommendations(prev => ({
+                                  ...prev,
+                                  [gap.id]: { papers: result.papers, query_used: result.query_used },
+                                }));
+                              } catch (err: unknown) {
+                                const apiErr = err as ApiErrorLike;
+                                console.error('Failed to fetch recommendations:', apiErr);
+                                const status = apiErr?.response?.status || apiErr?.status;
+                                if (status === 429) {
+                                  const retryAfter = Math.max(1, Number(apiErr?.retryAfterSeconds || 60));
+                                  showToast(`Semantic Scholar rate limited. Auto-retrying in ${retryAfter}s...`, 'error');
+                                  // Start countdown
+                                  const gapId = gap.id;
+                                  setRetryCountdown(prev => ({ ...prev, [gapId]: retryAfter }));
+
+                                  const interval = setInterval(() => {
+                                    setRetryCountdown(prev => {
+                                      const remaining = (prev[gapId] || 0) - 1;
+                                      if (remaining <= 0) {
+                                        clearInterval(interval);
+                                        delete retryTimers.current[gapId];
+                                        // Auto-retry
+                                        setLoadingRecsFor(gapId);
+                                        api.getGapRecommendations(projectId, gapId, 5)
+                                          .then(result => {
+                                            setRecommendations(p => ({
+                                              ...p,
+                                              [gapId]: { papers: result.papers, query_used: result.query_used },
+                                            }));
+                                            showToast('Papers loaded successfully', 'success');
+                                          })
+                                          .catch(e => {
+                                            console.error('Retry failed:', e);
+                                            showToast('Retry failed. Please try again later.', 'error');
+                                          })
+                                          .finally(() => setLoadingRecsFor(null));
+                                        return { ...prev, [gapId]: 0 };
+                                      }
+                                      return { ...prev, [gapId]: remaining };
+                                    });
+                                  }, 1000);
+                                  retryTimers.current[gapId] = interval;
+                                } else {
+                                  showToast('Failed to find papers. Check your connection.', 'error');
+                                }
+                              } finally {
+                                setLoadingRecsFor(null);
+                              }
+                            })();
+                          }}
+                          disabled={loadingRecsFor === gap.id || retryCountdown[gap.id] > 0}
+                          aria-label="Find related papers"
+                          className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal rounded transition-colors disabled:opacity-50"
+                          title="Find related papers from Semantic Scholar"
+                        >
+                          {retryCountdown[gap.id] > 0 ? (
+                            <span className="font-mono text-xs text-accent-amber">
+                              Retry in {retryCountdown[gap.id]}s
+                            </span>
+                          ) : loadingRecsFor === gap.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Search className="w-3 h-3" />
+                          )}
+                          {retryCountdown[gap.id] <= 0 && <span>Find Papers</span>}
+                        </button>
                       </div>
 
                       {/* Gap Preview */}
                       <div className="flex items-center justify-between">
-                        <p className="text-xs text-muted truncate flex-1 mr-2">
-                          {gap.cluster_a_names.slice(0, 2).join(', ')} ↔ {gap.cluster_b_names.slice(0, 2).join(', ')}
+                        <p className="text-xs text-muted truncate flex-1 mr-2" title={`${(gap.cluster_a_names || []).join(', ')} ↔ ${(gap.cluster_b_names || []).join(', ')}`}>
+                          {(gap.cluster_a_names?.length ? gap.cluster_a_names.slice(0, 2).join(', ') : getClusterLabel(gap.cluster_a_id))} ↔ {(gap.cluster_b_names?.length ? gap.cluster_b_names.slice(0, 2).join(', ') : getClusterLabel(gap.cluster_b_id))}
                         </p>
                         {isExpandedItem ? (
                           <ChevronUp className="w-3 h-3 text-muted flex-shrink-0" />
@@ -417,7 +675,7 @@ export function GapPanel({
                           <ChevronDown className="w-3 h-3 text-muted flex-shrink-0" />
                         )}
                       </div>
-                    </button>
+                    </div>
 
                     {/* Expanded Content */}
                     {isExpandedItem && (
@@ -520,57 +778,6 @@ export function GapPanel({
                           </div>
                         )}
 
-                        {/* Find Papers Button (Phase 2) */}
-                        <div className="pt-2 border-t border-ink/5 dark:border-paper/5">
-                          <button
-                            onClick={() => handleFindPapers(gap.id)}
-                            disabled={!!loadingRecsFor || !!recommendations[gap.id]}
-                            className="w-full py-2 px-4 font-mono text-xs uppercase tracking-wider
-                              bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal
-                              border border-accent-teal/30 transition-colors disabled:opacity-50
-                              flex items-center justify-center gap-2"
-                          >
-                            {loadingRecsFor === gap.id ? (
-                              <><Loader2 className="w-4 h-4 animate-spin" /> Searching...</>
-                            ) : recommendations[gap.id] ? (
-                              <><BookOpen className="w-4 h-4" /> {recommendations[gap.id].papers.length} Papers Found</>
-                            ) : (
-                              <><BookOpen className="w-4 h-4" /> Find Papers</>
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Recommendation Results (Phase 2) */}
-                        {recommendations[gap.id] && (
-                          <div className="space-y-2 mt-2">
-                            {recommendations[gap.id].error && (
-                              <p className="text-xs text-accent-red font-mono px-2">
-                                {recommendations[gap.id].error}
-                              </p>
-                            )}
-                            {!recommendations[gap.id].error && recommendations[gap.id].papers.length === 0 && (
-                              <p className="text-xs text-muted font-mono px-2">
-                                No matching papers found for this gap.
-                              </p>
-                            )}
-                            {recommendations[gap.id].papers.map((paper, idx) => (
-                              <div key={idx} className="p-3 border border-ink/10 dark:border-paper/10 bg-surface/5">
-                                <a href={paper.url || '#'} target="_blank" rel="noopener noreferrer"
-                                   className="text-xs font-medium text-accent-teal hover:underline block mb-1">
-                                  {paper.title}
-                                </a>
-                                <div className="flex items-center gap-3 font-mono text-xs text-muted">
-                                  {paper.year && <span>{paper.year}</span>}
-                                  <span>{paper.citation_count} citations</span>
-                                </div>
-                                {paper.abstract_snippet && (
-                                  <p className="text-xs text-muted mt-1 line-clamp-2">{paper.abstract_snippet}</p>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
                         {/* Research Questions */}
                         {gap.research_questions.length > 0 && (
                           <div className="pt-4 mt-4 border-t border-ink/10 dark:border-paper/10">
@@ -585,26 +792,116 @@ export function GapPanel({
                                   className="relative bg-surface/5 p-3 group border-l-2 border-accent-teal/50"
                                 >
                                   <div className="flex items-start justify-between gap-2">
-                                    <p className="text-xs text-ink dark:text-paper leading-relaxed pr-6">
+                                    <p className="text-xs text-ink dark:text-paper leading-relaxed pr-14">
                                       {question}
                                     </p>
-                                    <button
-                                      onClick={() => handleCopyQuestion(question, gap.id, qIdx)}
-                                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-surface/10"
-                                      title="Copy question"
-                                    >
-                                      {copiedQuestionId === `${gap.id}-${qIdx}` ? (
-                                        <Check className="w-3 h-3 text-accent-teal" />
-                                      ) : (
-                                        <Copy className="w-3 h-3 text-muted hover:text-ink dark:hover:text-paper" />
+                                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => handleCopyQuestion(question, gap.id, qIdx)}
+                                        className="p-1 hover:bg-surface/10"
+                                        title="Copy question"
+                                      >
+                                        {copiedQuestionId === `${gap.id}-${qIdx}` ? (
+                                          <Check className="w-3 h-3 text-accent-teal" />
+                                        ) : (
+                                          <Copy className="w-3 h-3 text-muted hover:text-ink dark:hover:text-paper" />
+                                        )}
+                                      </button>
+                                      {onAskQuestion && (
+                                        <button
+                                          onClick={() => onAskQuestion(question)}
+                                          className="p-1 hover:bg-surface/10"
+                                          title="Ask in Chat"
+                                        >
+                                          <MessageSquare className="w-3 h-3 text-accent-teal hover:text-accent-teal/80" />
+                                        </button>
                                       )}
-                                    </button>
+                                    </div>
                                   </div>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
+
+                        {/* Paper Recommendations (v0.12.0) */}
+                        <div className="pt-4 mt-4 border-t border-ink/10 dark:border-paper/10">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="font-mono text-xs uppercase tracking-wider text-accent-teal flex items-center gap-1">
+                              <BookOpen className="w-3 h-3" />
+                              Related Papers
+                            </p>
+                            <button
+                              onClick={async () => {
+                                setLoadingRecsFor(gap.id);
+                                try {
+                                  const result = await api.getGapRecommendations(projectId, gap.id, 5);
+                                  setRecommendations(prev => ({
+                                    ...prev,
+                                    [gap.id]: { papers: result.papers, query_used: result.query_used },
+                                  }));
+                                } catch (err) {
+                                  console.error('Failed to fetch recommendations:', err);
+                                  showToast('Failed to find papers. Check your connection.', 'error');
+                                } finally {
+                                  setLoadingRecsFor(null);
+                                }
+                              }}
+                              disabled={loadingRecsFor === gap.id}
+                              className="flex items-center gap-1 px-2 py-1 font-mono text-xs bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal transition-colors disabled:opacity-50"
+                            >
+                              {loadingRecsFor === gap.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <BookOpen className="w-3 h-3" />
+                              )}
+                              Find Papers
+                            </button>
+                          </div>
+                          {recommendations[gap.id] && (
+                            <div className="space-y-2">
+                              {recommendations[gap.id].papers.length === 0 ? (
+                                <p className="text-xs text-muted font-mono">No papers found for this gap.</p>
+                              ) : (
+                                recommendations[gap.id].papers.map((paper, pIdx) => (
+                                  <div key={pIdx} className="p-2 bg-surface/5 border border-ink/5 dark:border-paper/5">
+                                    <div className="flex items-start justify-between gap-2">
+                                      {paper.url ? (
+                                        <a
+                                          href={paper.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-xs font-medium text-accent-teal hover:underline leading-tight"
+                                        >
+                                          {paper.title}
+                                        </a>
+                                      ) : (
+                                        <span className="text-xs font-medium text-ink dark:text-paper leading-tight">
+                                          {paper.title}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1 font-mono text-xs text-muted">
+                                      {paper.year && <span>{paper.year}</span>}
+                                      <span>{paper.citation_count} citations</span>
+                                    </div>
+                                    {paper.abstract_snippet && (
+                                      <p className="text-xs text-muted mt-1 line-clamp-2">
+                                        {paper.abstract_snippet}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                              <p className="text-xs text-muted font-mono mt-1">
+                                Query: &quot;{recommendations[gap.id].query_used}&quot;
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-ink/5 dark:border-paper/5">
+                                <span className="text-[10px] text-muted/60 font-mono">Powered by Semantic Scholar</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
 
                         {/* Concepts in each cluster */}
                         <div className="grid grid-cols-2 gap-3">
@@ -697,21 +994,18 @@ export function GapPanel({
                   Concept Clusters
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-1">
+              <div className="grid grid-cols-4 gap-1">
                 {clusters.slice(0, 12).map((cluster) => (
                   <div
                     key={cluster.cluster_id}
-                    className="flex items-center gap-1.5 p-1.5 bg-surface/5 border border-ink/5 dark:border-paper/5 overflow-hidden"
+                    className="flex items-center gap-1 p-1.5 bg-surface/5 border border-ink/5 dark:border-paper/5"
                     title={`${getClusterLabel(cluster.cluster_id)}: ${cluster.size} concepts`}
                   >
                     <div
-                      className="w-2 h-2 flex-shrink-0 rounded-sm"
+                      className="w-2 h-2 flex-shrink-0"
                       style={{ backgroundColor: getClusterColor(cluster.cluster_id) }}
                     />
-                    <span className="font-mono text-xs text-muted truncate">
-                      {getClusterLabel(cluster.cluster_id)}
-                    </span>
-                    <span className="font-mono text-[10px] text-muted/50 flex-shrink-0 ml-auto">
+                    <span className="font-mono text-xs text-muted">
                       {cluster.size}
                     </span>
                   </div>
@@ -723,27 +1017,37 @@ export function GapPanel({
             </div>
           )}
 
-            {/* Export Report Button (Phase 3) */}
-            {gaps.length > 0 && (
-              <div className="p-4 border-t border-ink/10 dark:border-paper/10">
-                <button
-                  onClick={async () => {
-                    try {
-                      await api.exportGapReport(projectId);
-                    } catch (error) {
-                      console.error('Export failed:', error);
-                    }
-                  }}
-                  className="w-full py-2.5 px-3 bg-surface/10 hover:bg-surface/20
-                    font-mono text-xs text-ink dark:text-paper uppercase tracking-wider
-                    transition-colors flex items-center justify-center gap-2
-                    border border-ink/10 dark:border-paper/10"
-                >
-                  <Download className="w-4 h-4" />
-                  Export Report
-                </button>
-              </div>
-            )}
+          {/* Export Report (v0.12.0) */}
+          <div className="p-4 border-t border-ink/10 dark:border-paper/10">
+            <button
+              onClick={async () => {
+                setIsExporting(true);
+                setExportSuccess(false);
+                try {
+                  await api.exportGapReport(projectId);
+                  setExportSuccess(true);
+                  showToast('Gap report downloaded successfully', 'success');
+                  setTimeout(() => setExportSuccess(false), 3000);
+                } catch (err) {
+                  console.error('Failed to export report:', err);
+                  showToast('Failed to export report. Please try again.', 'error');
+                } finally {
+                  setIsExporting(false);
+                }
+              }}
+              disabled={isExporting}
+              className="w-full py-2.5 px-3 bg-accent-teal/10 hover:bg-accent-teal/20 font-mono text-xs text-accent-teal uppercase tracking-wider transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : exportSuccess ? (
+                <Check className="w-4 h-4" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              {isExporting ? 'Exporting...' : exportSuccess ? 'Downloaded!' : 'Export Report'}
+            </button>
+          </div>
         </div>
       )}
         </>

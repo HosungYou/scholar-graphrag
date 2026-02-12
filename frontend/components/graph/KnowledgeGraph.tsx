@@ -116,6 +116,7 @@ function KnowledgeGraphInner({
     sourceName?: string;
     targetName?: string;
     relationshipType?: string;
+    properties?: Record<string, unknown>; // Phase 11D: Edge properties
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { fitView } = useReactFlow();
@@ -282,6 +283,7 @@ function KnowledgeGraphInner({
         sourceName: sourceNode?.name,
         targetName: targetNode?.name,
         relationshipType: edge.data?.relationshipType || edge.type,
+        properties: edge.data?.properties, // Phase 11D: Pass edge properties
       });
       setEdgeModalOpen(true);
     },
@@ -489,6 +491,7 @@ function KnowledgeGraphInner({
           gaps={gaps}
           clusters={clusters}
           nodes={getFilteredData()?.nodes || []}
+          edges={getFilteredData()?.edges || []}
           onGapSelect={handleGapSelect}
           onHighlightNodes={handleGapHighlight}
           onClearHighlights={handleClearGapHighlights}
@@ -538,6 +541,7 @@ function KnowledgeGraphInner({
         sourceName={selectedEdge?.sourceName}
         targetName={selectedEdge?.targetName}
         relationshipType={selectedEdge?.relationshipType}
+        relationshipProperties={selectedEdge?.properties}
       />
     </div>
   );

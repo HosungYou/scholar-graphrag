@@ -66,6 +66,34 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#F97316', // Orange
     icon: <Square className="w-4 h-4" strokeWidth={1.5} />
   },
+  Invention: {
+    color: '#7C3AED', // Violet
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Patent: {
+    color: '#2563EB', // Blue
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Inventor: {
+    color: '#DB2777', // Pink
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Technology: {
+    color: '#059669', // Green
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  License: {
+    color: '#D97706', // Amber
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Grant: {
+    color: '#4F46E5', // Indigo
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Department: {
+    color: '#0891B2', // Cyan
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
+  },
 };
 
 export function NodeDetails({
@@ -89,11 +117,17 @@ export function NodeDetails({
   const handleGetExplanation = async () => {
     setIsLoadingExplanation(true);
     try {
-      const result = await api.explainNode(node.id, projectId);
+      // v0.9.0: Pass node name and type to avoid UUID in AI response
+      const result = await api.explainNode(
+        node.id,
+        projectId,
+        node.name,
+        node.entity_type
+      );
       setAiExplanation(result.explanation);
     } catch (error) {
       console.error('Failed to get AI explanation:', error);
-      setAiExplanation('AI 설명을 가져오는데 실패했습니다.');
+      setAiExplanation('Failed to fetch AI explanation.');
     } finally {
       setIsLoadingExplanation(false);
     }

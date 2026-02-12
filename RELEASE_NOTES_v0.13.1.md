@@ -1,67 +1,140 @@
-# Release Notes — v0.13.1: Gap Panel Display Fixes
+# Release Notes - v0.13.1
 
-**Date**: 2026-02-10
+> **Version**: 0.13.1
+> **Release Date**: 2026-02-07
+> **Type**: Feature Enhancement
+> **Status**: Production-Ready
+
+---
 
 ## Overview
 
-v0.13.1 is a patch release fixing three UI/data-flow issues on the project detail page's Gap Analysis panel. No new features, no database migrations.
+v0.13.1 introduces **API Key Settings UI** that enables users to manage their own API keys directly from the frontend. Previously, all API keys were managed exclusively through server environment variables. Users can now set personal API keys for LLM providers (Groq, Claude, GPT-4, Gemini) and external services (Semantic Scholar, Cohere) with per-user storage in the existing `user_profiles.preferences` JSONB column.
 
-## Bug Fixes
+---
 
-### 1. Cluster Labels Show Descriptive Names (not "Cluster N")
+## What's New
 
-**Problem**: Gap panel displayed "Cluster 3 → Cluster 4" instead of descriptive labels for projects imported before LLM labeling was added.
+### 1. API Key Management Backend
 
-**Fix** (`frontend/components/graph/GapPanel.tsx`):
-- 3-tier fallback in `getClusterLabel()`:
-  1. LLM-generated `cluster.label` (with UUID guard to skip invalid labels)
-  2. `cluster.concept_names` (top 3, joined with " / ")
-  3. Names from `gaps` array (`cluster_a_names` / `cluster_b_names` — always populated)
-  4. Final fallback: `Cluster N`
+**Endpoints**:
+- `GET /api/settings/api-keys` — List all API key statuses with masking
+- `PUT /api/settings/api-keys` — Update user API keys and LLM preferences
+- `POST /api/settings/api-keys/validate` — Validate API key format/connectivity
 
-**Before**: `Cluster 3 → Cluster 4`
-**After**: `Trust / Explainability / Fairness → Fine-tuning / Bias / Alignment`
+**Key Priority**: User keys (stored in `user_profiles.preferences.api_keys`) take precedence over server environment variable keys. Empty string deletes a user key, falling back to server default.
 
-### 2. InsightHUD Diversity Now Shows Correct Percentage
+**Supported Providers**:
 
-**Problem**: InsightHUD always showed "0%" diversity despite having 471 nodes across 4 clusters. Root cause: `ClusterResult.size` read from DB defaulted to 0 (migration 008 default), making entropy calculation return 0.
+| Provider | Display Name | Usage |
+|----------|-------------|-------|
+| `groq` | Groq | LLM (default) |
+| `anthropic` | Anthropic (Claude) | LLM |
+| `openai` | OpenAI | LLM + Embeddings |
+| `google` | Google (Gemini) | LLM |
+| `semantic_scholar` | Semantic Scholar | Citation Network |
+| `cohere` | Cohere | Embeddings |
 
-**Fix** (`backend/routers/graph.py`):
-- When `row["size"]` is 0 or NULL, derive size from `len(row["concepts"] or [])`.
+**Key Masking**: API keys are masked in GET responses (e.g., `gsk_****abc`) — first 4 chars + `****` + last 3 chars.
 
-**Before**: `0%` diversity
-**After**: Correct Shannon entropy-based percentage (e.g., `78%`)
+### 2. Functional Settings Page
 
-### 3. Concept Cluster Chips Show Labels + Counts
+The Settings page (`/settings`) is now fully functional:
 
-**Problem**: Cluster chips in the sidebar showed only a number (e.g., "142") with no label, making them meaningless.
+- **AI Model Settings**: Select LLM provider with immediate backend save. Inline API key management for the selected provider with validate/save/delete actions.
+- **External API Keys**: Dedicated section for Semantic Scholar and Cohere keys with edit, validate, save, and delete capabilities.
+- **Visual Feedback**: Loading spinners, validation indicators (green check / red X), toast notifications, and status badges (설정됨 / 미설정).
 
-**Fix** (`frontend/components/graph/GapPanel.tsx`):
-- Grid changed from 4-column to 2-column for readability
-- Each chip now displays: color dot + truncated cluster label + right-aligned count
-- Tooltip shows full label and concept count
+### 3. Semantic Scholar API Key Integration
 
-**Before**: `[■ 142]` (number only, 4-col grid)
-**After**: `[■ Trust / Explainability  142]` (label + count, 2-col grid)
+All `SemanticScholarClient` instantiations across the backend now receive the configured `semantic_scholar_api_key` from `config.py`. This enables higher rate limits when an S2 API key is configured (server-level or user-level).
 
-## Files Changed
+**Affected files**: `backend/routers/integrations.py`, `backend/routers/graph.py`
 
-| File | Lines Changed | Description |
-|------|---------------|-------------|
-| `frontend/components/graph/GapPanel.tsx` | +22 / -5 | Label fallback + chip display |
-| `backend/routers/graph.py` | +1 / -1 | Cluster size derivation |
+---
 
-## Deployment
+## Technical Changes
 
-| Service | Platform | Auto-Deploy |
-|---------|----------|-------------|
-| Frontend | Vercel | Yes (triggered by push) |
-| Backend | Render (Docker) | **Manual** — deploy via Render Dashboard |
+### New Files
 
-> **Reminder**: Backend auto-deploy is OFF (INFRA-006). Go to Render Dashboard → `scholarag-graph-docker` → Manual Deploy → "Deploy latest commit" to apply the backend fix.
+| File | Lines | Description |
+|------|-------|-------------|
+| `backend/routers/settings.py` | ~180 | Settings API router with 3 endpoints |
 
-## Verification Checklist
+### Modified Files
 
-- [ ] Open any project → Gap panel shows descriptive cluster labels (not "Cluster N")
-- [ ] InsightHUD shows non-zero diversity percentage
-- [ ] Concept Clusters sidebar chips show names with counts
+| File | Change |
+|------|--------|
+| `backend/main.py` | Added settings router import and registration |
+| `backend/routers/__init__.py` | Added settings module export |
+| `backend/routers/integrations.py` | Wire S2 API key to all SemanticScholarClient instances |
+| `backend/routers/graph.py` | Wire S2 API key to SemanticScholarClient in recommendations |
+| `frontend/lib/api.ts` | Added 3 API methods: getApiKeys, updateApiKeys, validateApiKey |
+| `frontend/app/settings/page.tsx` | Complete rewrite with functional API key management |
+
+### Database
+
+No migration required — reuses existing `user_profiles.preferences` JSONB column (migration 005).
+
+**Storage format**:
+```json
+{
+  "api_keys": {
+    "semantic_scholar": "au65...",
+    "groq": "gsk_..."
+  },
+  "llm_provider": "groq",
+  "llm_model": "llama-3.3-70b-versatile"
+}
+```
+
+---
+
+## Deployment Notes
+
+1. **No migration needed** — uses existing `user_profiles.preferences` column
+2. **Optional**: Add `S2_API_KEY` / `SEMANTIC_SCHOLAR_API_KEY` to Render environment variables for server-level Semantic Scholar access
+3. **Auto-Deploy is OFF** (INFRA-006) — manual deploy required via Render Dashboard
+
+---
+
+## API Reference
+
+### GET /api/settings/api-keys
+
+**Response**:
+```json
+[
+  {
+    "provider": "groq",
+    "display_name": "Groq",
+    "is_set": true,
+    "masked_key": "gsk_****abc",
+    "source": "server",
+    "usage": "LLM (기본 provider)"
+  }
+]
+```
+
+### PUT /api/settings/api-keys
+
+**Request** (flat format):
+```json
+{
+  "semantic_scholar": "au65...",
+  "llm_provider": "groq",
+  "llm_model": "llama-3.3-70b-versatile"
+}
+```
+
+### POST /api/settings/api-keys/validate
+
+**Request**:
+```json
+{"provider": "semantic_scholar", "key": "au65..."}
+```
+
+**Response**:
+```json
+{"valid": true, "message": "Semantic Scholar API key is valid"}
+```

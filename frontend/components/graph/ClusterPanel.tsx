@@ -189,7 +189,9 @@ export function ClusterPanel({
                           style={{ backgroundColor: color }}
                         />
                         <span className="text-xs text-ink dark:text-paper truncate">
-                          {cluster.label || `Cluster ${cluster.cluster_id + 1}`}
+                          {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+                            ? cluster.label
+                            : `Cluster ${cluster.cluster_id + 1}`}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">

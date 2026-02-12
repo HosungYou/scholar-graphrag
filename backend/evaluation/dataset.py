@@ -26,6 +26,7 @@ class TaskType(str, Enum):
     SUMMARIZE = "summarize"     # Summarize findings on topic W
     IDENTIFY_GAPS = "identify_gaps"  # Research gaps in field X
     FREE_FORM = "free_form"     # Open-ended research questions
+    GAP_EVALUATION = "gap_evaluation"  # Evaluate gap detection quality
 
 
 @dataclass

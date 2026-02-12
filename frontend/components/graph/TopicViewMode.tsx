@@ -50,7 +50,9 @@ export function TopicViewMode({
     const nodes: TopicNode[] = clusters.map((cluster, index) => ({
       id: `cluster-${cluster.cluster_id}`,
       clusterId: cluster.cluster_id,
-      label: cluster.label || `Cluster ${cluster.cluster_id + 1}`,
+      label: (cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+        ? cluster.label
+        : `Cluster ${cluster.cluster_id + 1}`,
       size: cluster.size,
       color: CLUSTER_COLORS[index % CLUSTER_COLORS.length],
       conceptIds: cluster.concepts,
@@ -74,20 +76,28 @@ export function TopicViewMode({
       }
     });
 
+    // Build valid node ID set for link filtering
+    const validNodeIds = new Set(nodes.map((n) => n.id));
+
     // Create links from connections
     const links: TopicLink[] = [];
 
     // Add connection links
     connectionMap.forEach((count, key) => {
       const [a, b] = key.split('-').map(Number);
-      links.push({
-        id: `connection-${key}`,
-        source: `cluster-${a}`,
-        target: `cluster-${b}`,
-        type: 'connection',
-        weight: count,
-        connectionCount: count,
-      });
+      const sourceId = `cluster-${a}`;
+      const targetId = `cluster-${b}`;
+
+      if (validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
+        links.push({
+          id: `connection-${key}`,
+          source: sourceId,
+          target: targetId,
+          type: 'connection',
+          weight: count,
+          connectionCount: count,
+        });
+      }
     });
 
     // Add gap links
@@ -97,15 +107,17 @@ export function TopicViewMode({
         Math.max(gap.cluster_a_id, gap.cluster_b_id),
       ].join('-');
 
+      const sourceId = `cluster-${gap.cluster_a_id}`;
+      const targetId = `cluster-${gap.cluster_b_id}`;
+
       // Check if there's already a connection link
       const existingLink = links.find((l) => l.id === `connection-${key}`);
 
-      if (!existingLink) {
-        // Add gap as dashed link
+      if (!existingLink && validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
         links.push({
           id: `gap-${gap.id}`,
-          source: `cluster-${gap.cluster_a_id}`,
-          target: `cluster-${gap.cluster_b_id}`,
+          source: sourceId,
+          target: targetId,
           type: 'gap',
           weight: gap.gap_strength,
           gapId: gap.id,
@@ -184,6 +196,9 @@ export function TopicViewMode({
       .attr('stroke-dasharray', (d) => (d.type === 'gap' ? '8,4' : 'none'))
       .attr('opacity', (d) => (d.type === 'gap' ? 0.8 : 0.5));
 
+    // v0.10.0: Cluster boundary visualization (convex hull)
+    const hullGroup = container.append('g').attr('class', 'hulls');
+
     // Create node groups
     const nodeGroup = container.append('g').attr('class', 'nodes');
 
@@ -229,16 +244,17 @@ export function TopicViewMode({
       .attr('stroke', (d) => d.color)
       .attr('stroke-width', 2);
 
-    // Add labels
+    // v0.10.0: Enhanced cluster labels - larger, color-matched, with text shadow
     node
       .append('text')
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
-      .attr('fill', 'white')
-      .attr('font-size', '12px')
+      .attr('fill', (d) => d.color)
+      .attr('font-size', '16px')
       .attr('font-weight', 'bold')
-      .attr('font-family', 'monospace')
-      .text((d) => d.label.length > 15 ? d.label.slice(0, 15) + '...' : d.label);
+      .attr('font-family', 'system-ui, -apple-system, sans-serif')
+      .style('text-shadow', '0 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,1)')
+      .text((d) => d.label.length > 30 ? d.label.slice(0, 30) + '...' : d.label);
 
     // Add size indicator
     node
@@ -246,9 +262,24 @@ export function TopicViewMode({
       .attr('text-anchor', 'middle')
       .attr('y', 18)
       .attr('fill', 'rgba(255, 255, 255, 0.6)')
-      .attr('font-size', '10px')
+      .attr('font-size', '11px')
       .attr('font-family', 'monospace')
       .text((d) => `${d.size} concepts`);
+
+    // v0.14.0: Add concept preview on hover (shows top concept names)
+    node
+      .append('text')
+      .attr('class', 'concept-preview')
+      .attr('text-anchor', 'middle')
+      .attr('y', 32)
+      .attr('fill', 'rgba(255, 255, 255, 0.4)')
+      .attr('font-size', '9px')
+      .attr('font-family', 'monospace')
+      .attr('opacity', 0)
+      .text((d) => {
+        const names = d.conceptNames?.filter((n: string) => n && n.trim()).slice(0, 3) || [];
+        return names.length > 0 ? names.join(', ') : '';
+      });
 
     // Interaction handlers
     node
@@ -258,23 +289,37 @@ export function TopicViewMode({
       })
       .on('mouseenter', (event, d) => {
         onClusterHover?.(d.clusterId);
-        // Highlight node
+        d3.select(event.currentTarget)
+          .transition()
+          .duration(150)
+          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1.02)`);
         d3.select(event.currentTarget)
           .select('rect')
           .transition()
           .duration(150)
-          .attr('fill-opacity', 0.3)
           .attr('stroke-width', 3);
+        d3.select(event.currentTarget)
+          .select('.concept-preview')
+          .transition()
+          .duration(200)
+          .attr('opacity', 1);
       })
       .on('mouseleave', (event, d) => {
         onClusterHover?.(null);
-        // Reset node
+        d3.select(event.currentTarget)
+          .transition()
+          .duration(150)
+          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1)`);
         d3.select(event.currentTarget)
           .select('rect')
           .transition()
           .duration(150)
-          .attr('fill-opacity', 0.15)
           .attr('stroke-width', 2);
+        d3.select(event.currentTarget)
+          .select('.concept-preview')
+          .transition()
+          .duration(200)
+          .attr('opacity', 0);
       });
 
     // Update positions on tick
@@ -287,6 +332,41 @@ export function TopicViewMode({
         .attr('y2', (d) => ((d.target as unknown) as TopicNode).y ?? 0);
 
       node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+
+      // v0.10.0: Update convex hull boundaries
+      hullGroup.selectAll('path').remove();
+      const clusterGroups = new Map<number, Array<[number, number]>>();
+      nodes.forEach((n) => {
+        if (n.x !== undefined && n.y !== undefined) {
+          const points = clusterGroups.get(n.clusterId) || [];
+          const dims = getNodeDimensions(n.size);
+          const pad = Math.max(dims.width, dims.height) / 2 + 15;
+          // Add padded points around the node for a smoother hull
+          points.push([n.x - pad, n.y - pad]);
+          points.push([n.x + pad, n.y - pad]);
+          points.push([n.x - pad, n.y + pad]);
+          points.push([n.x + pad, n.y + pad]);
+          clusterGroups.set(n.clusterId, points);
+        }
+      });
+
+      clusterGroups.forEach((points, clusterId) => {
+        if (points.length < 6) return; // Need at least 3 nodes (6 corner points)
+        const hull = d3.polygonHull(points);
+        if (hull) {
+          const clusterIndex = clusters.findIndex((c) => c.cluster_id === clusterId);
+          const color = CLUSTER_COLORS[clusterIndex % CLUSTER_COLORS.length] || '#888';
+          hullGroup
+            .append('path')
+            .attr('d', `M${hull.join('L')}Z`)
+            .attr('fill', color)
+            .attr('fill-opacity', 0.04)
+            .attr('stroke', color)
+            .attr('stroke-opacity', 0.15)
+            .attr('stroke-width', 1)
+            .attr('stroke-linejoin', 'round');
+        }
+      });
     });
 
     // Cleanup
@@ -343,16 +423,43 @@ export function TopicViewMode({
         style={{ background: '#0d1117' }}
       />
 
-      {/* Legend */}
-      <div className="absolute bottom-4 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg p-3">
-        <div className="text-xs font-mono text-muted mb-2">Legend</div>
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-6 h-0.5 bg-white/30" />
-          <span className="text-xs text-white/70">Connections</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
-          <span className="text-xs text-white/70">Structural Gap</span>
+      {/* v0.10.0: Enhanced Legend with cluster colors */}
+      <div className="absolute bottom-4 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-[#30363d] rounded-lg p-3 max-w-[200px]">
+        <div className="text-xs font-mono text-[#8b949e] mb-2 uppercase tracking-wider">Topic Clusters</div>
+        {/* Cluster colors */}
+        {clusters.length > 0 && (
+          <div className="mb-2 space-y-1">
+            {clusters.slice(0, 8).map((cluster, i) => (
+              <div key={cluster.cluster_id} className="flex items-center gap-2">
+                <div
+                  className="w-3 h-3 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }}
+                />
+                <span className="text-xs text-[#c9d1d9] truncate">
+                  {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+                    ? cluster.label
+                    : `Cluster ${cluster.cluster_id + 1}`}
+                </span>
+                <span className="text-xs text-[#484f58] flex-shrink-0">
+                  ({cluster.size})
+                </span>
+              </div>
+            ))}
+            {clusters.length > 8 && (
+              <span className="text-xs text-[#484f58]">+{clusters.length - 8} more</span>
+            )}
+          </div>
+        )}
+        {/* Edge types */}
+        <div className="border-t border-[#30363d] pt-2 space-y-1">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-0.5 bg-white/30" />
+            <span className="text-xs text-[#8b949e]">Connections</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
+            <span className="text-xs text-[#8b949e]">Structural Gap</span>
+          </div>
         </div>
       </div>
 

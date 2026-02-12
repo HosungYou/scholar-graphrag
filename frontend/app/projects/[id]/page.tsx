@@ -94,6 +94,9 @@ export default function ProjectDetailPage() {
     citations?: Citation[];
     isNodeExplanation?: boolean;
     nodeId?: string;
+    // Phase 11B: Search strategy metadata
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
   }>>([]);
 
   // Auto-scroll refs
@@ -106,14 +109,15 @@ export default function ProjectDetailPage() {
     highlightedEdges,
     selectedNode,
     filters,
+    pinnedNodes,
     setHighlightedNodes,
     setHighlightedEdges,
+    applyRecommendedViewMode,
     setSelectedNode,
     setFilters,
     resetFilters,
     clearHighlights,
     expandNode,
-    fetchGraphData,
   } = useGraphStore();
 
   // Fetch project details
@@ -121,11 +125,6 @@ export default function ProjectDetailPage() {
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId),
   });
-
-  // Fetch graph data on mount
-  useEffect(() => {
-    fetchGraphData(projectId);
-  }, [projectId, fetchGraphData]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -137,7 +136,15 @@ export default function ProjectDetailPage() {
   // Chat mutation
   const chatMutation = useMutation({
     mutationFn: (message: string) =>
-      api.sendChatMessage(projectId, message, conversationId || undefined),
+      api.sendChatMessage(
+        projectId,
+        message,
+        conversationId || undefined,
+        {
+          selectedNodeIds: selectedNode ? [selectedNode.id] : [],
+          pinnedNodeIds: pinnedNodes,
+        }
+      ),
     onSuccess: (data) => {
       setConversationId(data.conversation_id);
       setMessages((prev) => [
@@ -147,6 +154,9 @@ export default function ProjectDetailPage() {
           role: 'assistant',
           content: data.answer,
           citations: data.citations,
+          // Phase 11B: Search strategy metadata
+          searchStrategy: data.meta?.search_strategy,
+          hopCount: data.meta?.hop_count,
         },
       ]);
       setChatInput('');
@@ -157,6 +167,7 @@ export default function ProjectDetailPage() {
       if (data.highlighted_edges?.length > 0) {
         setHighlightedEdges(data.highlighted_edges);
       }
+      applyRecommendedViewMode(data.intent);
     },
   });
 
@@ -175,6 +186,13 @@ export default function ProjectDetailPage() {
       Metric: 0,
       Innovation: 0,
       Limitation: 0,
+      Invention: 0,
+      Patent: 0,
+      Inventor: 0,
+      Technology: 0,
+      License: 0,
+      Grant: 0,
+      Department: 0,
     };
 
     for (const node of graphData.nodes) {
@@ -257,6 +275,16 @@ export default function ProjectDetailPage() {
   const handleAskAboutNode = useCallback(
     (nodeId: string, nodeName: string) => {
       const question = `Tell me more about "${nodeName}" and its connections in the literature.`;
+      setChatInput(question);
+      setViewMode('split');
+      setMobileView('chat');
+    },
+    []
+  );
+
+  // Handle asking about a gap in chat
+  const handleAskAboutGap = useCallback(
+    (question: string) => {
       setChatInput(question);
       setViewMode('split');
       setMobileView('chat');
@@ -554,6 +582,36 @@ export default function ProjectDetailPage() {
                     {msg.content}
                   </p>
 
+                  {/* Phase 11B: Search Strategy Badge */}
+                  {msg.role === 'assistant' && msg.searchStrategy && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono"
+                        style={{
+                          backgroundColor: 'rgb(var(--color-accent-teal) / 0.1)',
+                          color: 'rgb(var(--color-accent-teal))',
+                          border: '1px solid rgb(var(--color-accent-teal) / 0.3)',
+                        }}
+                        title={`이 답변은 ${
+                          msg.searchStrategy === 'vector'
+                            ? '벡터 검색'
+                            : msg.searchStrategy === 'graph_traversal'
+                            ? '그래프 탐색'
+                            : '하이브리드 검색'
+                        }으로 생성되었습니다`}
+                      >
+                        {msg.searchStrategy === 'vector' && '🔍 Vector Search'}
+                        {msg.searchStrategy === 'graph_traversal' && (
+                          <>
+                            🕸️ Graph Traversal
+                            {msg.hopCount && ` (${msg.hopCount}-hop)`}
+                          </>
+                        )}
+                        {msg.searchStrategy === 'hybrid' && '🔀 Hybrid'}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Citations */}
                   {msg.citations && msg.citations.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-ink/10 dark:border-paper/10">
@@ -657,6 +715,7 @@ export default function ProjectDetailPage() {
             <KnowledgeGraph3D
               projectId={projectId}
               onNodeClick={handleNodeClick}
+              onAskQuestion={handleAskAboutGap}
             />
 
             {/* Filter Panel */}
