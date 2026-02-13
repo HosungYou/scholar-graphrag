@@ -145,7 +145,7 @@ export function FilterPanel({
   const hasActiveFilters = selectedTypes.length < entityTypes.length || yearRange !== null;
 
   return (
-    <div className="absolute top-4 right-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 w-64 z-10">
+    <div className="absolute top-16 right-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 w-64 z-10">
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

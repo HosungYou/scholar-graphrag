@@ -1252,7 +1252,7 @@ async def refresh_gap_analysis(
             # Generate TF-IDF pseudo-embeddings
             try:
                 concept_names = [(r["name"] or "").strip() for r in all_concept_rows]
-                concept_names = [n if n else "unknown concept" for n in concept_names]
+                concept_names = [n if n else f"concept_{all_concept_rows[i]['id'][:8]}" for i, n in enumerate(concept_names)]
                 vectorizer = TfidfVectorizer(
                     max_features=max_tfidf_features,
                     stop_words='english',

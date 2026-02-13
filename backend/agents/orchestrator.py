@@ -218,20 +218,6 @@ class AgentOrchestrator:
                 }
             })
 
-            # Early return for conversational queries (greetings, thanks, etc.)
-            if intent_result.intent == IntentType.CONVERSATIONAL:
-                logger.info("[CONVERSATIONAL] Returning friendly greeting response")
-                return OrchestratorResult(
-                    content="Hello! I'm ScholaRAG's research assistant. I can help you with:\n• **Literature search** - Find papers on specific topics\n• **Research gap analysis** - Discover unexplored research areas\n• **Concept exploration** - Understand relationships between concepts\n\nHow can I assist with your research today?",
-                    intent="conversational",
-                    confidence=intent_result.confidence,
-                    suggested_follow_ups=[
-                        "What are the main research topics?",
-                        "Show me research gaps in this field",
-                        "Explain the key concepts",
-                    ],
-                    processing_steps=processing_steps if include_processing_steps else [],
-                )
 
             # Step 2: Concept/Entity Extraction
             logger.info(f"[2/6] Extracting concepts...")

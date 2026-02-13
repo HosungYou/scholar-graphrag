@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
+import { Download } from 'lucide-react';
 import type { ConceptCluster, StructuralGap, GraphEdge, TopicNode, TopicLink, TopicViewData } from '@/types';
 
-// Cluster color palette (matches Graph3D)
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 const CLUSTER_COLORS = [
   '#FF6B6B', // Coral Red
   '#4ECDC4', // Turquoise
@@ -20,6 +24,60 @@ const CLUSTER_COLORS = [
   '#82E0AA', // Light Green
 ];
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** F-6b: Deterministic hash-based color assignment */
+function hashStringToIndex(str: string, max: number): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return Math.abs(hash) % max;
+}
+
+/** F-3f: Cluster size scaling -- sqrt instead of linear */
+function getNodeDimensions(size: number): { width: number; height: number } {
+  const scale = 50 + Math.sqrt(size) * 20;
+  return { width: scale, height: scale * 0.6 };
+}
+
+/** F-6e: Clone SVG, inline computed styles, trigger download */
+function exportSvg(svgEl: SVGSVGElement) {
+  const clone = svgEl.cloneNode(true) as SVGSVGElement;
+  const walk = (original: Element, copy: Element) => {
+    const computed = window.getComputedStyle(original);
+    const parts: string[] = [];
+    for (let i = 0; i < computed.length; i++) {
+      const prop = computed[i];
+      parts.push(`${prop}:${computed.getPropertyValue(prop)}`);
+    }
+    copy.setAttribute('style', parts.join(';'));
+    for (let i = 0; i < original.children.length; i++) {
+      if (copy.children[i]) walk(original.children[i], copy.children[i]);
+    }
+  };
+  walk(svgEl, clone);
+  const serializer = new XMLSerializer();
+  const blob = new Blob([serializer.serializeToString(clone)], {
+    type: 'image/svg+xml;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'topic-view-export.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
 interface TopicViewModeProps {
   clusters: ConceptCluster[];
   gaps: StructuralGap[];
@@ -30,6 +88,10 @@ interface TopicViewModeProps {
   width?: number;
   height?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function TopicViewMode({
   clusters,
@@ -43,18 +105,29 @@ export function TopicViewMode({
 }: TopicViewModeProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<TopicNode, TopicLink> | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
-  // Convert clusters and gaps to TopicViewData
+  // -----------------------------------------------------------------------
+  // Convert clusters + gaps + edges --> TopicViewData
+  // -----------------------------------------------------------------------
   const topicData = useMemo((): TopicViewData => {
-    // Create topic nodes from clusters
-    const nodes: TopicNode[] = clusters.map((cluster, index) => ({
+    // Issue C: size fallback
+    const nodes: TopicNode[] = clusters.map((cluster) => ({
       id: `cluster-${cluster.cluster_id}`,
       clusterId: cluster.cluster_id,
-      label: (cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
-        ? cluster.label
-        : `Cluster ${cluster.cluster_id + 1}`,
-      size: cluster.size,
-      color: CLUSTER_COLORS[index % CLUSTER_COLORS.length],
+      label:
+        cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0
+          ? cluster.label
+          : `Cluster ${cluster.cluster_id + 1}`,
+      size: cluster.size || cluster.concept_names?.length || 0,
+      // F-6b: deterministic color from label hash
+      color:
+        CLUSTER_COLORS[
+          hashStringToIndex(
+            cluster.label || `cluster-${cluster.cluster_id}`,
+            CLUSTER_COLORS.length,
+          )
+        ],
       conceptIds: cluster.concepts,
       conceptNames: cluster.concept_names,
       density: cluster.density,
@@ -63,10 +136,8 @@ export function TopicViewMode({
     // Count inter-cluster connections
     const connectionMap = new Map<string, number>();
     edges.forEach((edge) => {
-      // Find which clusters source and target belong to
       const sourceCluster = clusters.find((c) => c.concepts.includes(edge.source));
       const targetCluster = clusters.find((c) => c.concepts.includes(edge.target));
-
       if (sourceCluster && targetCluster && sourceCluster.cluster_id !== targetCluster.cluster_id) {
         const key = [
           Math.min(sourceCluster.cluster_id, targetCluster.cluster_id),
@@ -76,18 +147,13 @@ export function TopicViewMode({
       }
     });
 
-    // Build valid node ID set for link filtering
     const validNodeIds = new Set(nodes.map((n) => n.id));
-
-    // Create links from connections
     const links: TopicLink[] = [];
 
-    // Add connection links
     connectionMap.forEach((count, key) => {
       const [a, b] = key.split('-').map(Number);
       const sourceId = `cluster-${a}`;
       const targetId = `cluster-${b}`;
-
       if (validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
         links.push({
           id: `connection-${key}`,
@@ -100,19 +166,14 @@ export function TopicViewMode({
       }
     });
 
-    // Add gap links
     gaps.forEach((gap) => {
       const key = [
         Math.min(gap.cluster_a_id, gap.cluster_b_id),
         Math.max(gap.cluster_a_id, gap.cluster_b_id),
       ].join('-');
-
       const sourceId = `cluster-${gap.cluster_a_id}`;
       const targetId = `cluster-${gap.cluster_b_id}`;
-
-      // Check if there's already a connection link
       const existingLink = links.find((l) => l.id === `connection-${key}`);
-
       if (!existingLink && validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
         links.push({
           id: `gap-${gap.id}`,
@@ -128,35 +189,107 @@ export function TopicViewMode({
     return { nodes, links };
   }, [clusters, gaps, edges]);
 
-  // Calculate node dimensions based on size
-  const getNodeDimensions = useCallback((size: number) => {
-    const minSize = 60;
-    const maxSize = 150;
-    const maxConcepts = Math.max(...clusters.map((c) => c.size), 1);
-    const scale = (size / maxConcepts) * (maxSize - minSize) + minSize;
-    return { width: scale, height: scale * 0.6 };
-  }, [clusters]);
+  // -----------------------------------------------------------------------
+  // F-2: Adjacency map for bidirectional highlight
+  // -----------------------------------------------------------------------
+  const adjacencyMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    topicData.links.forEach((link) => {
+      const s = typeof link.source === 'string' ? link.source : link.source.id;
+      const t = typeof link.target === 'string' ? link.target : link.target.id;
+      if (!map.has(s)) map.set(s, new Set());
+      if (!map.has(t)) map.set(t, new Set());
+      map.get(s)!.add(t);
+      map.get(t)!.add(s);
+    });
+    return map;
+  }, [topicData.links]);
 
-  // D3 Force Simulation
+  // -----------------------------------------------------------------------
+  // F-5: Analytics summary stats
+  // -----------------------------------------------------------------------
+  const analytics = useMemo(() => {
+    const totalConcepts = clusters.reduce(
+      (sum, c) => sum + (c.size || c.concept_names?.length || 0),
+      0,
+    );
+    const totalConnections = topicData.links.filter((l) => l.type === 'connection').length;
+    const totalGaps = topicData.links.filter((l) => l.type === 'gap').length;
+    const avgDensity =
+      clusters.length > 0
+        ? clusters.reduce((sum, c) => sum + c.density, 0) / clusters.length
+        : 0;
+    const sizes = clusters.map((c) => c.size || c.concept_names?.length || 0);
+    const largestIdx = sizes.indexOf(Math.max(...sizes, 0));
+    const largestLabel =
+      largestIdx >= 0
+        ? clusters[largestIdx].label &&
+          clusters[largestIdx].label!.replace(/[\s/,]+/g, '').length > 0
+          ? clusters[largestIdx].label!
+          : `Cluster ${clusters[largestIdx].cluster_id + 1}`
+        : '-';
+    return { clusterCount: clusters.length, totalConcepts, totalConnections, totalGaps, avgDensity, largestLabel, sizes };
+  }, [clusters, topicData.links]);
+
+  // -----------------------------------------------------------------------
+  // D3 force simulation
+  // -----------------------------------------------------------------------
   useEffect(() => {
     if (!svgRef.current || topicData.nodes.length === 0) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    // Create container group for zoom
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ---- SVG defs ----
+    const defs = svg.append('defs');
+
+    // Gap glow filter
+    const glowFilter = defs.append('filter').attr('id', 'gap-glow');
+    glowFilter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
+    const feMerge = glowFilter.append('feMerge');
+    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Drop shadow for focused node
+    const dropShadow = defs.append('filter').attr('id', 'node-shadow');
+    dropShadow
+      .append('feDropShadow')
+      .attr('dx', 0)
+      .attr('dy', 0)
+      .attr('stdDeviation', 4)
+      .attr('flood-color', 'rgba(255,255,255,0.3)');
+
+    // Dash animation
+    svg.append('style').text(`
+      @keyframes dash-flow {
+        to { stroke-dashoffset: -24; }
+      }
+      .dash-flow {
+        animation: dash-flow 1s linear infinite;
+      }
+    `);
+
+    // Container for zoom
     const container = svg.append('g').attr('class', 'container');
 
+    // F-6a: Fade-in animation
+    if (!prefersReducedMotion) {
+      container.attr('opacity', 0);
+      container.transition().duration(400).attr('opacity', 1);
+    }
+
     // Zoom behavior
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.3, 3])
       .on('zoom', (event) => {
         container.attr('transform', event.transform);
       });
-
     svg.call(zoom);
 
-    // Copy nodes and links for simulation
+    // Copy data for simulation
     const nodes = topicData.nodes.map((d) => ({ ...d }));
     const links = topicData.links.map((d) => ({
       ...d,
@@ -164,7 +297,35 @@ export function TopicViewMode({
       target: d.target as string,
     }));
 
-    // Create simulation
+    // F-6a: Initialize all nodes near center
+    if (!prefersReducedMotion) {
+      nodes.forEach((n) => {
+        n.x = width / 2 + (Math.random() - 0.5) * 40;
+        n.y = height / 2 + (Math.random() - 0.5) * 40;
+      });
+    }
+
+    const maxSize = Math.max(...nodes.map((n) => n.size), 1);
+    const maxWeight = Math.max(...links.map((l) => l.weight || 1), 1);
+
+    // F-1: Per-link gradient defs
+    const nodeColorMap = new Map<string, string>();
+    nodes.forEach((n) => nodeColorMap.set(n.id, n.color));
+
+    links.forEach((lnk, i) => {
+      if (lnk.type !== 'gap') {
+        const sId = typeof lnk.source === 'string' ? lnk.source : (lnk.source as TopicNode).id;
+        const tId = typeof lnk.target === 'string' ? lnk.target : (lnk.target as TopicNode).id;
+        const grad = defs
+          .append('linearGradient')
+          .attr('id', `link-grad-${i}`)
+          .attr('gradientUnits', 'userSpaceOnUse');
+        grad.append('stop').attr('offset', '0%').attr('stop-color', nodeColorMap.get(sId) || '#888');
+        grad.append('stop').attr('offset', '100%').attr('stop-color', nodeColorMap.get(tId) || '#888');
+      }
+    });
+
+    // ---- F-3: ForceAtlas2-style simulation ----
     const simulation = d3
       .forceSimulation<TopicNode>(nodes)
       .force(
@@ -172,44 +333,122 @@ export function TopicViewMode({
         d3
           .forceLink<TopicNode, TopicLink>(links)
           .id((d) => d.id)
-          .distance(200)
-          .strength(0.3)
+          .distance((d) => {
+            const link = d as TopicLink;
+            if (link.type === 'gap') return 300;
+            const normalized = (link.weight || 1) / maxWeight;
+            return 300 - normalized * 200;
+          })
+          .strength((d) => {
+            const link = d as TopicLink;
+            const normalized = (link.weight || 1) / maxWeight;
+            return link.type === 'gap' ? 0.05 : 0.3 + normalized * 0.4;
+          }),
       )
-      .force('charge', d3.forceManyBody().strength(-500))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius((d) => {
-        const dims = getNodeDimensions((d as TopicNode).size);
-        return Math.max(dims.width, dims.height) / 2 + 20;
-      }));
+      .force('gravity', d3.forceRadial(0, width / 2, height / 2).strength(0.05))
+      .force(
+        'charge',
+        d3.forceManyBody().strength((d) => {
+          const sizeRatio = (d as TopicNode).size / maxSize;
+          return -300 - sizeRatio * 700;
+        }),
+      )
+      .force(
+        'collision',
+        d3
+          .forceCollide()
+          .radius((d) => {
+            const dims = getNodeDimensions((d as TopicNode).size);
+            return Math.max(dims.width, dims.height) / 2 + 30;
+          })
+          .strength(0.8)
+          .iterations(3),
+      );
+    // No default center force -- gravity radial handles centering
 
     simulationRef.current = simulation;
 
-    // Create links
+    // Custom boundary force: clamp nodes within viewport with 50px padding
+    simulation.on('tick.boundary', () => {
+      const pad = 50;
+      nodes.forEach((n) => {
+        if (n.x !== undefined) n.x = Math.max(pad, Math.min(width - pad, n.x));
+        if (n.y !== undefined) n.y = Math.max(pad, Math.min(height - pad, n.y));
+      });
+    });
+
+    // ---- Render layers ----
+    const hullGroup = container.append('g').attr('class', 'hulls');
     const linkGroup = container.append('g').attr('class', 'links');
+    const edgeLabelGroup = container.append('g').attr('class', 'link-labels');
+    const nodeGroup = container.append('g').attr('class', 'nodes');
+    const tooltipGroup = container.append('g').attr('class', 'tooltips');
+
+    // ---- F-1: Links with gradient + log-scale width ----
+    const weightThreshold =
+      d3.quantile(
+        links
+          .filter((l) => l.type === 'connection')
+          .map((l) => l.weight || 0)
+          .sort(d3.ascending),
+        0.75,
+      ) || 0;
 
     const link = linkGroup
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', (d) => (d.type === 'gap' ? '#FFAA00' : 'rgba(255, 255, 255, 0.3)'))
-      .attr('stroke-width', (d) => (d.type === 'gap' ? 2 : Math.min(d.weight || 1, 5)))
+      .attr('stroke', (d, i) => (d.type === 'gap' ? '#FFAA00' : `url(#link-grad-${i})`))
+      .attr('stroke-width', (d) => {
+        if (d.type === 'gap') return 2;
+        return Math.min(Math.max(1.5, Math.log((d.weight || 1) + 1) * 2.5), 8);
+      })
       .attr('stroke-dasharray', (d) => (d.type === 'gap' ? '8,4' : 'none'))
-      .attr('opacity', (d) => (d.type === 'gap' ? 0.8 : 0.5));
+      .attr('opacity', (d) => {
+        if (d.type === 'gap') return 0.8;
+        return 0.3 + Math.min((d.weight || 1) / maxWeight, 0.5);
+      })
+      .attr('filter', (d) => (d.type === 'gap' ? 'url(#gap-glow)' : 'none'))
+      .classed('dash-flow', (d) => d.type === 'gap');
 
-    // v0.10.0: Cluster boundary visualization (convex hull)
-    const hullGroup = container.append('g').attr('class', 'hulls');
+    // F-1: Edge labels on top 25% weight connections
+    const edgeLabelData = links.filter(
+      (l) => l.type === 'connection' && (l.weight || 0) >= weightThreshold && weightThreshold > 0,
+    );
 
-    // Create node groups
-    const nodeGroup = container.append('g').attr('class', 'nodes');
+    const edgeLabel = edgeLabelGroup
+      .selectAll('text')
+      .data(edgeLabelData)
+      .join('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('fill', 'rgba(255,255,255,0.55)')
+      .attr('font-size', '9px')
+      .attr('font-family', 'monospace')
+      .text((d) => `${d.weight} links`);
+
+    // ---- Node groups ----
+    // F-4: Connection count per node
+    const edgeCountMap = new Map<string, number>();
+    links.forEach((l) => {
+      const sId = typeof l.source === 'string' ? l.source : (l.source as TopicNode).id;
+      const tId = typeof l.target === 'string' ? l.target : (l.target as TopicNode).id;
+      edgeCountMap.set(sId, (edgeCountMap.get(sId) || 0) + 1);
+      edgeCountMap.set(tId, (edgeCountMap.get(tId) || 0) + 1);
+    });
 
     const node = nodeGroup
-      .selectAll('g')
+      .selectAll<SVGGElement, TopicNode>('g')
       .data(nodes)
       .join('g')
       .attr('class', 'topic-node')
-      .style('cursor', 'pointer');
+      .style('cursor', 'pointer')
+      .attr('role', 'button')
+      .attr('aria-label', (d) =>
+        `Cluster: ${d.label}, ${d.size} concepts, density ${d.density.toFixed(2)}`,
+      );
 
-    // Add drag behavior with type assertion
+    // Drag
     const dragBehavior = d3
       .drag<SVGGElement, TopicNode>()
       .on('start', (event, d) => {
@@ -226,11 +465,9 @@ export function TopicViewMode({
         d.fx = null;
         d.fy = null;
       });
-
-    // Type assertion needed due to D3 selection types
     (node as d3.Selection<SVGGElement, TopicNode, SVGGElement, unknown>).call(dragBehavior);
 
-    // Add rectangles to nodes
+    // Rectangles
     node
       .append('rect')
       .attr('width', (d) => getNodeDimensions(d.size).width)
@@ -244,86 +481,210 @@ export function TopicViewMode({
       .attr('stroke', (d) => d.color)
       .attr('stroke-width', 2);
 
-    // v0.10.0: Enhanced cluster labels - larger, color-matched, with text shadow
+    // F-4: Density bar at bottom of each node
+    node
+      .append('rect')
+      .attr('class', 'density-bar')
+      .attr('x', (d) => -getNodeDimensions(d.size).width / 2 + 4)
+      .attr('y', (d) => getNodeDimensions(d.size).height / 2 - 5)
+      .attr('width', (d) => {
+        const maxW = getNodeDimensions(d.size).width - 8;
+        return maxW * Math.min(d.density, 1);
+      })
+      .attr('height', 3)
+      .attr('rx', 1.5)
+      .attr('fill', (d) => d.color)
+      .attr('fill-opacity', 0.6);
+
+    // Cluster label
     node
       .append('text')
+      .attr('class', 'node-label')
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
+      .attr('y', -6)
       .attr('fill', (d) => d.color)
-      .attr('font-size', '16px')
+      .attr('font-size', '14px')
       .attr('font-weight', 'bold')
       .attr('font-family', 'system-ui, -apple-system, sans-serif')
-      .style('text-shadow', '0 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,1)')
-      .text((d) => d.label.length > 30 ? d.label.slice(0, 30) + '...' : d.label);
+      .style(
+        'text-shadow',
+        '0 1px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,1)',
+      )
+      .text((d) => (d.label.length > 25 ? d.label.slice(0, 25) + '...' : d.label));
 
-    // Add size indicator
+    // Size indicator
     node
       .append('text')
+      .attr('class', 'node-size')
       .attr('text-anchor', 'middle')
-      .attr('y', 18)
+      .attr('y', 10)
       .attr('fill', 'rgba(255, 255, 255, 0.6)')
       .attr('font-size', '11px')
       .attr('font-family', 'monospace')
       .text((d) => `${d.size} concepts`);
 
-    // v0.14.0: Add concept preview on hover (shows top concept names)
-    node
+    // F-4: Connection count badge (top-right)
+    const badgeG = node.append('g').attr('class', 'badge');
+    badgeG
+      .append('circle')
+      .attr('cx', (d) => getNodeDimensions(d.size).width / 2 - 4)
+      .attr('cy', (d) => -getNodeDimensions(d.size).height / 2 + 4)
+      .attr('r', 10)
+      .attr('fill', (d) => ((edgeCountMap.get(d.id) || 0) >= 3 ? '#2DD4BF' : '#6B7280'))
+      .attr('stroke', '#0d1117')
+      .attr('stroke-width', 1.5);
+    badgeG
       .append('text')
-      .attr('class', 'concept-preview')
+      .attr('x', (d) => getNodeDimensions(d.size).width / 2 - 4)
+      .attr('y', (d) => -getNodeDimensions(d.size).height / 2 + 4)
       .attr('text-anchor', 'middle')
-      .attr('y', 32)
-      .attr('fill', 'rgba(255, 255, 255, 0.4)')
+      .attr('dominant-baseline', 'central')
+      .attr('fill', '#fff')
       .attr('font-size', '9px')
+      .attr('font-weight', 'bold')
       .attr('font-family', 'monospace')
-      .attr('opacity', 0)
-      .text((d) => {
-        const names = d.conceptNames?.filter((n: string) => n && n.trim()).slice(0, 3) || [];
-        return names.length > 0 ? names.join(', ') : '';
-      });
+      .text((d) => `${edgeCountMap.get(d.id) || 0}`);
 
-    // Interaction handlers
+    // ---- F-2: Bidirectional highlight interactions ----
     node
       .on('click', (event, d) => {
         event.stopPropagation();
         onClusterClick?.(d.clusterId);
       })
-      .on('mouseenter', (event, d) => {
+      .on('mouseenter', function (_event, d) {
         onClusterHover?.(d.clusterId);
-        d3.select(event.currentTarget)
-          .transition()
-          .duration(150)
-          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1.02)`);
-        d3.select(event.currentTarget)
-          .select('rect')
-          .transition()
-          .duration(150)
-          .attr('stroke-width', 3);
-        d3.select(event.currentTarget)
-          .select('.concept-preview')
-          .transition()
-          .duration(200)
-          .attr('opacity', 1);
+        setHoveredNodeId(d.id);
+
+        const connected = adjacencyMap.get(d.id) || new Set<string>();
+
+        // 3-tier node opacity
+        nodeGroup.selectAll<SVGGElement, TopicNode>('.topic-node').each(function (nd) {
+          const el = d3.select(this);
+          if (nd.id === d.id) {
+            // Focused
+            el.transition()
+              .duration(200)
+              .style('opacity', 1)
+              .attr('transform', `translate(${nd.x ?? 0},${nd.y ?? 0}) scale(1.05)`);
+            el.select('rect')
+              .transition()
+              .duration(200)
+              .attr('stroke-width', 4)
+              .attr('filter', 'url(#node-shadow)');
+          } else if (connected.has(nd.id)) {
+            // Connected
+            el.transition()
+              .duration(200)
+              .style('opacity', 0.85)
+              .attr('transform', `translate(${nd.x ?? 0},${nd.y ?? 0}) scale(1)`);
+            el.select('rect').transition().duration(200).attr('stroke-width', 2.5);
+          } else {
+            // Faded
+            el.transition()
+              .duration(200)
+              .style('opacity', 0.15)
+              .attr('transform', `translate(${nd.x ?? 0},${nd.y ?? 0}) scale(0.98)`);
+            el.selectAll('.node-label, .node-size')
+              .transition()
+              .duration(200)
+              .style('opacity', 0);
+          }
+        });
+
+        // Edge opacity
+        linkGroup.selectAll('line').each(function (ld: unknown) {
+          const linkDatum = ld as TopicLink;
+          const sId =
+            typeof linkDatum.source === 'string'
+              ? linkDatum.source
+              : (linkDatum.source as TopicNode).id;
+          const tId =
+            typeof linkDatum.target === 'string'
+              ? linkDatum.target
+              : (linkDatum.target as TopicNode).id;
+          const isConn = sId === d.id || tId === d.id;
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .attr('opacity', isConn ? 0.9 : 0.05);
+        });
+
+        // F-4: Enhanced tooltip via foreignObject
+        tooltipGroup.selectAll('*').remove();
+        const names = d.conceptNames?.filter((n: string) => n && n.trim()).slice(0, 5) || [];
+        const remaining = (d.conceptNames?.length || 0) - names.length;
+        if (names.length > 0) {
+          const ttWidth = 200;
+          const lineHeight = 16;
+          const ttHeight = 30 + names.length * lineHeight + (remaining > 0 ? lineHeight : 0);
+          tooltipGroup
+            .append('foreignObject')
+            .attr('x', (d.x ?? 0) + getNodeDimensions(d.size).width / 2 + 10)
+            .attr('y', (d.y ?? 0) - ttHeight / 2)
+            .attr('width', ttWidth)
+            .attr('height', ttHeight)
+            .append('xhtml:div')
+            .style('background', 'rgba(22,27,34,0.95)')
+            .style('border', '1px solid rgba(255,255,255,0.1)')
+            .style('border-radius', '6px')
+            .style('padding', '8px 10px')
+            .style('font-family', 'monospace')
+            .style('font-size', '10px')
+            .style('color', '#c9d1d9')
+            .style('max-width', `${ttWidth}px`)
+            .style('line-height', '1.4')
+            .html(
+              names
+                .map(
+                  (n: string) =>
+                    `<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${n}</div>`,
+                )
+                .join('') +
+                (remaining > 0
+                  ? `<div style="color:#8b949e;margin-top:2px;">+${remaining} more</div>`
+                  : ''),
+            );
+        }
       })
-      .on('mouseleave', (event, d) => {
+      .on('mouseleave', function () {
         onClusterHover?.(null);
-        d3.select(event.currentTarget)
-          .transition()
-          .duration(150)
-          .attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0}) scale(1)`);
-        d3.select(event.currentTarget)
-          .select('rect')
-          .transition()
-          .duration(150)
-          .attr('stroke-width', 2);
-        d3.select(event.currentTarget)
-          .select('.concept-preview')
-          .transition()
-          .duration(200)
-          .attr('opacity', 0);
+        setHoveredNodeId(null);
+
+        // Reset all nodes
+        nodeGroup.selectAll<SVGGElement, TopicNode>('.topic-node').each(function (nd) {
+          const el = d3.select(this);
+          el.transition()
+            .duration(300)
+            .style('opacity', 1)
+            .attr('transform', `translate(${nd.x ?? 0},${nd.y ?? 0}) scale(1)`);
+          el.select('rect')
+            .transition()
+            .duration(300)
+            .attr('stroke-width', 2)
+            .attr('filter', 'none');
+          el.selectAll('.node-label, .node-size')
+            .transition()
+            .duration(300)
+            .style('opacity', 1);
+        });
+
+        // Reset edges
+        linkGroup.selectAll('line').each(function (ld: unknown) {
+          const linkDatum = ld as TopicLink;
+          d3.select(this)
+            .transition()
+            .duration(300)
+            .attr('opacity', () => {
+              if (linkDatum.type === 'gap') return 0.8;
+              return 0.3 + Math.min((linkDatum.weight || 1) / maxWeight, 0.5);
+            });
+        });
+
+        tooltipGroup.selectAll('*').remove();
       });
 
-    // Update positions on tick
-    // Note: D3 forceLink mutates source/target from string IDs to node objects
+    // ---- Tick handler ----
     simulation.on('tick', () => {
       link
         .attr('x1', (d) => ((d.source as unknown) as TopicNode).x ?? 0)
@@ -331,9 +692,38 @@ export function TopicViewMode({
         .attr('x2', (d) => ((d.target as unknown) as TopicNode).x ?? 0)
         .attr('y2', (d) => ((d.target as unknown) as TopicNode).y ?? 0);
 
+      // Update gradient endpoints
+      links.forEach((l, i) => {
+        if (l.type !== 'gap') {
+          const s = (l.source as unknown) as TopicNode;
+          const t = (l.target as unknown) as TopicNode;
+          const grad = defs.select(`#link-grad-${i}`);
+          if (!grad.empty()) {
+            grad
+              .attr('x1', s.x ?? 0)
+              .attr('y1', s.y ?? 0)
+              .attr('x2', t.x ?? 0)
+              .attr('y2', t.y ?? 0);
+          }
+        }
+      });
+
+      // Edge labels at midpoint
+      edgeLabel
+        .attr('x', (d) => {
+          const s = (d.source as unknown) as TopicNode;
+          const t = (d.target as unknown) as TopicNode;
+          return ((s.x ?? 0) + (t.x ?? 0)) / 2;
+        })
+        .attr('y', (d) => {
+          const s = (d.source as unknown) as TopicNode;
+          const t = (d.target as unknown) as TopicNode;
+          return ((s.y ?? 0) + (t.y ?? 0)) / 2 - 6;
+        });
+
       node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
 
-      // v0.10.0: Update convex hull boundaries
+      // Convex hull boundaries
       hullGroup.selectAll('path').remove();
       const clusterGroups = new Map<number, Array<[number, number]>>();
       nodes.forEach((n) => {
@@ -341,7 +731,6 @@ export function TopicViewMode({
           const points = clusterGroups.get(n.clusterId) || [];
           const dims = getNodeDimensions(n.size);
           const pad = Math.max(dims.width, dims.height) / 2 + 15;
-          // Add padded points around the node for a smoother hull
           points.push([n.x - pad, n.y - pad]);
           points.push([n.x + pad, n.y - pad]);
           points.push([n.x - pad, n.y + pad]);
@@ -351,11 +740,11 @@ export function TopicViewMode({
       });
 
       clusterGroups.forEach((points, clusterId) => {
-        if (points.length < 6) return; // Need at least 3 nodes (6 corner points)
+        if (points.length < 6) return;
         const hull = d3.polygonHull(points);
         if (hull) {
-          const clusterIndex = clusters.findIndex((c) => c.cluster_id === clusterId);
-          const color = CLUSTER_COLORS[clusterIndex % CLUSTER_COLORS.length] || '#888';
+          const cn = nodes.find((n) => n.clusterId === clusterId);
+          const color = cn?.color || '#888';
           hullGroup
             .append('path')
             .attr('d', `M${hull.join('L')}Z`)
@@ -369,49 +758,51 @@ export function TopicViewMode({
       });
     });
 
-    // Cleanup
     return () => {
       simulation.stop();
     };
-  }, [topicData, width, height, getNodeDimensions, onClusterClick, onClusterHover]);
+  }, [topicData, width, height, onClusterClick, onClusterHover, adjacencyMap]);
 
-  // Update highlight when highlightedClusterId changes
+  // -----------------------------------------------------------------------
+  // External highlight from parent
+  // -----------------------------------------------------------------------
   useEffect(() => {
     if (!svgRef.current) return;
-
     const svg = d3.select(svgRef.current);
-
-    svg.selectAll('.topic-node rect')
+    svg
+      .selectAll('.topic-node rect')
       .transition()
       .duration(150)
       .attr('fill-opacity', (d) => {
-        const node = d as TopicNode;
-        if (highlightedClusterId === null || highlightedClusterId === undefined) {
-          return 0.15;
-        }
-        return node.clusterId === highlightedClusterId ? 0.4 : 0.05;
+        const nd = d as TopicNode;
+        if (highlightedClusterId === null || highlightedClusterId === undefined) return 0.15;
+        return nd.clusterId === highlightedClusterId ? 0.4 : 0.05;
       })
       .attr('stroke-opacity', (d) => {
-        const node = d as TopicNode;
-        if (highlightedClusterId === null || highlightedClusterId === undefined) {
-          return 1;
-        }
-        return node.clusterId === highlightedClusterId ? 1 : 0.3;
+        const nd = d as TopicNode;
+        if (highlightedClusterId === null || highlightedClusterId === undefined) return 1;
+        return nd.clusterId === highlightedClusterId ? 1 : 0.3;
       });
   }, [highlightedClusterId]);
 
+  // -----------------------------------------------------------------------
+  // Empty state (Issue C)
+  // -----------------------------------------------------------------------
   if (clusters.length === 0) {
     return (
       <div className="flex items-center justify-center h-full bg-[#0d1117]">
         <div className="text-center">
           <p className="font-mono text-xs uppercase tracking-wider text-muted">
-            No clusters available for Topic View
+            Run Gap Analysis first to generate cluster visualization
           </p>
         </div>
       </div>
     );
   }
 
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
   return (
     <div className="w-full h-full bg-[#0d1117] relative">
       <svg
@@ -423,61 +814,156 @@ export function TopicViewMode({
         style={{ background: '#0d1117' }}
       />
 
-      {/* v0.10.0: Enhanced Legend with cluster colors */}
-      <div className="absolute bottom-4 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-[#30363d] rounded-lg p-3 max-w-[200px]">
-        <div className="text-xs font-mono text-[#8b949e] mb-2 uppercase tracking-wider">Topic Clusters</div>
+      {/* Badge + F-6e: SVG Export button */}
+      <div className="absolute top-4 left-4 flex items-center gap-2">
+        <div className="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <svg
+              className="w-4 h-4 text-accent-violet"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+            </svg>
+            <span className="font-mono text-xs uppercase tracking-wider text-muted">
+              Topic View
+            </span>
+            <span className="text-xs text-muted">&bull; {clusters.length} clusters</span>
+          </div>
+        </div>
+        <button
+          onClick={() => svgRef.current && exportSvg(svgRef.current)}
+          className="bg-[#161b22]/90 backdrop-blur-sm border border-[#30363d] rounded p-1.5 hover:bg-[#21262d] transition-colors"
+          title="Export SVG"
+          aria-label="Export topic view as SVG"
+        >
+          <Download className="w-4 h-4 text-[#8b949e]" />
+        </button>
+      </div>
+
+      {/* F-4: Enhanced Legend */}
+      <div className="absolute bottom-16 right-4 bg-[#161b22]/90 backdrop-blur-sm border border-[#30363d] rounded-lg p-3 max-w-[220px]">
+        <div className="text-xs font-mono text-[#8b949e] mb-2 uppercase tracking-wider">
+          Topic Clusters
+        </div>
         {/* Cluster colors */}
-        {clusters.length > 0 && (
-          <div className="mb-2 space-y-1">
-            {clusters.slice(0, 8).map((cluster, i) => (
+        <div className="mb-2 space-y-1">
+          {clusters.slice(0, 8).map((cluster) => {
+            const cColor =
+              CLUSTER_COLORS[
+                hashStringToIndex(
+                  cluster.label || `cluster-${cluster.cluster_id}`,
+                  CLUSTER_COLORS.length,
+                )
+              ];
+            return (
               <div key={cluster.cluster_id} className="flex items-center gap-2">
                 <div
                   className="w-3 h-3 rounded-sm flex-shrink-0"
-                  style={{ backgroundColor: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }}
+                  style={{ backgroundColor: cColor }}
                 />
                 <span className="text-xs text-[#c9d1d9] truncate">
-                  {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+                  {cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0
                     ? cluster.label
                     : `Cluster ${cluster.cluster_id + 1}`}
                 </span>
                 <span className="text-xs text-[#484f58] flex-shrink-0">
-                  ({cluster.size})
+                  ({cluster.size || cluster.concept_names?.length || 0})
                 </span>
               </div>
-            ))}
-            {clusters.length > 8 && (
-              <span className="text-xs text-[#484f58]">+{clusters.length - 8} more</span>
-            )}
-          </div>
-        )}
+            );
+          })}
+          {clusters.length > 8 && (
+            <span className="text-xs text-[#484f58]">+{clusters.length - 8} more</span>
+          )}
+        </div>
         {/* Edge types */}
         <div className="border-t border-[#30363d] pt-2 space-y-1">
+          <div className="text-xs font-mono text-[#8b949e] mb-1 uppercase tracking-wider">
+            Edges
+          </div>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-white/30" />
-            <span className="text-xs text-[#8b949e]">Connections</span>
+            <div className="w-6 h-0.5 bg-white/50 rounded" />
+            <span className="text-xs text-[#8b949e]">Strong connection</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-0.5 bg-white/20 rounded" />
+            <span className="text-xs text-[#8b949e]">Weak connection</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
-            <span className="text-xs text-[#8b949e]">Structural Gap</span>
+            <span className="text-xs text-[#8b949e]">Structural gap</span>
+          </div>
+        </div>
+        {/* Indicators */}
+        <div className="border-t border-[#30363d] pt-2 mt-2 space-y-1">
+          <div className="text-xs font-mono text-[#8b949e] mb-1 uppercase tracking-wider">
+            Indicators
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-3 rounded-sm border border-[#8b949e]/40 flex-shrink-0" />
+            <span className="text-xs text-[#8b949e]">Node size = concept count</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-[3px] bg-[#4ECDC4]/60 rounded flex-shrink-0" />
+            <span className="text-xs text-[#8b949e]">Bar = cluster density</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-[#2DD4BF] flex-shrink-0 flex items-center justify-center">
+              <span className="text-[6px] text-white font-bold">3</span>
+            </div>
+            <span className="text-xs text-[#8b949e]">Badge = edge count</span>
           </div>
         </div>
       </div>
 
-      {/* Topic View Badge */}
-      <div className="absolute top-4 left-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 px-3 py-1.5">
-        <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-accent-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <rect x="14" y="14" width="7" height="7" rx="1" />
-          </svg>
-          <span className="font-mono text-xs uppercase tracking-wider text-muted">
-            Topic View
+      {/* F-5: Analytics Summary Bar */}
+      <div className="absolute bottom-0 left-0 right-0 bg-[#161b22]/95 backdrop-blur-sm border-t border-[#30363d] px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-4 font-mono text-[11px] text-[#8b949e]">
+          <span>
+            Clusters: <span className="text-[#c9d1d9]">{analytics.clusterCount}</span>
           </span>
-          <span className="text-xs text-muted">
-            • {clusters.length} clusters
+          <span>
+            Concepts: <span className="text-[#c9d1d9]">{analytics.totalConcepts}</span>
           </span>
+          <span>
+            Connections: <span className="text-[#c9d1d9]">{analytics.totalConnections}</span>
+          </span>
+          <span>
+            Gaps: <span className="text-[#c9d1d9]">{analytics.totalGaps}</span>
+          </span>
+          <span>
+            Avg Density: <span className="text-[#c9d1d9]">{analytics.avgDensity.toFixed(2)}</span>
+          </span>
+          <span>
+            Largest:{' '}
+            <span className="text-[#c9d1d9]">
+              {analytics.largestLabel.length > 20
+                ? analytics.largestLabel.slice(0, 20) + '...'
+                : analytics.largestLabel}
+            </span>
+          </span>
+        </div>
+        {/* Mini bar chart of cluster size distribution */}
+        <div className="flex items-end gap-[2px] h-4">
+          {analytics.sizes.map((size, i) => {
+            const maxS = Math.max(...analytics.sizes, 1);
+            const barH = Math.max(2, (size / maxS) * 16);
+            const cLabel = clusters[i]?.label || `cluster-${clusters[i]?.cluster_id}`;
+            const barColor = CLUSTER_COLORS[hashStringToIndex(cLabel, CLUSTER_COLORS.length)];
+            return (
+              <div
+                key={i}
+                className="rounded-sm"
+                style={{ width: 6, height: barH, backgroundColor: barColor, opacity: 0.8 }}
+              />
+            );
+          })}
         </div>
       </div>
     </div>

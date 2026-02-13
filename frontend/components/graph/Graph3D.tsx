@@ -194,6 +194,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const hoveredNodeRef = useRef<string | null>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // v0.17.0: Stable nodes ref for hover callback (prevents stale closure)
+  const nodesRef = useRef(nodes);
+
   // v0.7.0: Adaptive labeling state
   const [labelVisibility, setLabelVisibility] = useState<'none' | 'important' | 'all'>('important');
   const [currentZoom, setCurrentZoom] = useState<number>(500);
@@ -214,6 +217,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   useEffect(() => {
     setLabelVisibility(labelVisibilityProp);
   }, [labelVisibilityProp]);
+
+  // v0.17.0: Keep nodesRef in sync
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   // UI-010 FIX: Store node positions to persist across re-renders
   // This prevents the simulation from restarting when graphData is recreated
@@ -744,7 +752,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         const style = nodeStyleMap.get(nodeId);
         if (!style) return;
 
-        const mat = obj.material as THREE.MeshStandardMaterial;
+        const mat = obj.material as THREE.MeshPhongMaterial;
         if (!mat || !mat.color) return;
 
         let targetColor: string;
@@ -970,6 +978,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   }, [focusCameraOnNode]);
 
   // Node hover handler - v0.11.0: debounced to prevent jitter
+  // v0.17.0: Uses nodesRef.current to avoid nodes dependency causing callback recreation
   const handleNodeHover = useCallback((nodeData: unknown) => {
     const node = nodeData as ForceGraphNode | null;
     const newId = node?.id || null;
@@ -984,7 +993,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         setHoveredNode(newId);
         if (onNodeHover) {
           if (node) {
-            const originalNode = nodes.find(n => n.id === node.id);
+            const originalNode = nodesRef.current.find(n => n.id === node.id);
             onNodeHover(originalNode || null);
           } else {
             onNodeHover(null);
@@ -992,7 +1001,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         }
       }, 50);
     }
-  }, [nodes, onNodeHover]);
+  }, [onNodeHover]);
 
   // Background click handler
   const handleBackgroundClick = useCallback(() => {

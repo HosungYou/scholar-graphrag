@@ -410,7 +410,7 @@ export function KnowledgeGraph3D({
       )}
 
       {/* Top Controls */}
-      <div className="absolute top-4 right-4 flex gap-2">
+      <div className="absolute top-4 right-4 flex gap-2 z-40">
         <div className="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-1 flex gap-1">
           {/* 3D Mode Indicator */}
           <div className="p-2 bg-accent-teal text-white relative" title="3D Graph View - Drag nodes to explore, scroll to zoom">

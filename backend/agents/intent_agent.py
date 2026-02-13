@@ -102,10 +102,10 @@ Respond with JSON: {"intent": "<type>", "confidence": 0.0-1.0, "keywords": [], "
         conversational_patterns = [
             "안녕", "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
             "thanks", "thank you", "bye", "goodbye", "how are you", "what's up",
-            "nice to meet", "help me", "can you help",
+            "nice to meet",
         ]
         # Short queries (< 5 chars) or greetings should be conversational
-        if len(q) < 5 or any(p in q for p in conversational_patterns):
+        if len(q) < 3 or q in conversational_patterns:
             return IntentResult(
                 intent=IntentType.CONVERSATIONAL,
                 confidence=0.95,
