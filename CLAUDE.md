@@ -719,12 +719,13 @@ When making architectural changes:
 > **Full Notes**: See `RELEASE_NOTES_v0.16.2.md`
 
 ### Bug Fixes
-- **BUG-043-EXT**: Comprehensive 5-layer 401 auth error defense
+- **BUG-043-EXT**: Comprehensive 6-layer 401 auth error defense
   - Layer 1: ImportProgress polling stops on 401/403 (was looping every 2s)
   - Layer 2: Global QueryClient retry defaults skip auth errors for all queries
   - Layer 3: Token auto-refresh via `supabase.auth.refreshSession()` on 401
   - Layer 4: `authenticatedFetch()` helper guards all 6 direct `fetch()` calls
   - Layer 5: Backend per-IP auth failure rate limiting (20/min → 429)
+  - Layer 6: Auto-signout on dead session — clears cached auth state so `enabled:!!user` stops all refetchInterval loops
   - Cleanup: Removed redundant per-query retry overrides (now global)
 
 ### Security
