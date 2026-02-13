@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-12
+> **마지막 업데이트**: 2026-02-13
 > **관리자**: Claude Code
 
 ---
@@ -27,6 +27,35 @@
 ## 🟡 Medium Priority (Short-term)
 
 *모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 v0.16.3 Release - SUPABASE_ANON_KEY Fix (2026-02-13)
+
+### BUG-044: Invalid API key 401 on all auth requests
+- **Source**: Production Render logs analysis 2026-02-13 (all auth requests returning 401 "Invalid API key")
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `backend/auth/supabase_client.py` - Added anon key validation and "Invalid API key" diagnostics
+- **Description**: Render's `SUPABASE_ANON_KEY` environment variable was invalid/mismatched, causing all authentication requests to return 401 "Invalid API key"
+- **Root Cause**: Environment variable mismatch between Render and actual Supabase project key
+- **Solution Applied**:
+  - [x] Updated Render `SUPABASE_ANON_KEY` to match correct Supabase project key
+  - [x] Added pre-validation of anon key at initialization (lines 51-65)
+  - [x] Added "Invalid API key" specific CRITICAL log branch in verify_jwt() (lines 113-121)
+- **Completed**: 2026-02-13
+- **Commit**: f658c44
+
+### INFRA-014: Render SUPABASE_ANON_KEY Corrected
+- **Source**: BUG-044 infrastructure fix
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: Updated Render environment variable `SUPABASE_ANON_KEY` to match the correct Supabase project anon key
+- **Solution Applied**:
+  - [x] Corrected `SUPABASE_ANON_KEY` in Render Dashboard → scholarag-graph-docker → Environment Variables
+  - [x] Verified key matches Supabase project settings
+- **Completed**: 2026-02-13
 
 ---
 

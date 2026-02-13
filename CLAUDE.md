@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-12
-> **Version**: 4.0.0 (v0.16.2 Comprehensive 401 Auth Defense)
+> **Last Updated**: 2026-02-13
+> **Version**: 4.0.0 (v0.16.3 SUPABASE_ANON_KEY Fix)
 
 ## Project Overview
 
@@ -710,6 +710,28 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.16.3 Release Notes
+
+> **Version**: 0.16.3 | **Date**: 2026-02-13
+> **Full Notes**: See `RELEASE_NOTES_v0.16.3.md`
+
+### Bug Fixes
+- **BUG-044**: Invalid API key 401 errors on all auth requests — Render's `SUPABASE_ANON_KEY` environment variable was mismatched with the actual Supabase project key, causing all authentication requests to return 401 "Invalid API key"
+  - Fixed by updating Render env var to match correct Supabase project anon key
+  - Added diagnostic code in `backend/auth/supabase_client.py`:
+    - Pre-validation of anon key at initialization time (lines 51-65)
+    - "Invalid API key" specific CRITICAL log branch in verify_jwt() (lines 113-121)
+
+### Infrastructure
+- **INFRA-014**: Render SUPABASE_ANON_KEY corrected — Updated environment variable to match Supabase project key
+
+### Technical
+- 1 file changed, +47/-21 lines
+- No database migrations, no new env vars, no breaking changes
+- Build: zero TypeScript errors
 
 ---
 

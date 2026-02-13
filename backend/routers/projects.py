@@ -42,6 +42,7 @@ async def check_project_access(database, project_id: UUID, user_id: str) -> bool
             SELECT 1 FROM projects p
             WHERE p.id = $1 AND (
                 p.owner_id = $2
+                OR p.owner_id IS NULL
                 OR p.visibility = 'public'
                 OR EXISTS (
                     SELECT 1 FROM project_collaborators pc
