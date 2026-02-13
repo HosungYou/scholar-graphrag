@@ -130,6 +130,27 @@ const LABEL_CONFIG = {
 
 const E2E_MOCK_3D = process.env.NEXT_PUBLIC_E2E_MOCK_3D === '1';
 
+/** v0.19.0: 2D Convex hull using Andrew's monotone chain algorithm */
+function computeConvexHull2D(points: THREE.Vector2[]): THREE.Vector2[] {
+  if (points.length < 3) return points;
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (O: THREE.Vector2, A: THREE.Vector2, B: THREE.Vector2) =>
+    (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+  const lower: THREE.Vector2[] = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: THREE.Vector2[] = [];
+  for (const p of sorted.reverse()) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
 export interface Graph3DProps {
   nodes: GraphEntity[];
   edges: GraphEdge[];
@@ -160,6 +181,9 @@ export interface Graph3DProps {
   onNodePin?: (nodeId: string) => void;
   onNodeUnpin?: (nodeId: string) => void;
   onClearPinnedNodes?: () => void;
+  // v0.19.0: Cluster overlay props
+  showClusterOverlay?: boolean;
+  gaps?: import('@/types').StructuralGap[];
 }
 
 export interface Graph3DRef {
@@ -195,6 +219,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   onNodePin,
   onNodeUnpin,
   onClearPinnedNodes,
+  // v0.19.0: Cluster overlay
+  showClusterOverlay = false,
+  gaps: gapsProp = [],
 }, ref) => {
   // All hooks must be called unconditionally at the top (React rules)
   const fgRef = useRef<any>(null);
@@ -1345,6 +1372,193 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       nodePositionsRef.current.clear();
     };
   }, []);
+
+  // v0.19.0: Cluster overlay - convex hulls + gap lines
+  // SEPARATE useEffect to avoid nodeThreeObject dependency contamination
+  const clusterOverlayRef = useRef<THREE.Group | null>(null);
+  const frameCountRef = useRef(0);
+
+  useEffect(() => {
+    if (!fgRef.current || !showClusterOverlay || !clusters?.length) {
+      // Clean up existing overlay
+      if (clusterOverlayRef.current && fgRef.current) {
+        try {
+          fgRef.current.scene().remove(clusterOverlayRef.current);
+        } catch { /* scene unavailable */ }
+        clusterOverlayRef.current = null;
+      }
+      return;
+    }
+
+    const scene = fgRef.current.scene();
+    if (!scene) return;
+
+    // Create overlay group
+    if (clusterOverlayRef.current) {
+      scene.remove(clusterOverlayRef.current);
+    }
+    const overlayGroup = new THREE.Group();
+    overlayGroup.name = 'cluster-overlay-v019';
+    clusterOverlayRef.current = overlayGroup;
+    scene.add(overlayGroup);
+
+    // Build cluster position map from current node positions
+    const updateOverlay = () => {
+      frameCountRef.current++;
+      if (frameCountRef.current % 30 !== 0) return; // Update every 30 frames
+
+      // Clear previous overlay children
+      while (overlayGroup.children.length > 0) {
+        const child = overlayGroup.children[0];
+        overlayGroup.remove(child);
+        if ((child as any).geometry) (child as any).geometry.dispose();
+        if ((child as any).material) (child as any).material.dispose();
+      }
+
+      const graphDataCurrent = fgRef.current?.graphData();
+      if (!graphDataCurrent?.nodes) return;
+
+      const nodePositions = new Map<string, { x: number; y: number; z: number }>();
+      (graphDataCurrent.nodes as ForceGraphNode[]).forEach((n) => {
+        if (n.x !== undefined && n.y !== undefined && n.z !== undefined) {
+          nodePositions.set(n.id, { x: n.x, y: n.y, z: n.z });
+        }
+      });
+
+      // For each cluster, compute centroid and hull
+      const clusterCentroids = new Map<number, THREE.Vector3>();
+
+      clusters.forEach((cluster, idx) => {
+        const positions = cluster.concepts
+          .map((id: string) => nodePositions.get(id))
+          .filter(Boolean) as { x: number; y: number; z: number }[];
+
+        if (positions.length < 2) return;
+
+        // Compute centroid
+        const centroid = new THREE.Vector3(
+          positions.reduce((s, p) => s + p.x, 0) / positions.length,
+          positions.reduce((s, p) => s + p.y, 0) / positions.length,
+          positions.reduce((s, p) => s + p.z, 0) / positions.length,
+        );
+        clusterCentroids.set(cluster.cluster_id, centroid);
+
+        // Convex hull on XY plane (simplified 2D projection)
+        const points2D = positions.map(p => new THREE.Vector2(p.x, p.y));
+        const hull = computeConvexHull2D(points2D);
+        if (hull.length < 3) return;
+
+        // Create Catmull-Rom smoothed shape (6A: organic blobs)
+        const curve = new THREE.CatmullRomCurve3(
+          hull.map(p => new THREE.Vector3(p.x, p.y, centroid.z - 5)),
+          true, // closed
+          'catmullrom',
+          0.5
+        );
+        const curvePoints = curve.getPoints(hull.length * 8);
+        const shape = new THREE.Shape(curvePoints.map(p => new THREE.Vector2(p.x, p.y)));
+
+        const color = clusterColorMap.get(cluster.cluster_id) || CLUSTER_COLORS[idx % CLUSTER_COLORS.length];
+        // Density-based opacity (6A: denser = more saturated)
+        const opacity = 0.08 + (cluster.density || 0) * 0.12;
+
+        const geometry = new THREE.ShapeGeometry(shape);
+        const material = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(color),
+          transparent: true,
+          opacity,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.z = centroid.z - 5;
+        mesh.userData = {
+          type: 'cluster-hull',
+          clusterId: cluster.cluster_id,
+          conceptNames: cluster.concept_names?.slice(0, 5) || [],
+          label: cluster.label || `Cluster ${cluster.cluster_id + 1}`,
+        };
+        overlayGroup.add(mesh);
+      });
+
+      // Gap lines between cluster centroids
+      if (gapsProp?.length) {
+        gapsProp.forEach(gap => {
+          const centroidA = clusterCentroids.get(gap.cluster_a_id);
+          const centroidB = clusterCentroids.get(gap.cluster_b_id);
+          if (!centroidA || !centroidB) return;
+
+          // 6C: Gap strength color gradient
+          const strength = gap.gap_strength;
+          let gapColor: THREE.Color;
+          if (strength < 0.05) {
+            gapColor = new THREE.Color('#FF4444'); // Strong gap = red = high opportunity
+          } else if (strength < 0.15) {
+            gapColor = new THREE.Color('#FFD700'); // Moderate = amber
+          } else {
+            gapColor = new THREE.Color('#44FF44'); // Weak gap = green
+          }
+
+          const lineGeometry = new THREE.BufferGeometry().setFromPoints([centroidA, centroidB]);
+          const lineMaterial = new THREE.LineDashedMaterial({
+            color: gapColor,
+            dashSize: 3,
+            gapSize: 2,
+            linewidth: 1,
+            transparent: true,
+            opacity: 0.7,
+          });
+          const line = new THREE.Line(lineGeometry, lineMaterial);
+          line.computeLineDistances();
+          overlayGroup.add(line);
+
+          // Gap hotspot at midpoint (pulsing sphere)
+          const midpoint = new THREE.Vector3().lerpVectors(centroidA, centroidB, 0.5);
+          const sphereGeo = new THREE.SphereGeometry(2, 16, 16);
+          const sphereMat = new THREE.MeshBasicMaterial({
+            color: gapColor,
+            transparent: true,
+            opacity: 0.6,
+          });
+          const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+          sphere.position.copy(midpoint);
+          sphere.userData = { type: 'gap-hotspot', gapId: gap.id, pulse: strength < 0.05 };
+          overlayGroup.add(sphere);
+        });
+      }
+    };
+
+    // Register frame callback
+    const interval = setInterval(updateOverlay, 500); // Update every 500ms as fallback
+    updateOverlay(); // Initial render
+
+    return () => {
+      clearInterval(interval);
+      if (clusterOverlayRef.current && fgRef.current?.scene()) {
+        try {
+          fgRef.current.scene().remove(clusterOverlayRef.current);
+        } catch { /* scene unavailable */ }
+        clusterOverlayRef.current = null;
+      }
+    };
+  }, [showClusterOverlay, clusters, gapsProp, clusterColorMap]);
+
+  // v0.19.0: Pulse animation for strongest gap hotspots
+  useEffect(() => {
+    if (!clusterOverlayRef.current) return;
+    let animId: number;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      clusterOverlayRef.current?.traverse(child => {
+        if (child.userData?.pulse && child instanceof THREE.Mesh) {
+          const scale = 1 + Math.sin(Date.now() * 0.003) * 0.3;
+          child.scale.setScalar(scale);
+        }
+      });
+    };
+    if (showClusterOverlay) animate();
+    return () => cancelAnimationFrame(animId);
+  }, [showClusterOverlay]);
 
   // E2E Mock Mode - Early return AFTER all hooks have been called
   if (E2E_MOCK_3D) {

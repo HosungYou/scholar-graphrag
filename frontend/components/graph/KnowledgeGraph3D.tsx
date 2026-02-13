@@ -17,6 +17,7 @@ import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
 import { TemporalView } from './TemporalView';  // v0.12.1: Temporal Timeline
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
+import { GapExplorerCard } from './GapExplorerCard';  // v0.19.0: Gap explorer card
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
@@ -65,6 +66,9 @@ export function KnowledgeGraph3D({
   const [showInsightHUD, setShowInsightHUD] = useState(true);
   const [showMainTopics, setShowMainTopics] = useState(false);
   const [isGapPanelMinimized, setIsGapPanelMinimized] = useState(false);
+  // v0.19.0: Smooth view transitions
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
   // UI-011: Edge context modal state for Relationship Evidence
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [edgeModalOpen, setEdgeModalOpen] = useState(false);
@@ -109,6 +113,9 @@ export function KnowledgeGraph3D({
     getVisiblePercentage,
     toggleBloom,
     cycleLabelVisibility,
+    // v0.19.0: Cluster overlay
+    showClusterOverlay,
+    toggleClusterOverlay,
   } = useGraph3DStore();
 
   // Fetch data on mount
@@ -294,6 +301,20 @@ export function KnowledgeGraph3D({
     return displayNodes.find((node) => node.id === selectedEdge.target)?.name;
   }, [selectedEdge, displayNodes]);
 
+  // v0.19.0: Smooth view mode transitions
+  const handleViewModeChange = useCallback((newMode: ViewMode) => {
+    if (newMode === viewMode) return;
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setViewMode(newMode);
+      setTimeout(() => setIsTransitioning(false), 300);
+    }, 200);
+  }, [viewMode, setViewMode]);
+
+  // v0.19.0: Gap explorer card state
+  const [explorerGap, setExplorerGap] = useState<StructuralGap | null>(null);
+  const [explorerGapPosition, setExplorerGapPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
   // Handle close node details
   const handleCloseNodeDetails = useCallback(() => {
     setSelectedNode(null);
@@ -398,7 +419,8 @@ export function KnowledgeGraph3D({
 
   return (
     <div className="relative w-full h-full">
-      {/* Graph View (3D, Topic, or Gaps) */}
+      {/* Graph View (3D, Topic, or Gaps) - v0.19.0: Smooth transitions */}
+      <div className={`w-full h-full transition-all duration-300 ${isTransitioning ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}>
       {viewMode === '3d' && (
         <>
           <EntityTypeLegend visibleTypes={Object.keys(nodeCounts)} />
@@ -426,6 +448,9 @@ export function KnowledgeGraph3D({
             labelVisibility={view3D.labelVisibility}
             // Phase 11F: SAME_AS edge filter
             showSameAsEdges={showSameAsEdges}
+            // v0.19.0: Cluster overlay
+            showClusterOverlay={showClusterOverlay}
+            gaps={gaps}
           />
         </>
       )}
@@ -473,6 +498,7 @@ export function KnowledgeGraph3D({
       {viewMode === 'temporal' && (
         <TemporalView projectId={projectId} />
       )}
+      </div>
 
       {/* Top Controls */}
       <div className="absolute top-4 right-4 flex gap-2 z-40">
@@ -536,6 +562,19 @@ export function KnowledgeGraph3D({
             aria-pressed={showSameAsEdges}
           >
             <Link2 className="w-4 h-4" />
+          </button>
+
+          {/* v0.19.0: Cluster Overlay Toggle */}
+          <button
+            onClick={toggleClusterOverlay}
+            className={`p-2 transition-colors ${
+              showClusterOverlay
+                ? 'bg-accent-teal/20 text-accent-teal'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title={showClusterOverlay ? 'Hide Cluster Boundaries' : 'Show Cluster Boundaries'}
+          >
+            <Hexagon className="w-4 h-4" />
           </button>
 
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
@@ -634,7 +673,7 @@ export function KnowledgeGraph3D({
           <div className="flex items-center bg-ink/15 dark:bg-paper/15 rounded-lg p-1 gap-1 border border-ink/20 dark:border-paper/20">
             {/* 3D Mode */}
             <button
-              onClick={() => setViewMode('3d')}
+              onClick={() => handleViewModeChange('3d')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === '3d'
                   ? 'bg-accent-teal text-white shadow-sm'
@@ -648,7 +687,7 @@ export function KnowledgeGraph3D({
 
             {/* Topic Mode */}
             <button
-              onClick={() => setViewMode('topic')}
+              onClick={() => handleViewModeChange('topic')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === 'topic'
                   ? 'bg-accent-purple text-white shadow-sm'
@@ -662,7 +701,7 @@ export function KnowledgeGraph3D({
 
             {/* Gaps Mode */}
             <button
-              onClick={() => setViewMode('gaps')}
+              onClick={() => handleViewModeChange('gaps')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === 'gaps'
                   ? 'bg-accent-amber text-white shadow-sm'
@@ -676,7 +715,7 @@ export function KnowledgeGraph3D({
 
             {/* Temporal Mode - v0.12.1 */}
             <button
-              onClick={() => setViewMode('temporal')}
+              onClick={() => handleViewModeChange('temporal')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
                 viewMode === 'temporal'
                   ? 'bg-accent-orange text-white shadow-sm'
@@ -848,6 +887,23 @@ export function KnowledgeGraph3D({
           onRelationshipClick={handleRelationshipClick}
           onClose={handleCloseNodeDetails}
           onNodeNavigate={handleNodeNavigate}
+        />
+      )}
+
+      {/* v0.19.0: Gap Explorer Card - appears on gap hotspot click */}
+      {explorerGap && (
+        <GapExplorerCard
+          gap={explorerGap}
+          position={explorerGapPosition}
+          onClose={() => setExplorerGap(null)}
+          onDeepDive={(gapId) => {
+            const gap = gaps.find(g => g.id === gapId);
+            if (gap) {
+              handleGapSelect(gap);
+            }
+            setExplorerGap(null);
+          }}
+          projectId={projectId}
         />
       )}
 
