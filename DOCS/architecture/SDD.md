@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.14.1
-**Last Updated**: 2026-02-07
+**Version**: 0.17.0
+**Last Updated**: 2026-02-13
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.7.0 |
-| **Project Version** | 0.14.1 |
+| **Document Version** | 1.8.0 |
+| **Project Version** | 0.17.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -77,6 +77,10 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **GapsView Minimap** | Canvas minimap with cluster layout and gap visualization | ✅ v0.14.1 |
 | **Gap-to-Chat Integration** | Research questions pre-fill chat input with view switch | ✅ v0.14.1 |
 | **S2 429 Auto-Retry** | Automatic retry with countdown on Semantic Scholar rate limiting | ✅ v0.14.1 |
+| **InfraNodus Topic View** | ForceAtlas2 layout, gradient edges, 3-tier highlight, analytics bar | ✅ v0.17.0 |
+| **Topic View SVG Export** | Download Topic View as SVG file with inlined styles | ✅ v0.17.0 |
+| **Deterministic Cluster Colors** | Hash-based color assignment stable across refreshes | ✅ v0.17.0 |
+| **Chatbot Full RAG Pipeline** | All queries flow through 6-agent pipeline, no early-return | ✅ v0.17.0 |
 
 ### 1.4 Success Metrics
 
@@ -263,6 +267,8 @@ User Query → Intent Agent → Concept Agent → Task Agent → Query Agent →
 | **4. Query Agent** | Task plan | SQL queries + Vector searches | asyncpg + pgvector | N/A |
 | **5. Reasoning Agent** | Query results | Chain-of-thought analysis | Groq llama-3.3-70b | 0.3 |
 | **6. Response Agent** | Analysis + User context | Natural language response + Citations + Graph highlights | Groq llama-3.3-70b | 0.5 |
+
+**v0.17.0 Changes**: Intent Agent conversational pattern matching refined — `len(q) < 5` threshold lowered to `len(q) < 3`, substring matching (`any(p in q)`) replaced with exact matching (`q in patterns`), and "help me"/"can you help" removed from conversational patterns. CONVERSATIONAL early-return in Orchestrator completely removed — all intents now flow through full 6-agent pipeline.
 
 **Key Classes**:
 ```python
@@ -522,27 +528,47 @@ LABEL_CONFIG = {
 - Drag release: Nodes float back naturally (fx/fy/fz = undefined)
 ```
 
-**Topic View Specifications**:
+**Topic View Specifications** (v0.17.0 — InfraNodus-level redesign):
 ```typescript
 // frontend/components/graph/TopicViewMode.tsx
 interface TopicViewProps {
-  nodes: Node[];
-  edges: Edge[];
   clusters: Cluster[];
+  connections: ClusterConnection[];
+  gaps: StructuralGap[];
+  onClusterClick?: (clusterId: number) => void;
 }
 
-// D3 force layout
+// ForceAtlas2-Style Layout (v0.17.0)
 {
-  forceLink: d3.forceLink().distance(100),
-  forceCharge: d3.forceManyBody().strength(-300),
-  forceCenter: d3.forceCenter(width/2, height/2),
-  forceCollide: d3.forceCollide().radius(30)
+  forceRadial: d3.forceRadial(0, width/2, height/2).strength(0.05),  // Gravity
+  forceCharge: d3.forceManyBody().strength(d => -300 - (sizeRatio * 700)),  // Size-based repulsion
+  forceLink: d3.forceLink(links).distance(d => {
+    if (d.type === 'gap') return 300;
+    return 300 - (normalized * 200);  // 100 (strong) ~ 300 (weak)
+  }),
+  forceCollide: d3.forceCollide().radius(d => nodeRadius + 30).strength(0.8).iterations(3),
+  boundaryForce: custom  // Viewport clamping
 }
 
-// Clustering
-- Algorithm: Louvain (community detection)
-- Visual grouping: Convex hull around clusters
-- Zoom levels: 0.5x - 3x (semantic zoom)
+// Edge Visualization
+- Gradient: <linearGradient> from source to target cluster color
+- Width: d3.scaleLog().range([1.5, 8]) based on weight
+- Opacity: 0.3 + min(weight/maxWeight, 0.5)
+- Gap edges: feGaussianBlur glow + amber dashed animation
+- Labels: Top 25% weight edges show "N links" badge
+
+// 3-Tier Highlight System
+- Focused (hovered): opacity 1.0, scale 1.05, 4px stroke + drop-shadow
+- Connected (adjacent): opacity 0.85, 2.5px dashed stroke
+- Faded (rest): opacity 0.15, scale 0.98, text hidden
+- Edge highlight: connected=0.9, faded=0.05
+- Transitions: 200ms enter, 300ms exit, prefers-reduced-motion respected
+
+// Node Sizing: sqrt scale (50 + sqrt(size) * 20)
+// Colors: hashStringToIndex(label) for deterministic assignment
+// Analytics: Bottom summary bar (clusters, concepts, connections, gaps, density)
+// Export: SVG download with inlined styles
+// Animation: Entry from center with force simulation spread
 ```
 
 **Gaps View Specifications**:
@@ -1253,6 +1279,19 @@ app.add_middleware(
 
 ## 7. Change Log
 
+### Version 0.17.0 (2026-02-13) — InfraNodus Topic View + 6+2 Bug Fixes
+
+**Major Feature Enhancement + Bug Fix Release (8 issues + 1 major redesign)**:
+
+- **InfraNodus Topic View Redesign**: Complete rewrite of TopicViewMode.tsx (487→973 lines). ForceAtlas2-style layout with radial gravity, size-based charge, weight-based link distance. SVG gradient edges with log-scale width. 3-tier bidirectional highlight (focused/connected/faded). Analytics summary bar. SVG export. Entry animation. Deterministic cluster colors via hash function.
+- **3D Hover Jitter Fix**: MeshStandardMaterial→MeshPhongMaterial cast fix in scene.traverse; nodesRef pattern eliminates stale closure in handleNodeHover
+- **Gap Label Quality**: NULL concept names get UUID prefix for unique TF-IDF vectors instead of shared "unknown concept" string
+- **Topic View "0 Concepts"**: Size fallback to concept_names.length; empty state guidance when no clusters
+- **Filter Panel Overlap**: FilterPanel repositioned top-16; Toolbar z-40 ensures clickability
+- **Chatbot Full Pipeline**: Removed CONVERSATIONAL early-return; all queries flow through 6-agent RAG. Intent patterns refined (len<3, exact match, removed "help me")
+
+Files changed: 7 total — `Graph3D.tsx`, `TopicViewMode.tsx`, `FilterPanel.tsx`, `KnowledgeGraph3D.tsx`, `intent_agent.py`, `orchestrator.py`, `graph.py`
+
 ### Version 0.14.1 (2026-02-07) — UX Enhancement + Gap-to-Chat
 
 **UX Enhancement Release (6 improvements + 1 new feature)**:
@@ -1544,6 +1583,6 @@ Files changed: `backend/graph/gap_detector.py`, `backend/routers/graph.py`, `fro
 
 **Document End**
 
-**Last Updated**: 2026-02-06
-**Next Review**: 2026-05-06
+**Last Updated**: 2026-02-13
+**Next Review**: 2026-05-13
 **Maintained By**: ScholaRAG_Graph Development Team

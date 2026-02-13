@@ -1,8 +1,8 @@
 # Test Design Document (TDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.14.1
-**Last Updated**: 2026-02-07
+**Version**: 0.17.0
+**Last Updated**: 2026-02-13
 **Status**: Active
 **Related**: [SDD](../architecture/SDD.md)
 
@@ -219,6 +219,91 @@ Graph visualization, gap analysis, temporal timeline — see `test_graph_router.
 | Successful clear refreshes interrupted jobs query | Integration |
 | deleteInterruptedJobs sends DELETE to correct URL | Unit |
 
+### 4.9 3D Hover Jitter Fix (v0.17.0)
+
+**Frontend** (`Graph3D.test.tsx` — extend existing):
+
+| Test Case | Type |
+|-----------|------|
+| nodesRef.current syncs when nodes prop changes | Unit |
+| handleNodeHover uses nodesRef instead of stale nodes closure | Unit |
+| scene.traverse casts material as MeshPhongMaterial | Unit |
+| Hover callback deps do not include `nodes` | Unit |
+| Hover does not trigger nodeThreeObject recreation | Integration |
+
+### 4.10 Intent Agent Pattern Matching (v0.17.0)
+
+**Backend** (`test_agents.py` — extend existing):
+
+| Test Case | Type |
+|-----------|------|
+| "Can you help me find papers?" classified as non-CONVERSATIONAL | Unit |
+| "gaps" (4 chars) classified as non-CONVERSATIONAL | Unit |
+| "hi" (2 chars) classified as CONVERSATIONAL | Unit |
+| "hello" exact match classified as CONVERSATIONAL | Unit |
+| "hello world" (contains "hello") NOT classified as CONVERSATIONAL (exact match only) | Unit |
+| len(q) < 3 returns CONVERSATIONAL | Unit |
+| len(q) == 3 proceeds to keyword matching | Unit |
+
+### 4.11 Orchestrator Full Pipeline (v0.17.0)
+
+**Backend** (`test_agents.py` — extend existing):
+
+| Test Case | Type |
+|-----------|------|
+| CONVERSATIONAL intent flows through full 6-agent pipeline (no early-return) | Integration |
+| Greeting query "hello" receives project-contextual response via RAG | Integration |
+| All intent types reach reasoning agent | Integration |
+
+### 4.12 NULL Concept TF-IDF Uniqueness (v0.17.0)
+
+**Backend** (`test_graph_router.py` — extend existing):
+
+| Test Case | Type |
+|-----------|------|
+| NULL concept names get UUID-prefix fallback | Unit |
+| Each NULL concept produces unique TF-IDF vector | Unit |
+| Clustering with mixed NULL/named concepts produces distinct clusters | Integration |
+
+### 4.13 Topic View InfraNodus Redesign (v0.17.0)
+
+**Frontend** (planned — `TopicViewMode.test.tsx`):
+
+| Test Case | Type |
+|-----------|------|
+| Empty clusters array renders empty state message | Component |
+| Size fallback uses concept_names.length when cluster.size is 0/null | Unit |
+| hashStringToIndex returns same index for same label | Unit |
+| hashStringToIndex returns different index for different labels | Unit |
+| adjacencyMap correctly maps bidirectional connections | Unit |
+| Hover on cluster sets hoveredNode state | Component |
+| Hover highlights only adjacent clusters (3-tier opacity) | Component |
+| Non-adjacent clusters fade to opacity 0.15 | Component |
+| Analytics bar shows correct cluster count | Component |
+| Analytics bar shows correct total concept count | Component |
+| SVG export creates valid Blob download | Integration |
+| Entry animation starts nodes at center position | Component |
+| prefers-reduced-motion skips entry animation | Component |
+| ForceAtlas2 layout: gap links have distance 300 | Unit |
+| ForceAtlas2 layout: strong connections have shorter distance | Unit |
+| Gradient edge uses source and target cluster colors | Component |
+| Top 25% weight edges show link count badge | Component |
+| Gap edges render with amber glow filter | Component |
+| Density bar width proportional to cluster density | Component |
+| Tooltip shows top 5 concepts + "+N more" | Component |
+| Connection count badge shows correct edge count | Component |
+| Legend displays edge type samples | Component |
+
+### 4.14 Filter Panel Overlap Fix (v0.17.0)
+
+**Frontend** (planned):
+
+| Test Case | Type |
+|-----------|------|
+| FilterPanel has className containing "top-16" | Component |
+| Toolbar div has className containing "z-40" | Component |
+| FilterPanel renders below toolbar in DOM order | Component |
+
 ---
 
 ## 5. Mocking Strategy
@@ -291,4 +376,5 @@ jest.mock('@/lib/supabase', () => ({
 |------|---------|---------|
 | 2026-02-07 | 1.0.0 | Initial TDD document for v0.13.1 |
 | 2026-02-07 | 1.1.0 | Add v0.14.1 test specs (DraggablePanel, GapPanel, Minimap, Gap-to-Chat, Clear All) |
+| 2026-02-13 | 1.2.0 | Add v0.17.0 test specs (Hover Jitter, Intent Agent, Orchestrator, NULL Concept, TopicView InfraNodus, FilterPanel) |
 
