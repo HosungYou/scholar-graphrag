@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-09
+> **마지막 업데이트**: 2026-02-12
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 20 | 20 | 0 | 0 |
-| 🟡 Medium | 24 | 24 | 0 | 0 |
+| 🔴 High | 21 | 21 | 0 | 0 |
+| 🟡 Medium | 26 | 26 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **49** | **49** | **0** | **0** |
+| **Total** | **52** | **52** | **0** | **0** |
 
 ---
 
@@ -27,6 +27,64 @@
 ## 🟡 Medium Priority (Short-term)
 
 *모든 Medium Priority 항목이 완료되어 Archive 섹션으로 이동되었습니다.*
+
+---
+
+## 📝 v0.16.2 Release - Comprehensive 401 Auth Fix (2026-02-12)
+
+### BUG-043-EXT: 401 Auth Error 종합 방어 (5-Layer Fix)
+- **Source**: Production Render 로그 분석 2026-02-12 (v0.16.1 이후 지속)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `frontend/components/import/ImportProgress.tsx` - 폴링 catch 블록에 401 감지
+  - `frontend/app/providers.tsx` - 글로벌 QueryClient retry 설정
+  - `frontend/lib/api.ts` - 토큰 새로고침 + authenticatedFetch() 헬퍼
+  - `frontend/app/projects/page.tsx` - 중복 retry 제거
+  - `frontend/app/projects/[id]/page.tsx` - 중복 retry 제거
+  - `frontend/app/projects/compare/page.tsx` - 중복 retry 제거
+  - `backend/auth/middleware.py` - IP별 인증 실패 rate limiting
+- **Description**: v0.16.1의 per-query 가드가 증상만 해결하고 근본 원인(무한 폴링, 만료 토큰, 글로벌 방어 부재)을 놓침
+- **Root Causes Fixed**:
+  1. ImportProgress 2초 폴링 루프가 401 무시
+  2. 글로벌 QueryClient 401 핸들링 부재
+  3. `getSession()` 캐시된/만료 토큰 반환
+  4. 6개 직접 `fetch()` 호출에 401 로직 부재
+  5. Backend 401이 rate limiter 우회
+- **Solution Applied**:
+  - [x] Layer 1: ImportProgress 폴링 중단 on 401/403
+  - [x] Layer 2: 글로벌 QueryClient retry가 401/403 스킵
+  - [x] Layer 3: `supabase.auth.refreshSession()` 으로 토큰 자동 갱신
+  - [x] Layer 4: `authenticatedFetch()` 헬퍼로 6개 메서드 통합
+  - [x] Layer 5: IP별 20회/분 인증 실패 → 429 반환
+  - [x] Cleanup: 3개 파일에서 중복 per-query retry 제거
+- **Completed**: 2026-02-12
+
+### SEC-004: Backend Auth Failure Rate Limiting
+- **Source**: BUG-043-EXT Layer 5
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `backend/auth/middleware.py` - `_check_auth_rate_limit()`, `_record_auth_failure()`
+- **Description**: AuthMiddleware에서 401 반환 전 IP별 실패 횟수 추적. 60초 내 20회 초과 시 429 반환
+- **Solution Applied**:
+  - [x] `_auth_failures` dict로 IP별 타임스탬프 추적
+  - [x] 3개 401 반환 경로(REQUIRED, OPTIONAL, OWNER)에 적용
+  - [x] 윈도우 외 오래된 항목 자동 정리
+- **Completed**: 2026-02-12
+
+### FUNC-016: API Client Token Auto-Refresh
+- **Source**: BUG-043-EXT Layer 3-4
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `frontend/lib/api.ts` - `request()` 토큰 갱신 + `authenticatedFetch()` 헬퍼
+- **Description**: 401 수신 시 `supabase.auth.refreshSession()`으로 토큰 자동 갱신 후 재시도. 6개 직접 fetch 호출도 동일 로직 적용
+- **Solution Applied**:
+  - [x] `request()` 메서드에 attempt 1 한정 토큰 갱신 로직
+  - [x] `authenticatedFetch()` private 메서드 추가
+  - [x] uploadPDF, uploadMultiplePDFs, validateZotero, importZotero, exportGapReproReport, exportGapReport 적용
+- **Completed**: 2026-02-12
 
 ---
 

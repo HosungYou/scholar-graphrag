@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-08
-> **Version**: 3.9.0 (v0.15.0 Core-Preserving Reliability Track Extension)
+> **Last Updated**: 2026-02-12
+> **Version**: 4.0.0 (v0.16.2 Comprehensive 401 Auth Defense)
 
 ## Project Overview
 
@@ -710,6 +710,30 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.16.2 Release Notes
+
+> **Version**: 0.16.2 | **Date**: 2026-02-12
+> **Full Notes**: See `RELEASE_NOTES_v0.16.2.md`
+
+### Bug Fixes
+- **BUG-043-EXT**: Comprehensive 5-layer 401 auth error defense
+  - Layer 1: ImportProgress polling stops on 401/403 (was looping every 2s)
+  - Layer 2: Global QueryClient retry defaults skip auth errors for all queries
+  - Layer 3: Token auto-refresh via `supabase.auth.refreshSession()` on 401
+  - Layer 4: `authenticatedFetch()` helper guards all 6 direct `fetch()` calls
+  - Layer 5: Backend per-IP auth failure rate limiting (20/min → 429)
+  - Cleanup: Removed redundant per-query retry overrides (now global)
+
+### Security
+- **SEC-004**: Backend AuthMiddleware rate-limits repeated auth failures per IP
+
+### Technical
+- 7 files changed, +94/-30 lines
+- No database migrations, no new env vars, no breaking changes
+- Build: zero TypeScript errors
 
 ---
 
