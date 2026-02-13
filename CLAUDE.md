@@ -167,6 +167,30 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 | Backend | Render | **Docker** | `https://scholarag-graph-docker.onrender.com` |
 | Database | Supabase | PostgreSQL+pgvector | - |
 
+### ⚠️ Git Remote Configuration (CRITICAL)
+
+> **INFRA-013 (2026-02-13)**: Both Vercel AND Render deploy from `render` remote.
+
+```
+origin  → https://github.com/HosungYou/ScholaRAG_Graph.git   # Development repo (backup)
+render  → https://github.com/HosungYou/scholar-graphrag.git   # Deployment repo (Vercel + Render)
+```
+
+**Both frontend (Vercel) and backend (Render) are connected to the `scholar-graphrag` repo.**
+
+| Remote | Purpose | Connected Services |
+|--------|---------|-------------------|
+| `origin` (ScholaRAG_Graph) | Development, code backup | None |
+| `render` (scholar-graphrag) | **Production deployment** | **Vercel + Render** |
+
+**To deploy ANY change (frontend or backend):**
+```bash
+git push render main    # Triggers Vercel (frontend) + Render (backend)
+git push origin main    # Optional: sync development repo
+```
+
+> ⚠️ **Common mistake**: Pushing only to `origin` does NOT deploy anything. Always push to `render` for deployment.
+
 ### ⚠️ Deprecated Services
 | Service | Status | Notes |
 |---------|--------|-------|
@@ -183,16 +207,18 @@ CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.
 
 ### Auto-Deploy Configuration (INFRA-006)
 
-> ⚠️ **Auto-Deploy is OFF** - Manual deployment required.
+> ⚠️ **Auto-Deploy is OFF for Render** - Manual deployment required for backend.
+> Vercel auto-deploys on push to `render` remote.
 
-**Why**: Auto-deploy causes server restarts during import operations, killing background tasks (BUG-028).
+**Why**: Render auto-deploy causes server restarts during import operations, killing background tasks (BUG-028).
 
 **Render Dashboard Path**: `scholarag-graph-docker` → Settings → Build & Deploy → Auto-Deploy → **Off**
 
 **To Deploy**:
-1. Go to Render Dashboard → `scholarag-graph-docker`
-2. Click "Manual Deploy" → "Deploy latest commit"
-3. ⚠️ Ensure no imports are running before deploying
+1. Push to `render` remote: `git push render main`
+2. Frontend (Vercel): Auto-deploys from push
+3. Backend (Render): Go to Render Dashboard → `scholarag-graph-docker` → "Manual Deploy" → "Deploy latest commit"
+4. ⚠️ Ensure no imports are running before backend deploy
 
 ---
 

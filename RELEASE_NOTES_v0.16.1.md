@@ -101,9 +101,11 @@ def _truncate_to_max_tokens(text, max_tokens=8000):
 
 ### Deployment Notes
 
-- Backend: Push to `render` remote triggers auto-deploy on Render Docker
-- Frontend: Push to `origin` triggers auto-deploy on Vercel
-- No manual intervention required
+- **Both** frontend and backend deploy from `render` remote (`scholar-graphrag` repo)
+- Backend (Render): Push to `render` remote, then manual deploy on Render Dashboard
+- Frontend (Vercel): Push to `render` remote triggers auto-deploy
+- `origin` remote (`ScholaRAG_Graph`) is development-only, does NOT trigger deployments
+- INFRA-013: Documented correct git remote → deployment mapping
 
 ---
 
