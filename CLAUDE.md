@@ -205,20 +205,17 @@ CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.
 
 **Render Dashboard Path**: `scholarag-graph-docker` → Settings → Environment Variables
 
-### Auto-Deploy Configuration (INFRA-006)
+### Auto-Deploy Configuration (INFRA-006 → Updated 2026-02-13)
 
-> ⚠️ **Auto-Deploy is OFF for Render** - Manual deployment required for backend.
-> Vercel auto-deploys on push to `render` remote.
+> ✅ **Auto-Deploy is ON for both Vercel and Render** as of 2026-02-13.
 
-**Why**: Render auto-deploy causes server restarts during import operations, killing background tasks (BUG-028).
-
-**Render Dashboard Path**: `scholarag-graph-docker` → Settings → Build & Deploy → Auto-Deploy → **Off**
+**History**: INFRA-006 (2026-01-21) disabled auto-deploy to prevent import interruption (BUG-028). Re-enabled 2026-02-13 after stabilization.
 
 **To Deploy**:
 1. Push to `render` remote: `git push render main`
 2. Frontend (Vercel): Auto-deploys from push
-3. Backend (Render): Go to Render Dashboard → `scholarag-graph-docker` → "Manual Deploy" → "Deploy latest commit"
-4. ⚠️ Ensure no imports are running before backend deploy
+3. Backend (Render): Auto-deploys from push
+4. ⚠️ Still avoid deploying during active import operations if possible
 
 ---
 
