@@ -32,7 +32,7 @@ PyMuPDF>=1.23.0,<2.0.0
 pdfplumber>=0.10.0,<1.0.0
 
 # NLP & Embeddings
-sentence-transformers>=2.3.0,<4.0.0  # Required for SPECTER2
+sentence-transformers>=2.3.0,<6.0.0  # Required for SPECTER2
 tiktoken>=0.6.0,<1.0.0
 
 # Document Processing (v0.3.0 - Semantic Chunking)
