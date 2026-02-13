@@ -17,6 +17,7 @@ Usage:
 """
 
 import logging
+import time
 from typing import Optional, Callable, Awaitable
 
 from fastapi import Request, HTTPException, status
@@ -33,17 +34,42 @@ logger = logging.getLogger(__name__)
 class AuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware that enforces authentication policies at the request level.
-    
+
     This middleware:
     1. Checks the auth policy for the requested route
     2. Extracts and validates the JWT token if present
     3. Attaches user info to request.state for downstream handlers
     4. Returns 401/403 errors for unauthorized requests
-    
+    5. Rate-limits repeated auth failures per IP (20/min)
+
     The middleware respects the REQUIRE_AUTH setting for OPTIONAL routes,
     allowing development mode without authentication.
     """
-    
+
+    # Per-IP auth failure tracking
+    _auth_failures: dict[str, list[float]] = {}
+    AUTH_FAILURE_LIMIT = 20   # max failures per window
+    AUTH_FAILURE_WINDOW = 60  # seconds
+
+    def _check_auth_rate_limit(self, request: Request) -> Optional[JSONResponse]:
+        """Return 429 response if IP has exceeded auth failure limit."""
+        ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        failures = self._auth_failures.setdefault(ip, [])
+        # Prune old entries
+        failures[:] = [t for t in failures if now - t < self.AUTH_FAILURE_WINDOW]
+        if len(failures) >= self.AUTH_FAILURE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many authentication failures. Try again later."},
+            )
+        return None
+
+    def _record_auth_failure(self, request: Request) -> None:
+        """Record an auth failure for rate limiting."""
+        ip = request.client.host if request.client else "unknown"
+        self._auth_failures.setdefault(ip, []).append(time.time())
+
     async def dispatch(
         self,
         request: Request,
@@ -90,28 +116,40 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Check authentication requirements
         if auth_level == AuthLevel.REQUIRED:
             if not user_data:
+                rate_limit = self._check_auth_rate_limit(request)
+                if rate_limit:
+                    return rate_limit
+                self._record_auth_failure(request)
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={"detail": "Authentication required"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-        
+
         elif auth_level == AuthLevel.OPTIONAL:
             # Check if auth is required by configuration
             from config import settings
-            
+
             if settings.require_auth and not user_data:
+                rate_limit = self._check_auth_rate_limit(request)
+                if rate_limit:
+                    return rate_limit
+                self._record_auth_failure(request)
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={"detail": "Authentication required"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             # Otherwise, proceed with or without auth
-        
+
         elif auth_level == AuthLevel.OWNER:
             # OWNER level requires both auth and ownership verification
             # Ownership verification is handled by route handlers
             if not user_data:
+                rate_limit = self._check_auth_rate_limit(request)
+                if rate_limit:
+                    return rate_limit
+                self._record_auth_failure(request)
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={"detail": "Authentication required for this resource"},

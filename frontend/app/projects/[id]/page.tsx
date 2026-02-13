@@ -127,13 +127,6 @@ export default function ProjectDetailPage() {
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId),
     enabled: !!user && !!projectId,  // BUG-043: Only fetch when authenticated
-    retry: (failureCount, error) => {
-      if (error instanceof Error && 'status' in error) {
-        const status = (error as any).status;
-        if (status === 401 || status === 403) return false;
-      }
-      return failureCount < 2;
-    },
   });
 
   // Auto-scroll to bottom when messages change

@@ -205,7 +205,13 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           onError?.(status.error || 'Import interrupted');
           return;
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.status === 401 || err?.status === 403) {
+          stopped = true;
+          setError('Session expired. Please refresh and log in again.');
+          onError?.('Session expired');
+          return;
+        }
         console.error('Failed to fetch import status:', err);
       } finally {
         inFlight = false;

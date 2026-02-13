@@ -24,7 +24,7 @@ import type {
   GapEvaluationReport,
   QueryMetrics,
 } from '@/types';
-import { getSession } from './supabase';
+import { getSession, supabase } from './supabase';
 
 // API URL Configuration:
 // 1. Use NEXT_PUBLIC_API_URL if explicitly set (recommended for production)
@@ -137,8 +137,28 @@ class ApiClient {
           continue;
         }
 
-        // Don't retry on auth errors - session is invalid
+        // On 401, attempt one token refresh before giving up
         if (response.status === 401) {
+          if (attempt === 1 && supabase) {
+            try {
+              const { data } = await supabase.auth.refreshSession();
+              if (data.session) {
+                const retryResponse = await fetch(url, {
+                  ...options,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${data.session.access_token}`,
+                    ...options.headers,
+                  },
+                });
+                if (retryResponse.ok) {
+                  return retryResponse.json();
+                }
+              }
+            } catch {
+              // Refresh failed — fall through to throw 401
+            }
+          }
           const error = await response.json().catch(() => ({}));
           const apiError = new Error(
             error?.detail || 'Authentication required'
@@ -199,6 +219,37 @@ class ApiClient {
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Fetch with auth headers and automatic token refresh on 401.
+   * Use this for direct fetch() calls (file uploads, exports) that bypass request().
+   */
+  private async authenticatedFetch(url: string, options: RequestInit): Promise<Response> {
+    const authHeaders = await this.getAuthHeaders();
+    const response = await fetch(url, {
+      ...options,
+      headers: { ...authHeaders, ...options.headers },
+    });
+
+    if (response.status === 401 && supabase) {
+      try {
+        const { data } = await supabase.auth.refreshSession();
+        if (data.session) {
+          return fetch(url, {
+            ...options,
+            headers: {
+              Authorization: `Bearer ${data.session.access_token}`,
+              ...options.headers,
+            },
+          });
+        }
+      } catch {
+        // Refresh failed — return original 401 response
+      }
+    }
+
+    return response;
   }
 
   // Projects
@@ -364,13 +415,9 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/pdf${params.toString() ? '?' + params.toString() : ''}`;
 
-    // Get auth headers for file upload
-    const authHeaders = await this.getAuthHeaders();
-
-    const response = await fetch(url, {
+    const response = await this.authenticatedFetch(url, {
       method: 'POST',
       body: formData,
-      headers: authHeaders,
       // Don't set Content-Type header - browser will set it with boundary for multipart
     });
 
@@ -408,13 +455,9 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/pdf/multiple${params.toString() ? '?' + params.toString() : ''}`;
 
-    // Get auth headers for file upload
-    const authHeaders = await this.getAuthHeaders();
-
-    const response = await fetch(url, {
+    const response = await this.authenticatedFetch(url, {
       method: 'POST',
       body: formData,
-      headers: authHeaders,
     });
 
     if (!response.ok) {
@@ -450,13 +493,9 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/zotero/validate`;
 
-    // Get auth headers for file upload
-    const authHeaders = await this.getAuthHeaders();
-
-    const response = await fetch(url, {
+    const response = await this.authenticatedFetch(url, {
       method: 'POST',
       body: formData,
-      headers: authHeaders,
     });
 
     if (!response.ok) {
@@ -503,13 +542,9 @@ class ApiClient {
 
     const url = `${this.baseUrl}/api/import/zotero${params.toString() ? '?' + params.toString() : ''}`;
 
-    // Get auth headers for file upload
-    const authHeaders = await this.getAuthHeaders();
-
-    const response = await fetch(url, {
+    const response = await this.authenticatedFetch(url, {
       method: 'POST',
       body: formData,
-      headers: authHeaders,
     });
 
     if (!response.ok) {
@@ -616,10 +651,9 @@ class ApiClient {
     format: 'markdown' | 'json' = 'markdown',
     limit: number = 5
   ): Promise<void> {
-    const authHeaders = await this.getAuthHeaders();
-    const response = await fetch(
+    const response = await this.authenticatedFetch(
       `${this.baseUrl}/api/graph/gaps/${projectId}/repro/${gapId}/export?format=${format}&limit=${limit}`,
-      { headers: { ...authHeaders } }
+      {}
     );
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Export failed' }));
@@ -643,10 +677,9 @@ class ApiClient {
 
   // Gap Analysis Report Export (v0.12.0)
   async exportGapReport(projectId: string): Promise<void> {
-    const authHeaders = await this.getAuthHeaders();
-    const response = await fetch(
+    const response = await this.authenticatedFetch(
       `${this.baseUrl}/api/graph/gaps/${projectId}/export?format=markdown`,
-      { headers: { ...authHeaders } }
+      {}
     );
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Export failed' }));

@@ -143,14 +143,6 @@ function InterruptedImportsSection() {
     queryFn: () => api.getImportJobs('interrupted', 10),
     refetchInterval: 30000,
     enabled: !!user,  // Only poll when authenticated
-    retry: (failureCount, error) => {
-      // Don't retry on auth errors (401/403)
-      if (error instanceof Error && 'status' in error) {
-        const status = (error as any).status;
-        if (status === 401 || status === 403) return false;
-      }
-      return failureCount < 2;
-    },
   });
 
   const resumeMutation = useMutation({
@@ -303,14 +295,6 @@ function ProjectsContent() {
     queryKey: ['projects'],
     queryFn: () => api.getProjects(),
     enabled: !!user,  // BUG-043: Only fetch when authenticated
-    retry: (failureCount, error) => {
-      // Don't retry on auth errors (401/403)
-      if (error instanceof Error && 'status' in error) {
-        const status = (error as any).status;
-        if (status === 401 || status === 403) return false;
-      }
-      return failureCount < 2;
-    },
   });
 
   if (isLoading) {
