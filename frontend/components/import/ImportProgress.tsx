@@ -88,7 +88,7 @@ function ERDetailSection({ summary }: ERDetailSectionProps) {
           <ChevronRight className="w-4 h-4 text-accent-teal transition-transform duration-200" />
         )}
         <span className="font-mono text-xs uppercase tracking-wider text-accent-teal">
-          ER 상세
+          ER Details
         </span>
       </button>
 

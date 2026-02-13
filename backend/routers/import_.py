@@ -1679,7 +1679,7 @@ async def validate_zotero_folder(
             return ZoteroValidationResponse(
                 valid=False,
                 folder_path=temp_dir,
-                errors=["RDF 파일이 업로드되지 않았습니다. Zotero에서 RDF 형식으로 내보내기 해주세요."],
+                errors=["No RDF file uploaded. Please export from Zotero in RDF format."],
             )
 
         # Run validation
@@ -1742,7 +1742,7 @@ async def import_zotero_folder(
     if not rdf_files:
         raise HTTPException(
             status_code=400,
-            detail="RDF 파일이 필요합니다. Zotero에서 RDF 형식으로 내보내기 해주세요."
+            detail="RDF file required. Please export from Zotero in RDF format."
         )
 
     # Read all file contents
@@ -1756,7 +1756,7 @@ async def import_zotero_folder(
         if total_size > MAX_TOTAL_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=f"전체 파일 크기가 {MAX_TOTAL_SIZE // (1024*1024)}MB를 초과합니다."
+                detail=f"Total file size exceeds {MAX_TOTAL_SIZE // (1024*1024)}MB limit."
             )
         uploaded_files.append((file.filename, content))
 

@@ -20,7 +20,7 @@ export default function EvaluationPage() {
         const data = await api.getEvaluationReport();
         setReport(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '평가 리포트를 불러올 수 없습니다');
+        setError(err instanceof Error ? err.message : 'Unable to load evaluation report');
       } finally {
         setLoading(false);
       }
@@ -39,10 +39,10 @@ export default function EvaluationPage() {
             {/* Page Header */}
             <div className="border-l-2 border-accent-teal pl-4">
               <h1 className="font-display text-2xl text-ink dark:text-paper">
-                갭 검출 평가 리포트
+                Gap Detection Evaluation Report
               </h1>
               <p className="font-mono text-sm text-muted mt-1">
-                Ground Truth 데이터셋 기반 검출 정확도 측정
+                Detection Accuracy Based on Ground Truth Dataset
               </p>
             </div>
 
@@ -61,7 +61,7 @@ export default function EvaluationPage() {
             {!loading && !error && !report && (
               <div className="bg-surface/5 border border-muted/20 p-8 text-center">
                 <p className="font-mono text-sm text-muted">
-                  평가 데이터셋을 구축하면 갭 검출 정확도를 측정할 수 있습니다
+                  Build an evaluation dataset to measure gap detection accuracy
                 </p>
               </div>
             )}
@@ -73,19 +73,19 @@ export default function EvaluationPage() {
                   <MetricCard
                     label="Recall"
                     value={report.recall}
-                    description={`${report.true_positives}/${report.ground_truth_count} 검출`}
+                    description={`${report.true_positives}/${report.ground_truth_count} detected`}
                     color="accent-teal"
                   />
                   <MetricCard
                     label="Precision"
                     value={report.precision}
-                    description={`${report.true_positives}/${report.detected_count} 정확`}
+                    description={`${report.true_positives}/${report.detected_count} accurate`}
                     color="accent-violet"
                   />
                   <MetricCard
                     label="F1 Score"
                     value={report.f1}
-                    description="조화 평균"
+                    description="Harmonic mean"
                     color="accent-amber"
                   />
                 </div>
@@ -95,10 +95,10 @@ export default function EvaluationPage() {
                   <div className="space-y-3">
                     <div className="border-l-2 border-accent-teal pl-4">
                       <h2 className="font-display text-lg text-ink dark:text-paper">
-                        매칭된 갭 ({report.matched_gaps.length})
+                        Matched Gaps ({report.matched_gaps.length})
                       </h2>
                       <p className="font-mono text-xs text-muted">
-                        True Positives - 정확히 검출된 연구 갭
+                        True Positives - Correctly detected research gaps
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -114,10 +114,10 @@ export default function EvaluationPage() {
                   <div className="space-y-3">
                     <div className="border-l-2 border-accent-amber pl-4">
                       <h2 className="font-display text-lg text-ink dark:text-paper">
-                        미검출 갭 ({report.unmatched_gaps.length})
+                        Undetected Gaps ({report.unmatched_gaps.length})
                       </h2>
                       <p className="font-mono text-xs text-muted">
-                        False Negatives - 놓친 연구 갭
+                        False Negatives - Missed research gaps
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -133,10 +133,10 @@ export default function EvaluationPage() {
                   <div className="space-y-3">
                     <div className="border-l-2 border-accent-red pl-4">
                       <h2 className="font-display text-lg text-ink dark:text-paper">
-                        잘못 검출된 갭 ({report.false_positives_list.length})
+                        Incorrectly Detected Gaps ({report.false_positives_list.length})
                       </h2>
                       <p className="font-mono text-xs text-muted">
-                        False Positives - Ground Truth에 없는 검출 결과
+                        False Positives - Detections not in Ground Truth
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -200,7 +200,7 @@ function GapMatchCard({ match }: { match: any }) {
           </div>
         </div>
         <div className="font-mono text-xs text-muted">
-          강도: {match.gap_strength.toFixed(2)}
+          Strength: {match.gap_strength.toFixed(2)}
         </div>
       </div>
       <div className="flex gap-4 text-xs">
@@ -253,10 +253,10 @@ function FalsePositiveCard({ fp }: { fp: any }) {
     <div className="bg-surface/5 border border-accent-red/30 p-4 space-y-2">
       <div className="flex items-start justify-between gap-4">
         <div className="font-mono text-xs text-accent-red">
-          검출 ID: {fp.id}
+          Detection ID: {fp.id}
         </div>
         <div className="font-mono text-xs text-muted">
-          강도: {fp.gap_strength.toFixed(2)}
+          Strength: {fp.gap_strength.toFixed(2)}
         </div>
       </div>
       <div className="flex gap-4 text-xs">

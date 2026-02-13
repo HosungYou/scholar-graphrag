@@ -5,7 +5,7 @@ describe('ErrorDisplay', () => {
   describe('Error Type Detection', () => {
     it('should detect network error', () => {
       render(<ErrorDisplay error="fetch failed" />);
-      expect(screen.getByText(/네트워크 오류|fetch failed/)).toBeInTheDocument();
+      expect(screen.getByText(/Network Error|fetch failed/)).toBeInTheDocument();
     });
 
     it('should detect server error', () => {
@@ -46,14 +46,14 @@ describe('ErrorDisplay', () => {
     it('should render retry button when onRetry is provided', () => {
       const onRetry = jest.fn();
       render(<ErrorDisplay onRetry={onRetry} />);
-      expect(screen.getByRole('button', { name: /다시 시도/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
     });
 
     it('should call onRetry when retry button is clicked', () => {
       const onRetry = jest.fn();
       render(<ErrorDisplay onRetry={onRetry} />);
 
-      fireEvent.click(screen.getByRole('button', { name: /다시 시도/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
       expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
@@ -74,7 +74,7 @@ describe('ErrorDisplay', () => {
       const onRetry = jest.fn();
       render(<ErrorDisplay compact onRetry={onRetry} />);
 
-      const retryButton = screen.getByRole('button', { name: /다시 시도/i });
+      const retryButton = screen.getByRole('button', { name: /Retry/i });
       expect(retryButton).toBeInTheDocument();
 
       fireEvent.click(retryButton);
@@ -85,12 +85,12 @@ describe('ErrorDisplay', () => {
   describe('Error Types', () => {
     it('should accept explicit type prop', () => {
       render(<ErrorDisplay type="server" />);
-      expect(screen.getByText('서버 오류')).toBeInTheDocument();
+      expect(screen.getByText('Server Error')).toBeInTheDocument();
     });
 
     it('should accept type "notFound"', () => {
       render(<ErrorDisplay type="notFound" />);
-      expect(screen.getByText('찾을 수 없음')).toBeInTheDocument();
+      expect(screen.getByText('Not Found')).toBeInTheDocument();
     });
   });
 });

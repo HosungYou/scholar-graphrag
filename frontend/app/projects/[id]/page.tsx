@@ -342,7 +342,7 @@ export default function ProjectDetailPage() {
       <div className="min-h-screen bg-paper dark:bg-ink flex items-center justify-center p-4">
         <ErrorDisplay
           error={projectError as Error}
-          title="프로젝트를 불러올 수 없습니다"
+          title="Unable to load project"
           onRetry={() => refetch()}
         />
       </div>
@@ -360,7 +360,7 @@ export default function ProjectDetailPage() {
               <Link
                 href="/projects"
                 className="p-2 text-muted hover:text-ink dark:hover:text-paper transition-colors"
-                aria-label="프로젝트 목록으로 돌아가기"
+                aria-label="Back to project list"
               >
                 <ChevronLeft className="w-5 h-5" />
               </Link>
@@ -440,7 +440,7 @@ export default function ProjectDetailPage() {
                       : 'text-muted'
                   }`}
                   aria-pressed={mobileView === 'chat'}
-                  aria-label="채팅 보기"
+                  aria-label="View chat"
                 >
                   <MessageSquare className="w-5 h-5" />
                 </button>
@@ -452,7 +452,7 @@ export default function ProjectDetailPage() {
                       : 'text-muted'
                   }`}
                   aria-pressed={mobileView === 'graph'}
-                  aria-label="그래프 보기"
+                  aria-label="View graph"
                 >
                   <Network className="w-5 h-5" />
                 </button>
@@ -595,13 +595,13 @@ export default function ProjectDetailPage() {
                           color: 'rgb(var(--color-accent-teal))',
                           border: '1px solid rgb(var(--color-accent-teal) / 0.3)',
                         }}
-                        title={`이 답변은 ${
+                        title={`This response was generated using ${
                           msg.searchStrategy === 'vector'
-                            ? '벡터 검색'
+                            ? 'vector search'
                             : msg.searchStrategy === 'graph_traversal'
-                            ? '그래프 탐색'
-                            : '하이브리드 검색'
-                        }으로 생성되었습니다`}
+                            ? 'graph traversal'
+                            : 'hybrid search'
+                        }`}
                       >
                         {msg.searchStrategy === 'vector' && '🔍 Vector Search'}
                         {msg.searchStrategy === 'graph_traversal' && (
@@ -676,13 +676,13 @@ export default function ProjectDetailPage() {
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="Ask about your research..."
                   className="flex-1 px-4 py-3 bg-transparent border-b-2 border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-ink dark:text-paper placeholder-muted text-sm transition-colors"
-                  aria-label="질문 입력"
+                  aria-label="Enter question"
                 />
                 <button
                   type="submit"
                   disabled={!chatInput.trim() || chatMutation.isPending}
                   className="px-4 py-3 bg-accent-teal text-ink hover:bg-accent-teal/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  aria-label="질문 보내기"
+                  aria-label="Send question"
                 >
                   <Send className="w-5 h-5" />
                 </button>

@@ -132,7 +132,7 @@ export function GraphSkeleton() {
           <Skeleton variant="circular" width={40} height={40} />
         </div>
       </div>
-      <p className="absolute bottom-8 text-gray-400 text-sm">그래프 로딩 중...</p>
+      <p className="absolute bottom-8 text-gray-400 text-sm">Loading graph...</p>
     </div>
   );
 }

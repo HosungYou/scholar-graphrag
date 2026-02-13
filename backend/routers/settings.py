@@ -26,7 +26,7 @@ router = APIRouter()
 # ============================================
 
 API_KEY_PROVIDERS = [
-    {"id": "groq", "display_name": "Groq", "env_key": "groq_api_key", "usage": "LLM (기본 provider)"},
+    {"id": "groq", "display_name": "Groq", "env_key": "groq_api_key", "usage": "LLM (default provider)"},
     {"id": "anthropic", "display_name": "Anthropic (Claude)", "env_key": "anthropic_api_key", "usage": "LLM"},
     {"id": "openai", "display_name": "OpenAI", "env_key": "openai_api_key", "usage": "LLM + Embeddings"},
     {"id": "google", "display_name": "Google (Gemini)", "env_key": "google_api_key", "usage": "LLM"},
