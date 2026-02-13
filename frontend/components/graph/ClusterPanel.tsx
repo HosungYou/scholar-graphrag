@@ -21,6 +21,7 @@ interface ClusterPanelProps {
   className?: string;
   onClusterSelect?: (clusterId: number) => void;
   onFocusCluster?: (clusterId: number) => void;
+  onRecomputeComplete?: () => Promise<void> | void;
 }
 
 // Cluster color palette (matches Graph3D)
@@ -35,6 +36,7 @@ export function ClusterPanel({
   className = '',
   onClusterSelect,
   onFocusCluster,
+  onRecomputeComplete,
 }: ClusterPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,15 +50,15 @@ export function ClusterPanel({
     try {
       const result = await api.recomputeClusters(projectId, clusterCount);
       setOptimalK(result.optimal_k);
-      // Clusters will be refetched via the graphStore
-      // For now, just trigger a refresh
-      window.location.reload(); // Simple refresh for now
+      if (onRecomputeComplete) {
+        await onRecomputeComplete();
+      }
     } catch (error) {
       console.error('Failed to recompute clusters:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, clusterCount, setOptimalK]);
+  }, [projectId, clusterCount, setOptimalK, onRecomputeComplete]);
 
   const handleClusterClick = useCallback((cluster: ConceptCluster) => {
     // Highlight all nodes in this cluster

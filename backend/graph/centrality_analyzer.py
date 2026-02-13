@@ -152,8 +152,9 @@ class CentralityAnalyzer:
                 weight='weight'
             )
         except Exception as e:
-            logger.warning(f"Failed to compute eigenvector centrality: {e}")
-            eigenvector = {n: 0.0 for n in G.nodes()}
+            logger.warning(f"Failed to compute eigenvector centrality, falling back to degree: {e}")
+            # Fallback to degree centrality instead of all zeros
+            eigenvector = degree.copy()
 
         # Compute PageRank
         try:

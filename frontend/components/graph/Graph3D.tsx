@@ -75,6 +75,18 @@ const CLUSTER_COLORS = [
   '#82E0AA', // Light Green
 ];
 
+// v0.18.0: Relationship type-based edge coloring (semantic meaning)
+const RELATIONSHIP_COLORS: Record<string, string> = {
+  'CO_OCCURS_WITH': '#4ECDC4',    // Teal
+  'RELATED_TO': '#9D4EDD',         // Purple
+  'SUPPORTS': '#10B981',           // Green
+  'CONTRADICTS': '#EF4444',        // Red
+  'BRIDGES_GAP': '#FFD700',        // Gold
+  'DISCUSSES_CONCEPT': '#45B7D1',  // Sky Blue
+  'USES_METHOD': '#F59E0B',        // Amber
+  'SAME_AS': '#9D4EDD',            // Purple
+};
+
 // Entity type colors (fallback when no cluster assigned)
 const ENTITY_TYPE_COLORS: Record<string, string> = {
   Paper: '#6366F1',
@@ -129,7 +141,7 @@ export interface Graph3DProps {
   onNodeClick?: (node: GraphEntity) => void;
   onNodeHover?: (node: GraphEntity | null) => void;
   onBackgroundClick?: () => void;
-  // UI-011: Edge click handler for Relationship Evidence
+  // UI-011: Edge click handler for Relationship Evidence (deprecated in v0.18.0 — use ConceptExplorer panel instead)
   onEdgeClick?: (edge: GraphEdge) => void;
   // Ghost Edge props (InfraNodus-style)
   showGhostEdges?: boolean;
@@ -193,6 +205,9 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // v0.11.0: Debounced hover to prevent jitter
   const hoveredNodeRef = useRef<string | null>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Use a ref for cursor updates so hover does not trigger React re-renders.
+  const graphContainerRef = useRef<HTMLDivElement>(null);
 
   // v0.17.0: Stable nodes ref for hover callback (prevents stale closure)
   const nodesRef = useRef(nodes);
@@ -298,6 +313,13 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     return map;
   }, [centralityMetrics, nodes]);
 
+  // v0.18.0: Ref to track centralityPercentileMap without triggering nodeThreeObject recreation
+  const centralityPercentileMapRef = useRef(centralityPercentileMap);
+
+  useEffect(() => {
+    centralityPercentileMapRef.current = centralityPercentileMap;
+  }, [centralityPercentileMap]);
+
   // Helper function: Create text sprite for node labels (InfraNodus-style)
   const createTextSprite = useCallback((text: string, color: string, fontSize: number = 14, opacity: number = 1.0) => {
     const canvas = document.createElement('canvas');
@@ -389,7 +411,16 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // KEY INSIGHT: ForceGraph3D resets physics when graphData reference changes
   // Solution: Keep graphData stable, apply styles through separate maps
   const baseGraphData = useMemo<ForceGraphData>(() => {
-    const forceNodes: ForceGraphNode[] = nodes.map(node => {
+    const orderedNodes = [...nodes].sort((a, b) => a.id.localeCompare(b.id));
+    const orderedEdges = [...edges].sort((a, b) => {
+      const edgeCmp = `${a.source}::${a.target}`.localeCompare(`${b.source}::${b.target}`);
+      if (edgeCmp !== 0) {
+        return edgeCmp;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    const forceNodes: ForceGraphNode[] = orderedNodes.map(node => {
       const clusterId = (node.properties as { cluster_id?: number })?.cluster_id;
       const centrality = centralityMap.get(node.id) || 0;
       const isBridge = (node.properties as { is_gap_bridge?: boolean })?.is_gap_bridge || false;
@@ -440,8 +471,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
     // Phase 11F: Filter SAME_AS edges based on showSameAsEdges flag
     const filteredEdges = showSameAsEdges
-      ? edges
-      : edges.filter(edge => edge.relationship_type !== 'SAME_AS');
+      ? orderedEdges
+      : orderedEdges.filter(edge => edge.relationship_type !== 'SAME_AS');
 
     const forceLinks: ForceGraphLink[] = filteredEdges.map(edge => ({
       id: edge.id,
@@ -551,6 +582,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     const node = nodeData as ForceGraphNode;
 
     const group = new THREE.Group();
+    // v0.18.0: Restore saved position to prevent central burst on node recreation
+    const savedPos = nodePositionsRef.current.get(node.id);
+    if (savedPos) {
+      group.position.set(savedPos.x, savedPos.y, savedPos.z);
+    }
     group.userData.nodeId = node.id;
     const nodeSize = node.val || 5;
 
@@ -694,7 +730,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     // v0.9.0: InfraNodus-style labeling based on centrality percentile
-    const nodePercentile = centralityPercentileMap.get(node.id) || 0.3;
+    const nodePercentile = centralityPercentileMapRef.current.get(node.id) || 0.3;
     const isTopPercentile = nodePercentile >= LABEL_CONFIG.alwaysVisiblePercentile;
 
     const shouldShowLabel = node.name && (
@@ -735,9 +771,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     return group;
-  }, [bloomEnabled, bloomIntensity, glowSize, createTextSprite, labelVisibility, centralityPercentileMap]);
-  // ⚠️ CRITICAL FIX: hoveredNode removed from dependencies to prevent full graph rebuild on hover
-  // Hover effect is now handled via CSS cursor only (see container div style below)
+  }, [bloomEnabled, bloomIntensity, glowSize, createTextSprite, labelVisibility]);
+  // ⚠️ CRITICAL FIX: hoveredNode state removed to avoid hover-driven re-renders.
   // v0.9.0: Replaced currentZoom/calculateLabelThreshold with centralityPercentileMap for InfraNodus-style labeling
 
   // v0.14.0: Update highlights without recreating node objects (prevents simulation reheat)
@@ -746,7 +781,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     const scene = fgRef.current.scene();
     if (!scene) return;
 
+    // v0.18.0: Determine if any node is currently selected (for 3-tier dimming)
+    const hasSelection = highlightedNodes && highlightedNodes.length > 0;
+    const selectedNodeId = hasSelection ? highlightedNodes[0] : null;
+
     scene.traverse((obj: THREE.Object3D) => {
+      // Handle meshes (node shapes)
       if (obj instanceof THREE.Mesh && obj.parent?.userData?.nodeId) {
         const nodeId = obj.parent.userData.nodeId;
         const style = nodeStyleMap.get(nodeId);
@@ -755,8 +795,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         const mat = obj.material as THREE.MeshPhongMaterial;
         if (!mat || !mat.color) return;
 
+        const isSelected = nodeId === selectedNodeId;
+        const isConnected = style.isHighlighted;
+
         let targetColor: string;
-        if (style.isHighlighted) {
+        if (isSelected) {
           targetColor = '#FFD700';
         } else if (style.isPinned) {
           targetColor = '#00E5FF';
@@ -766,10 +809,70 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
         mat.color.set(targetColor);
         mat.emissive.set(targetColor);
-        mat.emissiveIntensity = style.isHighlighted ? 0.6 : 0.2;
+
+        // v0.18.0: 3-tier opacity dimming
+        if (isSelected) {
+          mat.opacity = 1.0;
+          mat.emissiveIntensity = 0.6;
+          obj.parent.scale.setScalar(1.2);
+        } else if (isConnected) {
+          mat.opacity = 1.0;
+          mat.emissiveIntensity = 0.4;
+          obj.parent.scale.setScalar(1.0);
+        } else if (hasSelection) {
+          mat.opacity = 0.15;
+          mat.transparent = true;
+          mat.emissiveIntensity = 0.05;
+          obj.parent.scale.setScalar(1.0);
+        } else {
+          mat.opacity = 0.85;
+          mat.emissiveIntensity = 0.2;
+          obj.parent.scale.setScalar(1.0);
+        }
+      }
+
+      // v0.18.0: Handle sprites (labels) — dim non-connected labels
+      if (obj.type === 'Sprite' && obj.parent?.userData?.nodeId) {
+        const nodeId = obj.parent.userData.nodeId;
+        const style = nodeStyleMap.get(nodeId);
+        const sprite = obj as THREE.Sprite;
+        if (!sprite.material) return;
+
+        const isSelected = nodeId === selectedNodeId;
+        const isConnected = style?.isHighlighted || false;
+
+        if (isSelected || isConnected || style?.isPinned) {
+          sprite.material.opacity = 1.0;
+        } else if (hasSelection) {
+          sprite.material.opacity = 0.05;
+        }
+        // else: keep existing opacity (centrality-based)
       }
     });
-  }, [nodeStyleMap]);
+  }, [nodeStyleMap, highlightedNodes]);
+
+  // v0.18.0: Update label visibility/size when centrality data changes (without recreating nodes)
+  useEffect(() => {
+    if (!fgRef.current) return;
+    const scene = fgRef.current.scene();
+    if (!scene) return;
+
+    scene.traverse((obj: THREE.Object3D) => {
+      if (obj.type === 'Sprite' && obj.parent?.userData?.nodeId) {
+        const nodeId = obj.parent.userData.nodeId;
+        const percentile = centralityPercentileMap.get(nodeId) ?? 0.5;
+        // Update sprite opacity based on new centrality
+        const sprite = obj as THREE.Sprite;
+        if (sprite.material) {
+          const isHighlighted = nodeStyleMap.get(nodeId)?.isHighlighted || false;
+          const isPinned = nodeStyleMap.get(nodeId)?.isPinned || false;
+          const opacity = isHighlighted || isPinned ? 1.0 :
+            0.3 + (1.0 - 0.3) * percentile;
+          sprite.material.opacity = opacity;
+        }
+      }
+    });
+  }, [centralityPercentileMap, nodeStyleMap]);
 
   // Link width based on weight
   // UI-010 FIX: Uses edgeStyleMap for highlight state
@@ -833,11 +936,28 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     const sourceId = typeof link.source === 'string' ? link.source : (link.source as ForceGraphNode).id;
     const targetId = typeof link.target === 'string' ? link.target : (link.target as ForceGraphNode).id;
 
+    // v0.18.0: 3-tier edge dimming — dim edges not connected to selected node
+    if (highlightedNodes && highlightedNodes.length > 0) {
+      const sourceStyle = nodeStyleMap.get(sourceId);
+      const targetStyle = nodeStyleMap.get(targetId);
+      const sourceConnected = sourceStyle?.isHighlighted || sourceStyle?.isPinned || false;
+      const targetConnected = targetStyle?.isHighlighted || targetStyle?.isPinned || false;
+      if (!sourceConnected && !targetConnected) {
+        return 'rgba(255, 255, 255, 0.03)';
+      }
+    }
+
+    // v0.18.0: Semantic edge coloring by relationship type
+    const relColor = RELATIONSHIP_COLORS[link.relationshipType];
+    if (relColor) {
+      return hexToRgba(relColor, 0.4);
+    }
+
     // Get cluster IDs for source and target
     const sourceCluster = nodeClusterMap.get(sourceId);
     const targetCluster = nodeClusterMap.get(targetId);
 
-    // Same cluster: use cluster color with low opacity
+    // Same cluster: use cluster color with low opacity (fallback)
     if (sourceCluster !== undefined && sourceCluster === targetCluster) {
       const clusterColor = clusterColorMap.get(sourceCluster);
       if (clusterColor) {
@@ -856,7 +976,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
     // Default: white with low opacity
     return 'rgba(255, 255, 255, 0.15)';
-  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors, showSameAsEdges]);
+  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors, showSameAsEdges, highlightedNodes, nodeStyleMap]);
 
   // Custom link rendering for ghost edges and SAME_AS edges (dashed lines)
   const linkThreeObject = useCallback((linkData: unknown) => {
@@ -986,11 +1106,18 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     // Only process if actually changed
     if (newId !== hoveredNodeRef.current) {
       hoveredNodeRef.current = newId;
+      if (graphContainerRef.current) {
+        graphContainerRef.current.style.cursor = newId ? 'pointer' : 'default';
+      }
+
+      // If no consumer callback, skip scheduling work and only update cursor.
+      if (!onNodeHover) {
+        return;
+      }
 
       // Debounce the state update to prevent jitter
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = setTimeout(() => {
-        setHoveredNode(newId);
         if (onNodeHover) {
           if (node) {
             const originalNode = nodesRef.current.find(n => n.id === node.id);
@@ -1007,18 +1134,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const handleBackgroundClick = useCallback(() => {
     onBackgroundClick?.();
   }, [onBackgroundClick]);
-
-  // UI-011: Edge click handler for Relationship Evidence modal
-  const handleEdgeClick = useCallback((linkData: unknown) => {
-    const link = linkData as ForceGraphLink;
-    if (!onEdgeClick || link.isGhost) return; // Don't trigger for ghost edges
-
-    // Find the original edge
-    const originalEdge = edges.find(e => e.id === link.id);
-    if (originalEdge) {
-      onEdgeClick(originalEdge);
-    }
-  }, [edges, onEdgeClick]);
 
   // Expose ref methods
   useImperativeHandle(ref, () => ({
@@ -1259,8 +1374,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
   return (
     <div
+      ref={graphContainerRef}
       className="w-full h-full bg-[#0d1117]"
-      style={{ cursor: hoveredNode ? 'pointer' : 'default' }}
     >
       <ForceGraph3D
         ref={fgRef}
@@ -1303,8 +1418,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         onNodeRightClick={handleNodeRightClick}  // Right-click also focuses camera on node
         onNodeHover={handleNodeHover}
         onBackgroundClick={handleBackgroundClick}
-        // UI-011: Edge click handler for Relationship Evidence modal
-        onLinkClick={handleEdgeClick}
         // UI-010 COMPREHENSIVE FIX: Drag handlers with proper simulation control
         // Key insight: The node object must have fx/fy/fz set to prevent physics from moving it
         onNodeDrag={(node) => {
@@ -1361,18 +1474,29 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
           // Mark initial render as complete
           isInitialRenderRef.current = false;
           // Freeze all nodes in place to prevent micro-drift
-          if (fgRef.current) {
+        if (fgRef.current) {
             const currentNodes = fgRef.current.graphData()?.nodes;
             if (currentNodes) {
               currentNodes.forEach((n: ForceGraphNode) => {
                 if (n.x !== undefined && n.y !== undefined && n.z !== undefined) {
-                  // Pin nodes at their final positions
-                  n.fx = n.x;
-                  n.fy = n.y;
-                  n.fz = n.z;
+                  // Preserve explicit user pins, release everything else.
+                  if (pinnedNodeSet.has(n.id)) {
+                    n.fx = n.x;
+                    n.fy = n.y;
+                    n.fz = n.z;
+                  } else {
+                    n.fx = undefined;
+                    n.fy = undefined;
+                    n.fz = undefined;
+                    (n as any).vx = 0;
+                    (n as any).vy = 0;
+                    (n as any).vz = 0;
+                  }
                   nodePositionsRef.current.set(n.id, {
                     x: n.x, y: n.y, z: n.z,
-                    fx: n.x, fy: n.y, fz: n.z,
+                    fx: pinnedNodeSet.has(n.id) ? n.x : undefined,
+                    fy: pinnedNodeSet.has(n.id) ? n.y : undefined,
+                    fz: pinnedNodeSet.has(n.id) ? n.z : undefined,
                   });
                 }
               });

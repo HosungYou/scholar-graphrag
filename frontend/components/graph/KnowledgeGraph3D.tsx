@@ -9,6 +9,7 @@ import { ClusterPanel } from './ClusterPanel';
 import { GraphLegend } from './GraphLegend';
 import { StatusBar } from './StatusBar';
 import { NodeDetails } from './NodeDetails';
+import { ConceptExplorer } from './ConceptExplorer';  // v0.18.0: Relationship exploration panel
 import { InsightHUD } from './InsightHUD';
 import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
@@ -18,7 +19,7 @@ import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship 
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
-import type { GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
+import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
 import {
   Hexagon,
   Box,
@@ -112,13 +113,18 @@ export function KnowledgeGraph3D({
 
   // Fetch data on mount
   useEffect(() => {
-    fetchGraphData(projectId);
+    const viewContext =
+      viewMode === 'topic' || viewMode === 'gaps' || viewMode === 'temporal'
+        ? 'concept'
+        : 'hybrid';
+
+    fetchGraphData(projectId, { viewContext });
     fetchGapAnalysis(projectId);
     fetchCentrality(projectId);
-  }, [projectId, fetchGraphData, fetchGapAnalysis, fetchCentrality]);
+  }, [projectId, fetchGraphData, fetchGapAnalysis, fetchCentrality, viewMode]);
 
   // Get filtered data with LOD applied
-  const displayData = useMemo(() => {
+  const rawDisplayData = useMemo(() => {
     const filteredData = getFilteredData();
     if (!filteredData) return null;
 
@@ -137,6 +143,48 @@ export function KnowledgeGraph3D({
       ),
     };
   }, [getFilteredData, view3D.lodEnabled, centrality, getVisiblePercentage, filters]);
+
+  const displayDataRef = useRef<GraphData | null>(null);
+
+  const displayData = useMemo<GraphData | null>(() => {
+    if (!rawDisplayData) {
+      displayDataRef.current = null;
+      return null;
+    }
+
+    const prev = displayDataRef.current;
+    const sameNodeCount = prev?.nodes.length === rawDisplayData.nodes.length;
+    const sameEdgeCount = prev?.edges.length === rawDisplayData.edges.length;
+
+    const sameNodes = sameNodeCount && rawDisplayData.nodes.every((node, index) => (
+      prev?.nodes[index]?.id === node.id &&
+      prev?.nodes[index]?.entity_type === node.entity_type &&
+      prev?.nodes[index]?.name === node.name
+    ));
+
+    const sameEdges = sameEdgeCount && rawDisplayData.edges.every((edge, index) => (
+      prev?.edges[index]?.id === edge.id &&
+      prev?.edges[index]?.source === edge.source &&
+      prev?.edges[index]?.target === edge.target &&
+      prev?.edges[index]?.relationship_type === edge.relationship_type
+    ));
+
+    if (prev && sameNodes && sameEdges) {
+      return prev;
+    }
+
+    displayDataRef.current = rawDisplayData;
+    return rawDisplayData;
+  }, [rawDisplayData]);
+
+  const handleClusterRecomputeComplete = useCallback(async () => {
+    clearHighlights();
+    setSelectedGap(null);
+    await Promise.all([
+      fetchGraphData(projectId, { viewContext: 'concept' }),
+      fetchGapAnalysis(projectId),
+    ]);
+  }, [clearHighlights, fetchGapAnalysis, fetchGraphData, projectId, setSelectedGap]);
   // Phase 4 FIX: Added `filters` to re-render when filter state changes
   const displayNodes = displayData?.nodes ?? [];
 
@@ -211,8 +259,8 @@ export function KnowledgeGraph3D({
     clearHighlights();
   }, [clearHighlights]);
 
-  // UI-011: Handle edge click for Relationship Evidence modal
-  const handleEdgeClick = useCallback((edge: GraphEdge) => {
+  // v0.18.0: Handle relationship click from ConceptExplorer (opens EdgeContextModal)
+  const handleRelationshipClick = useCallback((edge: GraphEdge) => {
     setSelectedEdge(edge);
     setEdgeModalOpen(true);
   }, []);
@@ -250,6 +298,25 @@ export function KnowledgeGraph3D({
   const handleCloseNodeDetails = useCallback(() => {
     setSelectedNode(null);
   }, []);
+
+  // v0.18.0: Navigate to another node from ConceptExplorer
+  const handleNodeNavigate = useCallback((nodeId: string) => {
+    const node = displayNodes.find(n => n.id === nodeId);
+    if (node) {
+      handleNodeClick(node);
+      graph3DRef.current?.focusOnNode(nodeId);
+    }
+  }, [displayNodes, handleNodeClick]);
+
+  // v0.18.0: Compute centrality percentile for selected node
+  const selectedNodeCentrality = useMemo(() => {
+    if (!selectedNode || !centralityMetrics?.length) return undefined;
+    const sorted = [...centralityMetrics].sort(
+      (a, b) => a.betweenness_centrality - b.betweenness_centrality
+    );
+    const idx = sorted.findIndex(m => m.concept_id === selectedNode.id);
+    return idx >= 0 ? idx / (sorted.length - 1 || 1) : undefined;
+  }, [selectedNode, centralityMetrics]);
 
   // Handle cluster focus from ClusterPanel
   const handleFocusCluster = useCallback((clusterId: number) => {
@@ -347,7 +414,6 @@ export function KnowledgeGraph3D({
             selectedGap={selectedGap}
             onNodeClick={handleNodeClick}
             onBackgroundClick={handleBackgroundClick}
-            onEdgeClick={handleEdgeClick}  // UI-011: Relationship Evidence
             bloomEnabled={view3D.bloom.enabled}
             bloomIntensity={view3D.bloom.intensity}
             glowSize={view3D.bloom.glowSize}
@@ -393,7 +459,6 @@ export function KnowledgeGraph3D({
           onGapSelect={setSelectedGap}
           onNodeClick={handleNodeClick}
           onBackgroundClick={handleBackgroundClick}
-          onEdgeClick={handleEdgeClick}
           projectId={projectId}
           bloomEnabled={view3D.bloom.enabled}
           bloomIntensity={view3D.bloom.intensity}
@@ -663,6 +728,7 @@ export function KnowledgeGraph3D({
             <ClusterPanel
               projectId={projectId}
               onFocusCluster={handleFocusCluster}
+              onRecomputeComplete={handleClusterRecomputeComplete}
             />
           )}
         </div>
@@ -770,6 +836,19 @@ export function KnowledgeGraph3D({
             )}
           </div>
         </div>
+      )}
+
+      {/* v0.18.0: ConceptExplorer - relationship exploration panel */}
+      {selectedNode && displayData && (
+        <ConceptExplorer
+          node={selectedNode}
+          edges={displayData.edges}
+          nodes={displayData.nodes}
+          centralityPercentile={selectedNodeCentrality}
+          onRelationshipClick={handleRelationshipClick}
+          onClose={handleCloseNodeDetails}
+          onNodeNavigate={handleNodeNavigate}
+        />
       )}
 
       {/* UI-011: Edge Context Modal - Relationship Evidence */}

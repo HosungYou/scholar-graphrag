@@ -102,13 +102,13 @@ Respond with JSON:
         words = [w.strip("?.,!") for w in query.lower().split() if w.strip("?.,!") not in stop_words and len(w) > 2]
         return ExtractionResult(entities=[], keywords=words[:10], query_without_entities=query)
 
-    async def match_to_graph(self, entity_text: str, entity_type: str) -> Optional[str]:
+    async def match_to_graph(self, entity_text: str, entity_type: str, project_id: str = "") -> Optional[str]:
         """Try to match entity to graph using fuzzy search."""
         if not self.graph_store:
             return None
         try:
             results = await self.graph_store.search_entities(
-                query=entity_text, entity_types=[entity_type], limit=1
+                query=entity_text, project_id=project_id, entity_types=[entity_type], limit=1
             )
             if results:
                 return results[0].get("id")

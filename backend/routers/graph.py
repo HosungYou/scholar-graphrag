@@ -81,6 +81,19 @@ def _parse_json_field(value) -> dict:
     return {}
 
 
+def _normalize_relationship_type(raw_type) -> str:
+    """Normalize legacy or inconsistent relationship labels into canonical API values."""
+    if raw_type is None:
+        return "RELATED_TO"
+
+    normalized = str(raw_type).strip().upper()
+    if normalized == "IS_RELATED_TO":
+        return "RELATED_TO"
+    if normalized == "CO_OCCUR_WITH":
+        return "CO_OCCURS_WITH"
+    return normalized
+
+
 def _parse_embedding(value) -> list:
     """Parse a pgvector embedding that might be a string, list, or vector type."""
     if value is None:
@@ -382,6 +395,7 @@ async def get_edges(
     try:
         query_started = perf_counter()
         if relationship_type:
+            normalized_relationship_type = _normalize_relationship_type(relationship_type)
             rows = await database.fetch(
                 """
                 SELECT id, source_id, target_id, relationship_type::text, properties, weight
@@ -391,7 +405,7 @@ async def get_edges(
                 LIMIT $3 OFFSET $4
                 """,
                 str(project_id),
-                relationship_type,
+                normalized_relationship_type,
                 limit,
                 offset,
             )
@@ -421,7 +435,7 @@ async def get_edges(
                 id=str(row["id"]),
                 source=str(row["source_id"]),
                 target=str(row["target_id"]),
-                relationship_type=row["relationship_type"],
+                relationship_type=_normalize_relationship_type(row["relationship_type"]),
                 properties=_parse_json_field(row["properties"]),
                 weight=row["weight"] or 1.0,
             )
@@ -441,6 +455,7 @@ async def get_edges(
 async def get_visualization_data(
     project_id: UUID,
     entity_types: Optional[List[str]] = Query(None),
+    view_context: str = Query("hybrid"),
     max_nodes: int = Query(1000, le=5000),
     max_edges: int = Query(15000, ge=1000, le=50000),
     database=Depends(get_db),
@@ -453,6 +468,24 @@ async def get_visualization_data(
     try:
         endpoint_started = perf_counter()
         # Build entity type filter
+        if view_context not in {"hybrid", "concept", "all"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid view_context. Allowed values: hybrid, concept, all",
+            )
+
+        concept_only_types = [
+            "Concept",
+            "Method",
+            "Finding",
+            "Problem",
+            "Dataset",
+            "Metric",
+            "Innovation",
+            "Limitation",
+        ]
+
+        scoped_filter = ""
         type_filter = ""
         params = [str(project_id), max_nodes]
 
@@ -460,12 +493,21 @@ async def get_visualization_data(
             type_placeholders = ", ".join(f"${i+3}" for i in range(len(entity_types)))
             type_filter = f"AND entity_type::text IN ({type_placeholders})"
             params.extend(entity_types)
+        elif view_context == "concept":
+            type_placeholders = ", ".join(f"${i+3}" for i in range(len(concept_only_types)))
+            type_filter = f"AND entity_type::text IN ({type_placeholders})"
+            params.extend(concept_only_types)
+        elif view_context == "all":
+            type_filter = ""
+
+        if view_context == "concept":
+            scoped_filter = "AND is_visualized = TRUE"
 
         # Get nodes
         nodes_query = f"""
             SELECT id, entity_type::text, name, properties
             FROM entities
-            WHERE project_id = $1 {type_filter}
+            WHERE project_id = $1 {type_filter} {scoped_filter}
             ORDER BY
                 CASE entity_type::text
                     WHEN 'Paper' THEN 5
@@ -530,7 +572,7 @@ async def get_visualization_data(
                     id=str(row["id"]),
                     source=str(row["source_id"]),
                     target=str(row["target_id"]),
-                    relationship_type=row["relationship_type"],
+                    relationship_type=_normalize_relationship_type(row["relationship_type"]),
                     properties=_parse_json_field(row["properties"]),
                     weight=row["weight"] or 1.0,
                 )
@@ -690,7 +732,7 @@ async def get_subgraph(
                 id=str(row["id"]),
                 source=str(row["source_id"]),
                 target=str(row["target_id"]),
-                relationship_type=row["relationship_type"],
+                relationship_type=_normalize_relationship_type(row["relationship_type"]),
                 properties=_parse_json_field(row["properties"]),
                 weight=row["weight"] or 1.0,
             )
@@ -3136,8 +3178,29 @@ async def recompute_clusters(
         Updated cluster assignments and optimal K value
     """
     try:
+        await verify_project_access(database, project_id, current_user, "modify")
+
         from graph.centrality_analyzer import centrality_analyzer
         import numpy as np
+
+        # Reset stale cluster assignments before recompute.
+        await database.execute(
+            """
+            UPDATE entities
+            SET
+              cluster_id = NULL,
+              properties = COALESCE(properties, '{}'::jsonb) - 'cluster_id'
+            WHERE project_id = $1
+            AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+            """,
+            str(project_id),
+        )
+
+        # Clear prior derived cluster materialization to keep analysis outputs aligned.
+        await database.execute(
+            "DELETE FROM concept_clusters WHERE project_id = $1",
+            str(project_id),
+        )
 
         # Get nodes with embeddings
         node_rows = await database.fetch(
@@ -3195,10 +3258,66 @@ async def recompute_clusters(
                 "concept_names": c.node_names,
                 "label": c.label or f"Cluster {c.cluster_id + 1}",
                 "size": c.size,
+                "density": 0.0,
                 "color": colors[c.cluster_id % len(colors)],
             }
             for c in clusters
         ]
+
+        # Pull concept relationships once for lightweight intra-cluster density estimation.
+        relationship_rows = await database.fetch(
+            """
+            SELECT source_id::text AS source_id, target_id::text AS target_id
+            FROM relationships
+            WHERE project_id = $1
+            """,
+            str(project_id),
+        )
+        edge_pairs = [
+            (str(row["source_id"]), str(row["target_id"]) )
+            for row in relationship_rows
+        ]
+
+        concept_name_map = {n["id"]: n["name"] for n in nodes}
+
+        # Update entities + materialized concept clusters in a single pass
+        cluster_density_by_id: dict[int, float] = {}
+        for cluster in clusters:
+            concept_id_set = set(cluster.node_ids)
+
+            if len(concept_id_set) > 1:
+                possible_edges = (len(concept_id_set) * (len(concept_id_set) - 1)) / 2
+                internal_edges = sum(
+                    1 for source_id, target_id in edge_pairs
+                    if source_id in concept_id_set and target_id in concept_id_set
+                )
+                cluster_density_by_id[cluster.cluster_id] = float(internal_edges / possible_edges)
+            else:
+                cluster_density_by_id[cluster.cluster_id] = 0.0
+
+            # Persist cluster-level materialization for gap analysis and topic view.
+            await database.execute(
+                """
+                INSERT INTO concept_clusters (
+                    project_id,
+                    cluster_id,
+                    concepts,
+                    concept_names,
+                    size,
+                    density,
+                    label,
+                    color
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                str(project_id),
+                cluster.cluster_id,
+                [str(cid) for cid in cluster.node_ids],
+                [concept_name_map.get(cid, "") for cid in cluster.node_ids],
+                len(cluster.node_ids),
+                cluster_density_by_id[cluster.cluster_id],
+                cluster.label or f"Cluster {cluster.cluster_id + 1}",
+                colors[cluster.cluster_id % len(colors)],
+            )
 
         # Update entities with new cluster assignments
         for cluster in clusters:
@@ -3206,12 +3325,20 @@ async def recompute_clusters(
                 await database.execute(
                     """
                     UPDATE entities
-                    SET properties = properties || $1::jsonb
-                    WHERE id = $2
+                    SET
+                        cluster_id = $2,
+                        properties = COALESCE(properties, '{}'::jsonb) || $3::jsonb
+                    WHERE id = $1
                     """,
-                    json.dumps({"cluster_id": cluster.cluster_id}),
                     node_id,
+                    cluster.cluster_id,
+                    json.dumps({"cluster_id": cluster.cluster_id}),
                 )
+
+        # Attach computed density to response payload.
+        for cluster_entry in formatted_clusters:
+            cluster_id = cluster_entry["cluster_id"]
+            cluster_entry["density"] = cluster_density_by_id.get(cluster_id, 0.0)
 
         await metrics_cache.invalidate_project(str(project_id))
 
@@ -3399,7 +3526,7 @@ async def get_temporal_graph(
                         id=str(row["id"]),
                         source=str(row["source_id"]),
                         target=str(row["target_id"]),
-                        relationship_type=row["relationship_type"],
+                        relationship_type=_normalize_relationship_type(row["relationship_type"]),
                         properties=props,
                         weight=row["weight"] or 1.0,
                     )
@@ -3420,8 +3547,20 @@ async def get_temporal_graph(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get temporal graph: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get temporal graph data")
+        logger.warning(f"Temporal query failed (columns may not exist): {e}")
+        # Return empty temporal response instead of 500
+        return TemporalGraphResponse(
+            nodes=[],
+            edges=[],
+            year_range={"min": None, "max": None},
+            temporal_stats=TemporalStatsResponse(
+                min_year=None,
+                max_year=None,
+                year_count=0,
+                entities_with_year=0,
+                total_entities=0,
+            ),
+        )
 
 
 @router.post("/temporal/{project_id}/migrate")

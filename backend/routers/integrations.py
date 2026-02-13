@@ -163,7 +163,7 @@ async def get_effective_api_key(
     """User preference key > server env key > fallback."""
     if current_user:
         try:
-            row = await db.fetch_one(
+            row = await db.fetchrow(
                 "SELECT preferences FROM user_profiles WHERE id = $1",
                 current_user.id,
             )

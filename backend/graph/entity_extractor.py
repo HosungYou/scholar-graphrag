@@ -899,6 +899,15 @@ class EntityExtractor:
                         )
                     ]
 
+            # Q2: Reclassify overly long Concept names as Findings
+            if "concepts" in result and "findings" in result:
+                long_concepts = [e for e in result["concepts"] if len(e.name) > 60]
+                result["concepts"] = [e for e in result["concepts"] if len(e.name) <= 60]
+                for entity in long_concepts:
+                    entity.entity_type = EntityType.FINDING
+                    result["findings"].append(entity)
+                    logger.info(f"Reclassified long concept as Finding: {entity.name[:50]}...")
+
         except Exception as e:
             logger.error(f"Error parsing JSON data: {e}")
 

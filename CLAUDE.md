@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-13
-> **Version**: 4.0.0 (v0.16.3 SUPABASE_ANON_KEY Fix)
+> **Version**: 4.1.0 (v0.18.0 Production Stabilization + 3D Root Fix + Researcher UX)
 
 ## Project Overview
 
@@ -710,6 +710,42 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.18.0 Release Notes
+
+> **Version**: 0.18.0 | **Date**: 2026-02-13
+> **Full Notes**: See `RELEASE_NOTES_v0.18.0.md`
+
+### Production Backend Hotfixes
+- **P1**: `fetch_one()` → `fetchrow()` in integrations.py (WARNING eliminated)
+- **P2**: Missing `project_id` in `search_entities()` call (concept_extraction_agent.py)
+- **P3**: Temporal endpoint `first_seen_year` column error → try-except with empty response fallback
+- **P5**: Conversation FK violation → defensive `user_id` check before INSERT
+
+### 3D "Central Burst" Root Fix
+- **F1**: Removed `centralityPercentileMap` from `nodeThreeObject` deps → ref pattern + scene.traverse
+- **F2**: Position preservation on node recreation from `nodePositionsRef`
+- **F3**: Removed `onLinkClick` handler (replaced by ConceptExplorer)
+- **Q3**: Eigenvector centrality fallback: `degree.copy()` instead of all-zeros
+
+### Researcher-Centric UX
+- **U1**: New `ConceptExplorer.tsx` — relationship exploration panel grouped by type with evidence navigation
+- **U2**: KnowledgeGraph3D integration — ConceptExplorer replaces direct edge clicking
+- **U3**: 3-tier neighbor highlight (selected=gold 1.2x, connected=1.0, non-connected=0.15)
+- **U4**: Relationship type edge colors (CO_OCCURS=teal, RELATED_TO=purple, SUPPORTS=green, CONTRADICTS=red)
+
+### Backend Quality
+- **Q1**: Cluster label async/sync mismatch documented (LLM labeling needs async refactor)
+- **Q2**: Concept name >60 chars reclassified as Finding
+- Relationship type normalization in entity_dao.py
+
+### Technical
+- 15 files changed, +486/-74 lines (1 new component)
+- No database migrations, no new env vars, no new endpoints
+- Build: zero TypeScript errors, zero Python compile errors
+- Breaking: Edge click removed (replaced by ConceptExplorer panel)
 
 ---
 

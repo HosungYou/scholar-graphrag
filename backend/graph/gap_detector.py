@@ -217,8 +217,11 @@ class GapDetector:
             cluster.keywords = cluster.keywords[:5]
 
             # Generate cluster name from top keywords
+            # NOTE: _generate_cluster_label() is async but cluster_concepts() is sync,
+            # so LLM labeling requires making this method async. Using keyword join for now.
             if cluster.keywords:
-                cluster.name = " / ".join(cluster.keywords[:3])
+                filtered = [k for k in cluster.keywords[:3] if k and k.strip()]
+                cluster.name = " / ".join(filtered) if filtered else f"Cluster {cluster_id + 1}"
             else:
                 cluster.name = f"Cluster {cluster_id + 1}"
 

@@ -49,7 +49,12 @@ interface GraphStore {
   showSameAsEdges: boolean;
 
   // Actions
-  fetchGraphData: (projectId: string) => Promise<void>;
+  fetchGraphData: (
+    projectId: string,
+    options?: {
+      viewContext?: 'hybrid' | 'concept' | 'all';
+    }
+  ) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
   setHighlightedNodes: (nodeIds: string[]) => void;
   setHighlightedEdges: (edgeIds: string[]) => void;
@@ -142,10 +147,10 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   showSameAsEdges: true,
 
   // Actions
-  fetchGraphData: async (projectId: string) => {
+  fetchGraphData: async (projectId: string, options?: { viewContext?: 'hybrid' | 'concept' | 'all' }) => {
     set({ isLoading: true, error: null });
     try {
-      const data = await api.getVisualizationData(projectId);
+      const data = await api.getVisualizationData(projectId, options);
       set({ graphData: data, isLoading: false });
     } catch (error) {
       set({

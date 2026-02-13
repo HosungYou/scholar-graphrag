@@ -129,6 +129,16 @@ async def _db_create_conversation(
         return
 
     try:
+        # Defensive: check if user_id exists in user_profiles
+        if user_id:
+            user_exists = await db.fetchrow(
+                "SELECT id FROM user_profiles WHERE id = $1",
+                user_id,
+            )
+            if not user_exists:
+                logger.warning(f"user_id {user_id} not in user_profiles, using NULL")
+                user_id = None
+
         await db.execute(
             """
             INSERT INTO conversations (id, project_id, user_id, created_at, updated_at)

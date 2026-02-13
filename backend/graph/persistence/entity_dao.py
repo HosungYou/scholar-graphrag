@@ -14,6 +14,19 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+def _normalize_relationship_type(raw_type) -> str:
+    """Normalize legacy or inconsistent relationship labels into canonical DB values."""
+    if raw_type is None:
+        return "RELATED_TO"
+
+    normalized = str(raw_type).strip().upper()
+    if normalized == "IS_RELATED_TO":
+        return "RELATED_TO"
+    if normalized == "CO_OCCUR_WITH":
+        return "CO_OCCURS_WITH"
+    return normalized
+
+
 @dataclass
 class Node:
     """Graph node representing an entity."""
@@ -183,12 +196,13 @@ class EntityDAO:
         Returns the relationship ID.
         """
         rel_id = str(uuid4())
+        normalized_relationship_type = _normalize_relationship_type(relationship_type)
         edge = Edge(
             id=rel_id,
             project_id=project_id,
             source_id=source_id,
             target_id=target_id,
-            relationship_type=relationship_type,
+            relationship_type=normalized_relationship_type,
             properties=properties or {},
             weight=weight,
         )
@@ -214,10 +228,19 @@ class EntityDAO:
             )
 
         # In-memory fallback
+        normalized_filter = (
+            _normalize_relationship_type(relationship_type)
+            if relationship_type is not None
+            else None
+        )
         edges = [
             e for e in self._edges.values()
             if e.project_id == project_id
-            and (relationship_type is None or e.relationship_type == relationship_type)
+            and (
+                normalized_filter is None
+                or _normalize_relationship_type(e.relationship_type)
+                == normalized_filter
+            )
         ]
         return [
             {
@@ -423,14 +446,18 @@ class EntityDAO:
     ) -> list[dict]:
         """Get relationships from PostgreSQL."""
         if relationship_type:
+            normalized_relationship_type = _normalize_relationship_type(relationship_type)
             query = """
                 SELECT id, source_id, target_id, relationship_type, properties, weight
                 FROM relationships
-                WHERE project_id = $1 AND relationship_type = $2::relationship_type
+                WHERE project_id = $1
+                AND relationship_type::text = $2
                 ORDER BY created_at DESC
                 LIMIT $3 OFFSET $4
             """
-            rows = await self.db.fetch(query, project_id, relationship_type, limit, offset)
+            rows = await self.db.fetch(
+                query, project_id, normalized_relationship_type, limit, offset
+            )
         else:
             query = """
                 SELECT id, source_id, target_id, relationship_type, properties, weight
