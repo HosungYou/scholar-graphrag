@@ -1617,7 +1617,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
               <div style="color: #888; margin-top: 4px;">${node.entityType || 'Entity'}</div>
               ${node.centrality ? `<div style="color: #4ECDC4; margin-top: 2px;">Centrality: ${(node.centrality * 100).toFixed(1)}%</div>` : ''}
               ${node.isBridge ? '<div style="color: #FFD700; margin-top: 2px;">Bridge Node</div>' : ''}
-              ${crossPaperCount > 0 ? `<div style="color: #9D4EDD; margin-top: 2px;">🔗 이 개념은 ${crossPaperCount}편의 논문에서 공통으로 언급됩니다</div>` : ''}
+              ${crossPaperCount > 0 ? `<div style="color: #9D4EDD; margin-top: 2px;">🔗 This concept is mentioned in ${crossPaperCount} papers</div>` : ''}
               ${isTableSourced ? `<div style="color: #F59E0B; margin-top: 2px;">📊 From Table${tablePage ? ` (p.${tablePage})` : ''}${tableIndex !== undefined ? ` #${tableIndex + 1}` : ''}</div>` : ''}
             </div>
           `;

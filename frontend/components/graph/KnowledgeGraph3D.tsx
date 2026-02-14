@@ -558,7 +558,7 @@ export function KnowledgeGraph3D({
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
             title={`Cross-Paper Links (SAME_AS): ${showSameAsEdges ? 'Visible' : 'Hidden'}`}
-            aria-label="교차 논문 연결 표시/숨김"
+            aria-label="Toggle cross-paper links"
             aria-pressed={showSameAsEdges}
           >
             <Link2 className="w-4 h-4" />
@@ -721,7 +721,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-accent-orange text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="시간축 시각화 (Temporal)"
+              title="Temporal Visualization"
             >
               <Calendar className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Temporal</span>

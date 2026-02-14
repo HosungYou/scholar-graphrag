@@ -17,23 +17,23 @@ interface ErrorDisplayProps {
 const errorConfig: Record<ErrorType, { icon: typeof AlertCircle; defaultTitle: string; defaultMessage: string }> = {
   network: {
     icon: WifiOff,
-    defaultTitle: '네트워크 오류',
-    defaultMessage: '서버에 연결할 수 없습니다. 인터넷 연결을 확인하고 다시 시도해주세요.',
+    defaultTitle: 'Network Error',
+    defaultMessage: 'Unable to connect to the server. Please check your internet connection and try again.',
   },
   server: {
     icon: ServerCrash,
-    defaultTitle: '서버 오류',
-    defaultMessage: '서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
+    defaultTitle: 'Server Error',
+    defaultMessage: 'A server error occurred. Please try again later.',
   },
   notFound: {
     icon: FileQuestion,
-    defaultTitle: '찾을 수 없음',
-    defaultMessage: '요청하신 리소스를 찾을 수 없습니다.',
+    defaultTitle: 'Not Found',
+    defaultMessage: 'The requested resource could not be found.',
   },
   generic: {
     icon: AlertCircle,
-    defaultTitle: '오류가 발생했습니다',
-    defaultMessage: '예기치 않은 오류가 발생했습니다. 다시 시도해주세요.',
+    defaultTitle: 'An Error Occurred',
+    defaultMessage: 'An unexpected error occurred. Please try again.',
   },
 };
 
@@ -87,7 +87,7 @@ export function ErrorDisplay({
           <button
             onClick={handleRetry}
             className="flex-shrink-0 p-1.5 text-red-600 hover:bg-red-100 rounded transition-colors"
-            aria-label="다시 시도"
+            aria-label="Retry"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -109,7 +109,7 @@ export function ErrorDisplay({
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
-          다시 시도
+          Retry
         </button>
       )}
     </div>

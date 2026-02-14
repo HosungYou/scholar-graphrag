@@ -940,7 +940,7 @@ Return ONLY the research questions, one per line, without numbering or bullets.
         return "\n".join(lines)
 
     async def _generate_cluster_label(self, keywords: list[str]) -> str:
-        """LLM으로 클러스터 키워드를 3-5 단어 토픽 레이블로 요약."""
+        """Summarize cluster keywords into a 3-5 word topic label using LLM."""
         if not self.llm or not keywords:
             filtered = [k for k in keywords[:3] if k and k.strip()]
             return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"

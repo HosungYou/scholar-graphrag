@@ -1671,7 +1671,7 @@ class ZoteroRDFImporter:
             if not rdf_file:
                 return {
                     "success": False,
-                    "errors": ["RDF 파일이 업로드되지 않았습니다."],
+                    "errors": ["No RDF file uploaded."],
                 }
 
             # Import from temp directory

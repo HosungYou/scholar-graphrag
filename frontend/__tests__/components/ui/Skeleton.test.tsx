@@ -124,7 +124,7 @@ describe('Skeleton', () => {
     it('should render graph loading skeleton', () => {
       render(<GraphSkeleton />);
 
-      expect(screen.getByText('그래프 로딩 중...')).toBeInTheDocument();
+      expect(screen.getByText('Loading graph...')).toBeInTheDocument();
     });
   });
 });

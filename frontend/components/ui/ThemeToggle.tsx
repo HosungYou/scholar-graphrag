@@ -32,7 +32,7 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
       <button
         onClick={toggleTheme}
         className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
-        aria-label={isDark ? '라이트 모드로 전환' : '다크 모드로 전환'}
+        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       >
         {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
       </button>
@@ -40,9 +40,9 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
   }
 
   const options = [
-    { value: 'light' as const, label: '라이트', icon: Sun },
-    { value: 'dark' as const, label: '다크', icon: Moon },
-    { value: 'system' as const, label: '시스템', icon: Monitor },
+    { value: 'light' as const, label: 'Light', icon: Sun },
+    { value: 'dark' as const, label: 'Dark', icon: Moon },
+    { value: 'system' as const, label: 'System', icon: Monitor },
   ];
 
   return (
@@ -52,11 +52,11 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
         className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
         aria-expanded={isOpen}
         aria-haspopup="listbox"
-        aria-label="테마 선택"
+        aria-label="Select theme"
       >
         {isDark ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
         <span className="text-sm hidden sm:inline">
-          {theme === 'system' ? '시스템' : isDark ? '다크' : '라이트'}
+          {theme === 'system' ? 'System' : isDark ? 'Dark' : 'Light'}
         </span>
       </button>
 
