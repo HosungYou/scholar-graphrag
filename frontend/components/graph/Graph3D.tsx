@@ -999,7 +999,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       const sourceConnected = sourceStyle?.isHighlighted || sourceStyle?.isPinned || false;
       const targetConnected = targetStyle?.isHighlighted || targetStyle?.isPinned || false;
       if (!sourceConnected && !targetConnected) {
-        return 'rgba(255, 255, 255, 0.03)';
+        return 'rgba(255, 255, 255, 0.15)';
       }
     }
 
@@ -1007,11 +1007,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     const weight = link.weight || 0.5;
     let weightOpacity: number;
     if (weight > 0.7) {
-      weightOpacity = 0.6;   // Strong: full visibility
+      weightOpacity = 0.7;   // Strong: full visibility
     } else if (weight >= 0.3) {
-      weightOpacity = 0.35;  // Medium: moderate visibility
+      weightOpacity = 0.55;  // Medium: clear visibility
     } else {
-      weightOpacity = 0.15;  // Weak: subtle
+      weightOpacity = 0.35;  // Weak: still visible
     }
 
     // v0.18.0: Semantic edge coloring by relationship type
@@ -1042,7 +1042,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       const targetColor = clusterColorMap.get(targetCluster);
       if (sourceColor && targetColor) {
         // blendColors already uses 0.35 opacity; scale by weight tier
-        const blendAlpha = weight > 0.7 ? 0.5 : weight >= 0.3 ? 0.3 : 0.12;
+        const blendAlpha = weight > 0.7 ? 0.6 : weight >= 0.3 ? 0.4 : 0.25;
         const r1 = parseInt(sourceColor.slice(1, 3), 16);
         const g1 = parseInt(sourceColor.slice(3, 5), 16);
         const b1 = parseInt(sourceColor.slice(5, 7), 16);
@@ -1057,7 +1057,7 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     }
 
     // Default: white with weight-scaled opacity
-    return `rgba(255, 255, 255, ${Math.max(0.08, weightOpacity * 0.5)})`;
+    return `rgba(255, 255, 255, ${Math.max(0.2, weightOpacity * 0.6)})`;
   }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, showSameAsEdges, highlightedNodes, nodeStyleMap]);
 
   // Custom link rendering for ghost edges, SAME_AS edges, and BRIDGES_GAP edges (dashed lines)

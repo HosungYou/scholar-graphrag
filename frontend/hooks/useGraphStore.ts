@@ -142,7 +142,7 @@ export const useGraphStore = create<GraphStore>()(
   potentialEdges: [],
 
   // View Mode State
-  viewMode: '3d' as ViewMode,
+  viewMode: 'topic' as ViewMode,
 
   // Pinned Nodes State
   pinnedNodes: [],

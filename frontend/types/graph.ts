@@ -69,7 +69,14 @@ export type RelationshipType =
   | 'DEVELOPED_IN'
   | 'LICENSE_OF'
   | 'ASSIGNED_TO'
-  | 'CLASSIFIED_AS';
+  | 'CLASSIFIED_AS'
+  // Phase 0-3: Lexical graph relationship types
+  | 'USED_IN'
+  | 'EVALUATED_ON'
+  | 'REPORTS'
+  | 'REPORTS_FINDING'
+  | 'ADDRESSES_PROBLEM'
+  | 'PROPOSES_INNOVATION';
 
 // Property types
 export interface PaperProperties {

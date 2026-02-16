@@ -27,6 +27,10 @@ interface FilterPanelProps {
   nodeCountsByType?: Record<EntityType, number>;
   // Data source information
   dataSource?: 'zotero' | 'pdf' | 'scholarag' | null;
+  // Relationship type filtering
+  relationshipTypes?: string[];
+  selectedRelationshipTypes?: string[];
+  onRelationshipTypeChange?: (types: string[]) => void;
 }
 
 // VS Design Diverge palette - matching PolygonNode colors exactly
@@ -132,6 +136,9 @@ export function FilterPanel({
   onReset,
   nodeCountsByType,
   dataSource,
+  relationshipTypes,
+  selectedRelationshipTypes,
+  onRelationshipTypeChange,
 }: FilterPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -282,6 +289,61 @@ export function FilterPanel({
               })}
             </div>
           </div>
+
+          {/* Relationship Types */}
+          {relationshipTypes && relationshipTypes.length > 0 && onRelationshipTypeChange && selectedRelationshipTypes && (
+            <div className="pt-3 border-t border-ink/10 dark:border-paper/10">
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Edge Types
+                </span>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => onRelationshipTypeChange([...relationshipTypes])}
+                    className="font-mono text-xs text-accent-teal hover:text-accent-teal/80 transition-colors"
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => onRelationshipTypeChange([])}
+                    className="font-mono text-xs text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                  >
+                    None
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {relationshipTypes.map((relType) => {
+                  const isSelected = selectedRelationshipTypes.includes(relType);
+                  return (
+                    <button
+                      key={relType}
+                      onClick={() => {
+                        if (isSelected) {
+                          onRelationshipTypeChange(selectedRelationshipTypes.filter(t => t !== relType));
+                        } else {
+                          onRelationshipTypeChange([...selectedRelationshipTypes, relType]);
+                        }
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-1.5 text-xs transition-all relative ${
+                        isSelected ? 'bg-surface/5' : 'hover:bg-surface/5'
+                      }`}
+                    >
+                      {isSelected && (
+                        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-teal" />
+                      )}
+                      <span className={isSelected ? 'text-ink dark:text-paper font-mono' : 'text-muted font-mono'}>
+                        {relType.replace(/_/g, ' ')}
+                      </span>
+                      {isSelected && (
+                        <X className="w-3 h-3 text-muted hover:text-accent-red transition-colors" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Year Range */}
           {onYearRangeChange && yearRange && (

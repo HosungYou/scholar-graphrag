@@ -177,6 +177,44 @@ class GapDetector:
             )
             concepts_with_embeddings = valid_concepts
 
+        # Try Leiden community detection first (graph topology-based)
+        try:
+            from graph.community_detector import CommunityDetector
+            detector = CommunityDetector(db_connection=self.db)
+            if detector._has_leiden:
+                project_id = getattr(self, 'project_id', None) or (concepts_with_embeddings[0].get("project_id") if concepts_with_embeddings else None)
+                if project_id:
+                    communities = await detector.detect_communities(
+                        project_id=str(project_id),
+                        min_community_size=2,
+                    )
+                    if communities and len(communities) >= 2:
+                        logger.info(f"Leiden detected {len(communities)} communities")
+                        # Convert Community objects to ConceptCluster format
+                        clusters_result = []
+                        concept_id_set = {c["id"] for c in concepts_with_embeddings}
+                        for comm in communities:
+                            # Filter to only include concepts in our working set
+                            cluster_ids = [eid for eid in comm.entity_ids if eid in concept_id_set]
+                            if not cluster_ids:
+                                continue
+                            cluster_keywords = [
+                                c["name"] for c in concepts_with_embeddings
+                                if c["id"] in set(cluster_ids)
+                            ]
+                            label = await self._generate_cluster_label(cluster_keywords)
+                            clusters_result.append(ConceptCluster(
+                                id=comm.community_id,
+                                label=label,
+                                color=CLUSTER_COLORS[comm.community_id % len(CLUSTER_COLORS)],
+                                concept_ids=cluster_ids,
+                                keywords=cluster_keywords[:10],
+                            ))
+                        if clusters_result:
+                            return clusters_result
+        except Exception as e:
+            logger.warning(f"Leiden clustering failed, falling back to K-means: {e}")
+
         # Stack embeddings into matrix
         embeddings = np.array([c["embedding"] for c in concepts_with_embeddings], dtype=np.float32)
 
@@ -943,26 +981,29 @@ Return ONLY the research questions, one per line, without numbering or bullets.
 
     async def _generate_cluster_label(self, keywords: list[str]) -> str:
         """Summarize cluster keywords into a 3-5 word topic label using LLM."""
-        if not self.llm or not keywords:
-            filtered = [k for k in keywords[:3] if k and k.strip()]
-            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
+        filtered = [k for k in keywords[:5] if k and k.strip()]
+        if not self.llm or not filtered:
+            return " / ".join(filtered[:3]) if filtered else "Unnamed Cluster"
 
-        try:
-            prompt = (
-                "Summarize these academic concepts into a 3-5 word topic label:\n"
-                f"{', '.join(keywords[:10])}\n\n"
-                "Respond with ONLY the label, nothing else."
-            )
-            label = await asyncio.wait_for(
-                self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
-                timeout=5.0
-            )
-            result = label.strip().strip('"').strip("'")
-            if len(result) < 3 or len(result) > 60:
-                filtered = [k for k in keywords[:3] if k and k.strip()]
-                return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
-            return result
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.warning(f"LLM label generation failed: {e}")
-            filtered = [k for k in keywords[:3] if k and k.strip()]
-            return " / ".join(filtered) if filtered else f"Cluster {len(keywords)} concepts"
+        for attempt in range(2):  # 1 retry
+            try:
+                prompt = (
+                    "Summarize these academic concepts into a concise 3-5 word topic label:\n"
+                    f"{', '.join(filtered[:10])}\n\n"
+                    "Respond with ONLY the label, nothing else."
+                )
+                label = await asyncio.wait_for(
+                    self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
+                    timeout=15.0
+                )
+                result = label.strip().strip('"').strip("'")
+                if 3 <= len(result) <= 60:
+                    return result
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"LLM label attempt {attempt+1} failed: {e}, retrying...")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"LLM label generation failed after 2 attempts: {e}")
+
+        return " / ".join(filtered[:3]) if filtered else "Unnamed Cluster"

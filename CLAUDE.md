@@ -78,7 +78,7 @@ npm run dev
 ```
 
 ### Database Migrations
-Run in order: `001_init.sql` → `002_pgvector.sql` → `003_graph_tables.sql` → `004_concept_centric.sql` → `005_zotero_hybrid_import.sql` → `006_teams.sql`
+Run in order: `001_init.sql` → `002_pgvector.sql` → `003_graph_tables.sql` → `004_concept_centric.sql` → `005_zotero_hybrid_import.sql` → `006_teams.sql` → ... → `021_cross_paper_links.sql` → `022_entity_deduplication.sql` → `023_lexical_graph_schema.sql` → `024_community_trace.sql` → `025_p0_comprehensive_fix.sql`
 
 ---
 

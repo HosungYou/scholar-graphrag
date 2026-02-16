@@ -456,7 +456,7 @@ async def get_visualization_data(
     project_id: UUID,
     entity_types: Optional[List[str]] = Query(None),
     view_context: str = Query("hybrid"),
-    max_nodes: int = Query(1000, le=5000),
+    max_nodes: int = Query(2000, le=5000),
     max_edges: int = Query(15000, ge=1000, le=50000),
     database=Depends(get_db),
     current_user: Optional[User] = Depends(require_auth_if_configured),
@@ -505,7 +505,8 @@ async def get_visualization_data(
 
         # Get nodes
         nodes_query = f"""
-            SELECT id, entity_type::text, name, properties
+            SELECT id, entity_type::text, name, properties,
+                   COALESCE(array_length(source_paper_ids, 1), 0) as paper_count
             FROM entities
             WHERE project_id = $1 {type_filter} {scoped_filter}
             ORDER BY
@@ -527,15 +528,18 @@ async def get_visualization_data(
             project_id=str(project_id),
         )
 
-        nodes = [
-            NodeResponse(
-                id=str(row["id"]),
-                entity_type=row["entity_type"],
-                name=row["name"],
-                properties=_parse_json_field(row["properties"]),
+        nodes = []
+        for row in node_rows:
+            props = _parse_json_field(row["properties"])
+            props["paper_count"] = row.get("paper_count") or 1
+            nodes.append(
+                NodeResponse(
+                    id=str(row["id"]),
+                    entity_type=row["entity_type"],
+                    name=row["name"],
+                    properties=props,
+                )
             )
-            for row in node_rows
-        ]
 
         # Get edges connecting visible nodes (Hybrid Mode: include if BOTH endpoints visible)
         node_ids = [str(row["id"]) for row in node_rows]

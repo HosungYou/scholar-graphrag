@@ -405,7 +405,7 @@ export function TopicViewMode({
           return `url(#link-grad-${i})`;
         }
         // Weak connection
-        return '#666';
+        return '#8b949e';
       })
       .attr('stroke-width', (d) => {
         if (d.type === 'gap') return 2;
@@ -416,7 +416,7 @@ export function TopicViewMode({
       .attr('opacity', (d) => {
         if (d.type === 'gap') return 0.8;
         if (d.type === 'connection' && (d.connectionCount || 0) > 5) return 0.7;
-        return 0.3;
+        return 0.5;
       })
       .attr('filter', (d) => (d.type === 'gap' ? 'url(#gap-glow)' : 'none'))
       .classed('dash-flow', (d) => d.type === 'gap');

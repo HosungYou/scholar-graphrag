@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True  # Enable API rate limiting
 
     # Feature Flags
-    lexical_graph_v1: bool = False
-    hybrid_trace_v1: bool = False
-    topic_lod_default: bool = False
+    lexical_graph_v1: bool = True
+    hybrid_trace_v1: bool = True
+    topic_lod_default: bool = True
 
     # Security: Trusted Proxy Configuration
     # Controls whether to trust X-Forwarded-For header for client IP detection
