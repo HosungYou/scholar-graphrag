@@ -56,6 +56,7 @@ class OrchestratorResult:
     intent: Optional[str] = None
     confidence: float = 0.0
     processing_steps: list[Dict[str, Any]] = field(default_factory=list)
+    retrieval_trace: Optional[dict] = None
     # New: Gap-based suggestions
     research_gaps: list[ResearchGapSummary] = field(default_factory=list)
     hidden_connections: list[str] = field(default_factory=list)
@@ -323,6 +324,7 @@ class AgentOrchestrator:
                 intent=intent_result.intent.value,
                 confidence=reasoning_result.confidence,
                 processing_steps=processing_steps if include_processing_steps else [],
+                retrieval_trace=response_result.retrieval_trace,
                 research_gaps=research_gap_summaries,
                 hidden_connections=reasoning_result.hidden_connections,
             )

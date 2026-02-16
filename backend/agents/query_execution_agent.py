@@ -442,8 +442,10 @@ class QueryExecutionAgent:
                 )
                 results = self._apply_low_trust_filter(results, params)
 
-                # Rerank results for better relevance ordering
-                if results and query:
+                # Rerank results for better relevance ordering (gated by hybrid_trace_v1)
+                from config import get_settings as _get_settings
+                _flag_settings = _get_settings()
+                if results and query and _flag_settings.hybrid_trace_v1:
                     try:
                         reranker = SemanticReranker()
                         results = await reranker.rerank(query=query, results=results, top_k=min(20, limit))

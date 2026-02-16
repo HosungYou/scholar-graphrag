@@ -4,6 +4,9 @@
 
 BEGIN;
 
+-- Ensure relationships table has updated_at column (may not exist in older schemas)
+ALTER TABLE relationships ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
 -- Step 1: Identify duplicate entities and determine canonical (oldest) entity for each group
 WITH duplicate_groups AS (
     SELECT

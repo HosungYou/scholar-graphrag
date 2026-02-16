@@ -97,7 +97,7 @@ export function FolderBrowser({ onSelectPath, onClose }: FolderBrowserProps) {
     [onSelectPath, onClose]
   );
 
-  const getIcon = (iconName: string) => {
+  const getIcon = (iconName?: string) => {
     switch (iconName) {
       case 'hard-drive':
         return <HardDrive className="w-4 h-4" />;

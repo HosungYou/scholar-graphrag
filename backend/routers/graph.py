@@ -4573,7 +4573,7 @@ class CrossPaperLinkRequest(BaseModel):
     entity_types: Optional[List[str]] = None  # Defaults to ["Method", "Dataset", "Concept"]
 
 
-@router.post("/api/graph/{project_id}/cross-paper-links")
+@router.post("/{project_id}/cross-paper-links")
 async def create_cross_paper_links(
     project_id: UUID,
     request: Optional[CrossPaperLinkRequest] = None,

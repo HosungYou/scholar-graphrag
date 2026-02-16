@@ -469,11 +469,13 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
       // v0.20.0: Size based on centrality AND edge count (logarithmic scaling for balance)
       const connectionCount = edgeCountMap.get(node.id) || 0;
+      const paperCount = (node.properties as { paper_count?: number })?.paper_count || 1;
       const baseSize = 3;
       const centralityBoost = Math.sqrt(centrality * 100) * 2;
       const connectionBoost = Math.log(1 + connectionCount) * 1.5;
+      const frequencyBoost = Math.min(Math.log2(paperCount + 1) * 1.5, 4);
       const bridgeBoost = isBridge ? 2 : 0;
-      const nodeSize = baseSize + centralityBoost + connectionBoost + bridgeBoost;
+      const nodeSize = baseSize + centralityBoost + connectionBoost + frequencyBoost + bridgeBoost;
 
       // UI-010 FIX: Restore position from ref if available
       const savedPosition = nodePositionsRef.current.get(node.id);

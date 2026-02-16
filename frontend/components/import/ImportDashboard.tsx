@@ -103,17 +103,17 @@ function JobCard({ job, onNavigate }: { job: ImportJob; onNavigate: (projectId: 
           {/* Stats */}
           {job.stats && job.status === 'completed' && (
             <div className="flex flex-wrap gap-2 mt-2">
-              {job.stats.papers_imported > 0 && (
+              {(job.stats.papers_imported ?? 0) > 0 && (
                 <span className="text-xs px-2 py-0.5 bg-surface-2 rounded">
                   논문 {job.stats.papers_imported}개
                 </span>
               )}
-              {job.stats.total_entities > 0 && (
+              {(job.stats.total_entities ?? 0) > 0 && (
                 <span className="text-xs px-2 py-0.5 bg-surface-2 rounded">
                   엔티티 {job.stats.total_entities}개
                 </span>
               )}
-              {job.stats.total_relationships > 0 && (
+              {(job.stats.total_relationships ?? 0) > 0 && (
                 <span className="text-xs px-2 py-0.5 bg-surface-2 rounded">
                   관계 {job.stats.total_relationships}개
                 </span>
@@ -168,7 +168,7 @@ export function ImportDashboard({
     isRefetching,
   } = useQuery({
     queryKey: ['importJobs'],
-    queryFn: () => api.getImportJobs({ limit: maxItems }),
+    queryFn: () => api.getImportJobs(undefined, maxItems),
     refetchInterval: 5000, // Auto-refresh every 5 seconds
     staleTime: 2000,
   });

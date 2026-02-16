@@ -774,9 +774,11 @@ class PDFImporter:
                         chunks_created = len(chunked_result["chunks"])
                         logger.info(f"Created {chunks_created} semantic chunks for {filename}")
                         
-                        # Use section-aware extraction if sections detected
+                        # Use section-aware extraction if sections detected (gated by lexical_graph_v1)
+                        from config import get_settings as _get_settings
+                        _flag_settings = _get_settings()
                         _section_entity_ids_and_names: list[tuple[str, str]] = []
-                        if chunked_result.get("sections") and extract_concepts:
+                        if chunked_result.get("sections") and extract_concepts and _flag_settings.lexical_graph_v1:
                             try:
                                 section_entities = await self.entity_extractor.extract_from_sections(
                                     sections=chunked_result["sections"],

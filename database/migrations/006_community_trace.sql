@@ -36,6 +36,9 @@ CREATE INDEX IF NOT EXISTS idx_query_path_cache_ttl
     ON query_path_cache(created_at);
 
 -- 4. Track migration
+-- Track in both migration tables for compatibility
+INSERT INTO _migrations (name) VALUES ('006_community_trace.sql') ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY, description TEXT, applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());
 INSERT INTO schema_migrations (version, description) VALUES
     ('006_community_trace', 'Community detection enhancements and retrieval trace cache')
 ON CONFLICT (version) DO NOTHING;

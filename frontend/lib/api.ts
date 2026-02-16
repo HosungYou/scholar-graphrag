@@ -11,6 +11,7 @@ import type {
   GraphEntity,
   GraphEdge,
   ChatResponse,
+  ConversationHistory,
   ImportValidationResult,
   ImportJob,
   ImportResumeInfo,
@@ -319,11 +320,19 @@ class ApiClient {
     projectId: string,
     options?: {
       viewContext?: 'hybrid' | 'concept' | 'all';
+      limit?: number;
+      cursor?: string | null;
     }
   ): Promise<GraphData> {
     const params = new URLSearchParams();
     if (options?.viewContext) {
       params.set('view_context', options.viewContext);
+    }
+    if (options?.limit) {
+      params.set('max_nodes', options.limit.toString());
+    }
+    if (options?.cursor) {
+      params.set('cursor', options.cursor);
     }
 
     const query = params.toString();
@@ -366,7 +375,7 @@ class ApiClient {
   }
 
   async getChatHistory(projectId: string) {
-    return this.request<{ messages: ChatResponse[] }>(`/api/chat/history/${projectId}`);
+    return this.request<ConversationHistory[]>(`/api/chat/history/${projectId}`);
   }
 
   async explainNode(
@@ -434,6 +443,7 @@ class ApiClient {
   async uploadPDF(
     file: File,
     options?: {
+      projectId?: string;
       projectName?: string;
       researchQuestion?: string;
       extractConcepts?: boolean;
@@ -444,6 +454,7 @@ class ApiClient {
 
     // Build URL with query parameters
     const params = new URLSearchParams();
+    if (options?.projectId) params.set('project_id', options.projectId);
     if (options?.projectName) params.set('project_name', options.projectName);
     if (options?.researchQuestion) params.set('research_question', options.researchQuestion);
     if (options?.extractConcepts !== undefined) {
@@ -1103,6 +1114,56 @@ class ApiClient {
   async getQueryMetrics(): Promise<QueryMetrics> {
     return this.request<QueryMetrics>('/api/system/query-metrics');
   }
+
+  // ============================================
+  // Folder Browser (Phase 3 - Local Import)
+  // ============================================
+
+  async getQuickAccessPaths(): Promise<{ paths: QuickAccessPath[] }> {
+    return this.request<{ paths: QuickAccessPath[] }>('/api/import/quick-access');
+  }
+
+  async browseFolder(path?: string): Promise<BrowseFolderResult> {
+    const params = new URLSearchParams();
+    if (path) params.set('path', path);
+    return this.request(`/api/import/browse?${params}`);
+  }
+
+  async discoverProjects(path: string): Promise<{ projects: DiscoveredProject[] }> {
+    return this.request<{ projects: DiscoveredProject[] }>(`/api/import/discover?path=${encodeURIComponent(path)}`);
+  }
+}
+
+export interface FolderItem {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  is_scholarag_project?: boolean;
+  has_subprojects?: boolean;
+  size?: number;
+  modified?: string;
+}
+
+export interface QuickAccessPath {
+  name: string;
+  label: string;
+  path: string;
+  icon?: string;
+}
+
+export interface DiscoveredProject {
+  name: string;
+  path: string;
+  papers_count: number;
+  has_config: boolean;
+}
+
+export interface BrowseFolderResult {
+  items: FolderItem[];
+  current_path: string;
+  parent_path?: string;
+  is_scholarag_project?: boolean;
+  suggested_projects?: { name: string; path: string }[];
 }
 
 export const api = new ApiClient(API_URL);

@@ -34,7 +34,7 @@ export function PDFUploader({ projectId, onUploadComplete, onError }: PDFUploade
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      return api.importPDF(projectId, file);
+      return api.uploadPDF(file, { projectId });
     },
     onSuccess: (data, file) => {
       setFiles((prev) =>

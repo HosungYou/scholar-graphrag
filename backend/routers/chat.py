@@ -726,6 +726,7 @@ async def chat_query(
         highlighted_edges=highlighted_edges,
         suggested_follow_ups=suggested_follow_ups,
         agent_trace=agent_trace,
+        retrieval_trace=getattr(result, 'retrieval_trace', None) if result else None,
         research_gaps=research_gaps,
         hidden_connections=hidden_connections,
     )

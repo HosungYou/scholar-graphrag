@@ -194,6 +194,14 @@ export interface ProjectStats {
 }
 
 // Chat
+export interface ConversationHistory {
+  conversation_id: string;
+  project_id: string;
+  messages: ChatMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -282,7 +290,12 @@ export interface ImportJob {
   message?: string;
   error?: string;
   project_id?: string;
-  stats?: Record<string, unknown>;
+  stats?: {
+    papers_imported?: number;
+    total_entities?: number;
+    total_relationships?: number;
+    [key: string]: unknown;
+  };
   reliability_summary?: ImportReliabilitySummary;
   result?: {
     project_id?: string;

@@ -114,6 +114,9 @@ COMMENT ON COLUMN entities.full_text_sections IS
 -- ============================================================================
 -- 8. Track migration
 -- ============================================================================
+-- Track in both migration tables for compatibility
+INSERT INTO _migrations (name) VALUES ('005_lexical_graph_schema.sql') ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY, description TEXT, applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());
 INSERT INTO schema_migrations (version, description) VALUES
     ('005_lexical_graph_schema', 'Lexical graph schema extension - Result/Claim types, extraction metadata')
 ON CONFLICT (version) DO NOTHING;
