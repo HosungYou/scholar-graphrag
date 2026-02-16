@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   Layers,
   ChevronDown,
@@ -43,7 +43,35 @@ export function ClusterPanel({
   const [hiddenClusters, setHiddenClusters] = useState<Set<number>>(new Set());
 
   const { clusterCount, setClusterCount, optimalK, setOptimalK } = useGraph3DStore();
-  const { clusters, setHighlightedNodes, clearHighlights } = useGraphStore();
+  const { clusters, setHighlightedNodes, clearHighlights, graphData } = useGraphStore();
+
+  // v0.20.0: Compute edge counts per cluster from graph edges
+  const clusterEdgeCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    if (!graphData?.edges || clusters.length === 0) return counts;
+
+    // Build node -> cluster mapping
+    const nodeToCluster = new Map<string, number>();
+    clusters.forEach(cluster => {
+      cluster.concepts.forEach(conceptId => {
+        nodeToCluster.set(conceptId, cluster.cluster_id);
+      });
+    });
+
+    // Count edges per cluster (edges where at least one endpoint is in the cluster)
+    graphData.edges.forEach(edge => {
+      const sourceCluster = nodeToCluster.get(edge.source);
+      const targetCluster = nodeToCluster.get(edge.target);
+      if (sourceCluster !== undefined) {
+        counts.set(sourceCluster, (counts.get(sourceCluster) || 0) + 1);
+      }
+      if (targetCluster !== undefined && targetCluster !== sourceCluster) {
+        counts.set(targetCluster, (counts.get(targetCluster) || 0) + 1);
+      }
+    });
+
+    return counts;
+  }, [graphData?.edges, clusters]);
 
   const handleRecomputeClusters = useCallback(async () => {
     setIsLoading(true);
@@ -173,58 +201,92 @@ export function ClusterPanel({
                   Clear
                 </button>
               </div>
-              <ul className="space-y-1 max-h-48 overflow-y-auto">
-                {clusters.map((cluster, index) => {
-                  const color = CLUSTER_COLORS[cluster.cluster_id % CLUSTER_COLORS.length];
-                  const isHidden = hiddenClusters.has(cluster.cluster_id);
+              <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+                {(() => {
+                  // v0.20.0: Compute max density for relative bar scaling
+                  const maxDensity = Math.max(...clusters.map(c => c.density || 0), 0.01);
+                  return clusters.map((cluster, index) => {
+                    const color = CLUSTER_COLORS[cluster.cluster_id % CLUSTER_COLORS.length];
+                    const isHidden = hiddenClusters.has(cluster.cluster_id);
+                    const density = cluster.density || 0;
+                    const densityPercent = Math.round((density / maxDensity) * 100);
 
-                  return (
-                    <li
-                      key={cluster.cluster_id}
-                      onClick={() => handleClusterClick(cluster)}
-                      className={`flex items-center justify-between px-2 py-1.5 cursor-pointer transition-colors
-                        ${isHidden ? 'opacity-50' : 'hover:bg-surface/10'}`}
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        <div
-                          className="w-3 h-3 flex-shrink-0"
-                          style={{ backgroundColor: color }}
-                        />
-                        <span className="text-xs text-ink dark:text-paper truncate">
-                          {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
-                            ? cluster.label
-                            : `Cluster ${cluster.cluster_id + 1}`}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] text-muted">
-                          {cluster.size}
-                        </span>
-                        <button
-                          onClick={(e) => toggleClusterVisibility(cluster.cluster_id, e)}
-                          className="text-muted hover:text-ink dark:hover:text-paper transition-colors"
-                          title={isHidden ? 'Show cluster' : 'Hide cluster'}
-                        >
-                          {isHidden ? (
-                            <EyeOff className="w-3 h-3" />
-                          ) : (
-                            <Eye className="w-3 h-3" />
-                          )}
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleFocusCluster(cluster.cluster_id);
-                          }}
-                          className="text-muted hover:text-accent-violet transition-colors"
-                          title="Focus on cluster"
-                        >
-                          <Hexagon className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
+                    return (
+                      <li
+                        key={cluster.cluster_id}
+                        onClick={() => handleClusterClick(cluster)}
+                        className={`px-2 py-1.5 cursor-pointer transition-colors
+                          ${isHidden ? 'opacity-50' : 'hover:bg-surface/10'}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 truncate">
+                            <div
+                              className="w-3 h-3 flex-shrink-0"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span className="text-xs text-ink dark:text-paper truncate">
+                              {(cluster.label && cluster.label.replace(/[\s/,]+/g, '').length > 0)
+                                ? cluster.label
+                                : `Cluster ${cluster.cluster_id + 1}`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[10px] text-muted" title="Concepts">
+                              {cluster.size}
+                            </span>
+                            {/* v0.20.0: Edge count badge */}
+                            {clusterEdgeCounts.has(cluster.cluster_id) && (
+                              <span
+                                className="font-mono text-[9px] px-1 py-0.5 bg-surface/10 text-muted"
+                                title="Edge connections"
+                                style={{ borderLeft: `2px solid ${color}` }}
+                              >
+                                {clusterEdgeCounts.get(cluster.cluster_id)}e
+                              </span>
+                            )}
+                            <button
+                              onClick={(e) => toggleClusterVisibility(cluster.cluster_id, e)}
+                              className="text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                              title={isHidden ? 'Show cluster' : 'Hide cluster'}
+                            >
+                              {isHidden ? (
+                                <EyeOff className="w-3 h-3" />
+                              ) : (
+                                <Eye className="w-3 h-3" />
+                              )}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleFocusCluster(cluster.cluster_id);
+                              }}
+                              className="text-muted hover:text-accent-violet transition-colors"
+                              title="Focus on cluster"
+                            >
+                              <Hexagon className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        {/* v0.20.0: Density bar */}
+                        <div className="mt-1 ml-5 flex items-center gap-1.5">
+                          <div className="flex-1 h-1 bg-surface/10 overflow-hidden">
+                            <div
+                              className="h-full transition-all duration-300"
+                              style={{
+                                width: `${densityPercent}%`,
+                                backgroundColor: color,
+                                opacity: 0.7,
+                              }}
+                            />
+                          </div>
+                          <span className="font-mono text-[9px] text-muted w-8 text-right">
+                            {density.toFixed(2)}
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  });
+                })()}
               </ul>
             </div>
           )}

@@ -268,18 +268,18 @@ export function ChatInterface({
                   className="group inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono bg-accent-teal/10 text-accent-teal border border-accent-teal/30 transition-all duration-200 hover:px-3"
                   aria-label={`${
                     message.searchStrategy === 'vector'
-                      ? '벡터 검색 전략 사용'
+                      ? 'Vector search strategy used'
                       : message.searchStrategy === 'graph_traversal'
-                      ? `그래프 탐색 전략 사용, ${message.hopCount || 2} 홉`
-                      : '하이브리드 검색 전략 사용'
+                      ? `Graph traversal strategy used, ${message.hopCount || 2} hops`
+                      : 'Hybrid search strategy used'
                   }`}
-                  title={`이 답변은 ${
+                  title={`This response was generated using ${
                     message.searchStrategy === 'vector'
-                      ? '벡터 검색'
+                      ? 'vector search'
                       : message.searchStrategy === 'graph_traversal'
-                      ? '그래프 탐색'
-                      : '하이브리드 검색'
-                  }으로 생성되었습니다`}
+                      ? 'graph traversal'
+                      : 'hybrid search'
+                  }`}
                 >
                   {/* Icon only by default, expand text on hover */}
                   {message.searchStrategy === 'vector' && (

@@ -1389,6 +1389,12 @@ async def refresh_gap_analysis(
         # Build concept id -> name mapping for lookup
         concept_name_map = {c["id"]: c["name"] for c in concepts}
 
+        # Build edge pairs for intra-cluster density computation
+        edge_pairs = [
+            (rel["source_id"], rel["target_id"])
+            for rel in relationships
+        ]
+
         for cluster in analysis.get("clusters", []):
             # Get concept names from the mapping
             cluster_concept_names = [
@@ -1405,7 +1411,20 @@ async def refresh_gap_analysis(
             else:
                 label = f"Cluster {cluster.id + 1}"
 
-            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}")
+            # Compute intra-cluster edge density
+            cluster_node_ids = set(str(cid) for cid in cluster.concept_ids)
+            n = len(cluster_node_ids)
+            if n >= 2:
+                intra_edges = sum(
+                    1 for src, tgt in edge_pairs
+                    if src in cluster_node_ids and tgt in cluster_node_ids
+                )
+                max_edges = n * (n - 1) / 2
+                density = intra_edges / max_edges if max_edges > 0 else 0.0
+            else:
+                density = 0.0
+
+            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}, density={density:.3f}")
 
             await database.execute(
                 """
@@ -1417,7 +1436,7 @@ async def refresh_gap_analysis(
                 [str(cid) for cid in cluster.concept_ids],  # Convert to strings for TEXT[]
                 cluster_concept_names,  # Derived from concept_ids
                 len(cluster.concept_ids),  # Computed size
-                0.0,  # Default density (can be calculated if needed)
+                density,  # Actual intra-cluster edge density
                 label,
             )
 
@@ -2012,9 +2031,32 @@ def _build_gap_recommendation_query(
     cluster_a_names: List[str],
     cluster_b_names: List[str],
 ) -> str:
-    """Build deterministic recommendation query from gap context."""
-    query_parts = (bridge_candidates or [])[:3] + (cluster_a_names or [])[:2] + (cluster_b_names or [])[:2]
-    return " ".join(query_parts) if query_parts else "research gap"
+    """Build a concise, Semantic Scholar-friendly search query from gap metadata.
+
+    v0.19.0: Filter empty strings and avoid literal 'research gap' fallback.
+    v0.20.0: Improved to produce better academic search terms by limiting to
+    the most specific bridge candidates and cross-cluster concept pairs.
+    Returns empty string if no meaningful terms available (caller should skip S2 call).
+    """
+    # Try bridge candidates first (most specific)
+    parts = [c.strip() for c in (bridge_candidates or [])[:3] if c and c.strip()]
+    if parts:
+        return " ".join(parts)
+
+    # Combine top concepts from both clusters for cross-cluster search
+    a_names = [n.strip() for n in (cluster_a_names or [])[:2] if n and n.strip()]
+    b_names = [n.strip() for n in (cluster_b_names or [])[:2] if n and n.strip()]
+
+    if a_names and b_names:
+        return f"{a_names[0]} {b_names[0]}"
+
+    # Use whatever is available
+    available = a_names or b_names
+    if available:
+        return " ".join(available[:3])
+
+    # Return empty instead of literal "research gap"
+    return ""
 
 
 async def _fetch_gap_recommendations_bundle(
@@ -2192,14 +2234,23 @@ async def _build_gap_repro_report(
         query=query,
     )
 
-    recommendation_bundle = await _fetch_gap_recommendations_bundle(
-        query=query,
-        limit=limit,
-        project_id=project_id,
-        gap_id=gap_id,
-        current_user=current_user,
-        strict_rate_limit=False,
-    )
+    # v0.19.0: Skip Semantic Scholar call if no meaningful query terms
+    if not query:
+        recommendation_bundle = {
+            "status": "failed",
+            "retry_after_seconds": None,
+            "error": "No concept terms available for recommendation query",
+            "papers": [],
+        }
+    else:
+        recommendation_bundle = await _fetch_gap_recommendations_bundle(
+            query=query,
+            limit=limit,
+            project_id=project_id,
+            gap_id=gap_id,
+            current_user=current_user,
+            strict_rate_limit=False,
+        )
 
     report = GapReproReportResponse(
         project_id=str(project_id),
@@ -2273,6 +2324,14 @@ async def get_gap_recommendations(
             cluster_b_terms=b_names,
             query=query,
         )
+
+        # v0.19.0: Skip Semantic Scholar call if no meaningful query terms
+        if not query:
+            return GapRecommendationsResponse(
+                gap_id=str(gap_id),
+                query_used="",
+                papers=[],
+            )
 
         papers: List[RecommendedPaperResponse] = []
         try:
@@ -3009,6 +3068,41 @@ async def get_graph_metrics(
             for row in cluster_rows
         ]
 
+        # v0.19.0: Auto-compute clusters if none exist (fixes 0% InsightHUD metrics)
+        if not clusters and len(node_rows) >= 4:
+            try:
+                import numpy as np
+
+                embedding_rows = await database.fetch(
+                    """
+                    SELECT id, name, embedding
+                    FROM entities
+                    WHERE project_id = $1
+                    AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                    AND embedding IS NOT NULL
+                    ORDER BY id
+                    """,
+                    str(project_id),
+                )
+
+                if embedding_rows and len(embedding_rows) >= 4:
+                    metric_nodes = [{"id": str(r["id"]), "name": r["name"]} for r in embedding_rows]
+                    embeddings = np.array([_parse_embedding(r["embedding"]) for r in embedding_rows], dtype=np.float32)
+                    optimal_k = centrality_analyzer.compute_optimal_k(embeddings, min_k=2, max_k=min(10, len(metric_nodes) - 1))
+                    auto_clusters = centrality_analyzer.cluster_nodes(metric_nodes, embeddings, n_clusters=optimal_k)
+                    clusters = [
+                        ClusterResult(
+                            cluster_id=c.cluster_id,
+                            node_ids=c.node_ids,
+                            node_names=c.node_names,
+                            centroid=c.centroid,
+                            size=c.size,
+                        )
+                        for c in auto_clusters
+                    ]
+            except Exception as auto_err:
+                logger.warning(f"Auto-cluster for metrics failed: {auto_err}")
+
         # Compute graph metrics
         metrics = centrality_analyzer.compute_graph_metrics(nodes, edges, clusters)
 
@@ -3242,6 +3336,28 @@ async def recompute_clusters(
             embeddings,
             n_clusters=request.cluster_count,
         )
+
+        # v0.19.0: Generate meaningful cluster labels via LLM
+        try:
+            from graph.gap_detector import GapDetector
+            from dependencies import get_llm_provider
+
+            llm = get_llm_provider()
+            gap_detector = GapDetector(llm_provider=llm)
+
+            concept_name_map_for_labels = {n["id"]: n["name"] for n in nodes}
+            for cluster in clusters:
+                if cluster.label is None:
+                    keywords = [concept_name_map_for_labels.get(nid, "") for nid in cluster.node_ids[:10]]
+                    keywords = [k for k in keywords if k.strip()]
+                    if keywords:
+                        try:
+                            cluster.label = await gap_detector._generate_cluster_label(keywords)
+                        except Exception as label_err:
+                            logger.warning(f"LLM label failed for cluster {cluster.cluster_id}: {label_err}")
+                            cluster.label = " / ".join(keywords[:3]) if keywords else None
+        except Exception as e:
+            logger.warning(f"Cluster labeling setup failed: {e}")
 
         # Cluster color palette
         colors = [

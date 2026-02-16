@@ -398,15 +398,25 @@ export function TopicViewMode({
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', (d, i) => (d.type === 'gap' ? '#FFAA00' : `url(#link-grad-${i})`))
+      .attr('stroke', (d, i) => {
+        if (d.type === 'gap') return '#FFD700';
+        if (d.type === 'connection' && (d.connectionCount || 0) > 5) {
+          // Strong connection: use cluster avg color via gradient
+          return `url(#link-grad-${i})`;
+        }
+        // Weak connection
+        return '#666';
+      })
       .attr('stroke-width', (d) => {
         if (d.type === 'gap') return 2;
-        return Math.min(Math.max(1.5, Math.log((d.weight || 1) + 1) * 2.5), 8);
+        if (d.type === 'connection' && (d.connectionCount || 0) > 5) return 3;
+        return 1;
       })
       .attr('stroke-dasharray', (d) => (d.type === 'gap' ? '8,4' : 'none'))
       .attr('opacity', (d) => {
         if (d.type === 'gap') return 0.8;
-        return 0.3 + Math.min((d.weight || 1) / maxWeight, 0.5);
+        if (d.type === 'connection' && (d.connectionCount || 0) > 5) return 0.7;
+        return 0.3;
       })
       .attr('filter', (d) => (d.type === 'gap' ? 'url(#gap-glow)' : 'none'))
       .classed('dash-flow', (d) => d.type === 'gap');
@@ -426,6 +436,32 @@ export function TopicViewMode({
       .attr('font-size', '9px')
       .attr('font-family', 'monospace')
       .text((d) => `${d.weight} links`);
+
+    // F-1b: Edge count badge at link midpoints
+    const edgeBadgeGroup = container.append('g').attr('class', 'edge-badges');
+    const edgeBadgeData = links.filter(
+      (l) => l.type === 'connection' && (l.connectionCount || 0) > 0,
+    );
+    const edgeBadge = edgeBadgeGroup
+      .selectAll('g')
+      .data(edgeBadgeData)
+      .join('g')
+      .attr('class', 'edge-badge');
+    edgeBadge
+      .append('circle')
+      .attr('r', 9)
+      .attr('fill', '#161b22')
+      .attr('stroke', (d) => (d.connectionCount || 0) > 5 ? '#4ECDC4' : '#30363d')
+      .attr('stroke-width', 1);
+    edgeBadge
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('fill', (d) => (d.connectionCount || 0) > 5 ? '#4ECDC4' : '#8b949e')
+      .attr('font-size', '8px')
+      .attr('font-weight', 'bold')
+      .attr('font-family', 'monospace')
+      .text((d) => `${d.connectionCount || d.weight || 0}`);
 
     // ---- Node groups ----
     // F-4: Connection count per node
@@ -723,6 +759,15 @@ export function TopicViewMode({
 
       node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
 
+      // Position edge badges at midpoints
+      edgeBadge.attr('transform', (d) => {
+        const s = (d.source as unknown) as TopicNode;
+        const t = (d.target as unknown) as TopicNode;
+        const mx = ((s.x ?? 0) + (t.x ?? 0)) / 2;
+        const my = ((s.y ?? 0) + (t.y ?? 0)) / 2;
+        return `translate(${mx},${my})`;
+      });
+
       // Convex hull boundaries
       hullGroup.selectAll('path').remove();
       const clusterGroups = new Map<number, Array<[number, number]>>();
@@ -888,15 +933,15 @@ export function TopicViewMode({
             Edges
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-white/50 rounded" />
-            <span className="text-xs text-[#8b949e]">Strong connection</span>
+            <div className="w-6 h-[3px] bg-[#4ECDC4] rounded" />
+            <span className="text-xs text-[#8b949e]">Strong (&gt;5 links)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 bg-white/20 rounded" />
+            <div className="w-6 h-[1px] bg-[#666] rounded" />
             <span className="text-xs text-[#8b949e]">Weak connection</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
+            <div className="w-6 h-0.5 border-t-2 border-dashed" style={{ borderColor: '#FFD700' }} />
             <span className="text-xs text-[#8b949e]">Structural gap</span>
           </div>
         </div>

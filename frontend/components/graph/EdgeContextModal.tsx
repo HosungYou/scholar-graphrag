@@ -737,14 +737,14 @@ export function EdgeContextModal({
                   {evidence.provenance_source && (
                     <span
                       className={`px-2 py-0.5 font-mono text-xs ${getProvenanceLabel(evidence.provenance_source).color}`}
-                      aria-label={`출처: ${
+                      aria-label={`Source: ${
                         evidence.provenance_source === 'relationship_evidence'
-                          ? '관계 증거 테이블'
+                          ? 'Relationship Evidence Table'
                           : evidence.provenance_source === 'source_chunk_ids'
-                          ? '청크 출처'
+                          ? 'Chunk Source'
                           : evidence.provenance_source === 'text_search'
-                          ? '텍스트 검색'
-                          : 'AI 분석'
+                          ? 'Text Search'
+                          : 'AI Analysis'
                       }`}
                     >
                       {getProvenanceLabel(evidence.provenance_source).label}
@@ -802,7 +802,7 @@ export function EdgeContextModal({
                       onClick={() => setShowAllChunks(true)}
                       className="w-full py-3 border border-ink/10 dark:border-paper/10 bg-surface/5 hover:bg-surface/10 transition-all duration-200 font-mono text-sm text-accent-teal"
                     >
-                      상세 보기 ({evidence.evidence_chunks.length - 1}개 더)
+                      Show details ({evidence.evidence_chunks.length - 1} more)
                     </button>
                   )}
                 </div>
@@ -874,7 +874,7 @@ export function EdgeContextModal({
                       <div className="flex items-center justify-center gap-2 text-xs text-muted/70">
                         <FileText className="w-4 h-4" />
                         <p className="italic">
-                          이 관계는 추출 시점 이전에 생성되어 청크 출처가 없습니다
+                          This relationship was created before chunk extraction and has no source provenance
                         </p>
                       </div>
                     </>

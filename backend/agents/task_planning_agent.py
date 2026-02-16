@@ -51,9 +51,9 @@ class TaskPlanningAgent:
                 "confidence",
                 "evidence",
                 "provenance",
-                "신뢰",
-                "근거",
-                "검증",
+                "trustworthy",
+                "proof",
+                "verification",
             )
         )
 

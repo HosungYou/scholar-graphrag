@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-13
-> **Version**: 4.1.0 (v0.18.0 Production Stabilization + 3D Root Fix + Researcher UX)
+> **Last Updated**: 2026-02-16
+> **Version**: 5.0.0 (v0.20.0 Async Cluster Labeling + Edge Visualization)
 
 ## Project Overview
 

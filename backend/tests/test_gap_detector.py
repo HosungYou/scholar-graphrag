@@ -40,9 +40,10 @@ class TestGapDetector:
         """Test gap detector initializes correctly."""
         assert gap_detector is not None
 
-    def test_cluster_concepts(self, gap_detector, sample_concepts):
+    @pytest.mark.asyncio
+    async def test_cluster_concepts(self, gap_detector, sample_concepts):
         """Test concept clustering."""
-        clusters = gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
+        clusters = await gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
 
         # Returns list of ConceptCluster objects, not dicts
         assert isinstance(clusters, list)
@@ -54,22 +55,24 @@ class TestGapDetector:
             assert hasattr(cluster, 'concept_ids')
             assert hasattr(cluster, 'color')
 
-    def test_cluster_with_few_concepts(self, gap_detector):
+    @pytest.mark.asyncio
+    async def test_cluster_with_few_concepts(self, gap_detector):
         """Test clustering with fewer concepts than clusters."""
         concepts = [
             {"id": "1", "name": "test", "embedding": [0.1, 0.2, 0.3]},
         ]
 
-        clusters = gap_detector.cluster_concepts(concepts, n_clusters=2)
+        clusters = await gap_detector.cluster_concepts(concepts, n_clusters=2)
 
         # Should handle gracefully - returns empty list for too few concepts
         assert isinstance(clusters, list)
         assert len(clusters) == 0  # Too few concepts
 
-    def test_detect_gaps(self, gap_detector, sample_concepts, sample_relationships):
+    @pytest.mark.asyncio
+    async def test_detect_gaps(self, gap_detector, sample_concepts, sample_relationships):
         """Test gap detection between clusters."""
         # First cluster concepts
-        clusters = gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
+        clusters = await gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
 
         # detect_gaps takes 3 arguments: clusters, relationships, concepts
         gaps = gap_detector.detect_gaps(clusters, sample_relationships, sample_concepts)
@@ -97,12 +100,13 @@ class TestGapDetector:
             assert hasattr(metrics, 'betweenness')
             assert metrics.degree >= 0
 
-    def test_find_bridge_candidates(self, gap_detector, sample_concepts, sample_relationships):
+    @pytest.mark.asyncio
+    async def test_find_bridge_candidates(self, gap_detector, sample_concepts, sample_relationships):
         """Test finding bridge concept candidates."""
         from graph.gap_detector import StructuralGap
 
         # First cluster and calculate centrality
-        clusters = gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
+        clusters = await gap_detector.cluster_concepts(sample_concepts, n_clusters=2)
         centrality = gap_detector.calculate_centrality(sample_concepts, sample_relationships)
 
         # Detect gaps
@@ -268,7 +272,8 @@ class TestClusterColors:
         # All colors should be unique
         assert len(set(CLUSTER_COLORS)) == len(CLUSTER_COLORS)
 
-    def test_color_assignment(self):
+    @pytest.mark.asyncio
+    async def test_color_assignment(self):
         """Test color assignment to clusters."""
         from graph.gap_detector import GapDetector
 
@@ -280,7 +285,7 @@ class TestClusterColors:
             for i in range(10)
         ]
 
-        clusters = detector.cluster_concepts(concepts, n_clusters=3)
+        clusters = await detector.cluster_concepts(concepts, n_clusters=3)
 
         # Access color through object attribute, not dict key
         colors = [c.color for c in clusters]

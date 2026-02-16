@@ -49,7 +49,7 @@ class IntentAgent:
         {"query": "What are the research gaps?", "intent": "identify_gaps"},
         {"query": "Summarize the findings", "intent": "summarize"},
         {"query": "Hello, how are you?", "intent": "conversational"},
-        {"query": "안녕하세요", "intent": "conversational"},
+        {"query": "Hello", "intent": "conversational"},
         # TTO-specific examples
         {"query": "Find patents related to machine learning", "intent": "patent_search"},
         {"query": "Who invented the quantum sensing device?", "intent": "inventor_lookup"},
@@ -58,7 +58,7 @@ class IntentAgent:
     ]
 
     SYSTEM_PROMPT = """Classify queries into: search, explore, explain, compare, summarize, identify_gaps, conversational, patent_search, inventor_lookup, technology_trend, license_status.
-Use 'conversational' for greetings, thanks, or casual chat (e.g., "hello", "안녕", "thanks").
+Use 'conversational' for greetings, thanks, or casual chat (e.g., "hello", "hi", "thanks").
 Respond with JSON: {"intent": "<type>", "confidence": 0.0-1.0, "keywords": [], "reasoning": "brief"}"""
 
     def __init__(self, llm_provider=None):
@@ -100,7 +100,7 @@ Respond with JSON: {"intent": "<type>", "confidence": 0.0-1.0, "keywords": [], "
 
         # Detect conversational/greeting patterns FIRST (before other classifications)
         conversational_patterns = [
-            "안녕", "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+            "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
             "thanks", "thank you", "bye", "goodbye", "how are you", "what's up",
             "nice to meet",
         ]

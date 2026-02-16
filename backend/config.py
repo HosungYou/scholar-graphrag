@@ -129,7 +129,7 @@ class Settings(BaseSettings):
             self.google_api_key,
             self.groq_api_key,
         ]):
-            missing.append("LLM_API_KEY (ANTHROPIC/OPENAI/GOOGLE/GROQ 중 하나 필요)")
+            missing.append("LLM_API_KEY (one of ANTHROPIC/OPENAI/GOOGLE/GROQ required)")
 
         # Validate LLM provider matches available key
         provider_key_map = {
@@ -139,7 +139,7 @@ class Settings(BaseSettings):
             "groq": self.groq_api_key,
         }
         if self.default_llm_provider and not provider_key_map.get(self.default_llm_provider):
-            missing.append(f"{self.default_llm_provider.upper()}_API_KEY (DEFAULT_LLM_PROVIDER={self.default_llm_provider}이지만 해당 API 키 없음)")
+            missing.append(f"{self.default_llm_provider.upper()}_API_KEY (DEFAULT_LLM_PROVIDER={self.default_llm_provider} but no API key configured)")
 
         return missing
 

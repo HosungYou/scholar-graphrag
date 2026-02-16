@@ -39,20 +39,20 @@ export default function SettingsPage() {
   const [metricsLoading, setMetricsLoading] = useState(true);
 
   const themeOptions = [
-    { value: 'light' as const, label: '라이트 모드', icon: Sun, description: '항상 밝은 테마 사용' },
-    { value: 'dark' as const, label: '다크 모드', icon: Moon, description: '항상 어두운 테마 사용' },
-    { value: 'system' as const, label: '시스템 설정', icon: Monitor, description: '시스템 설정에 따라 자동 전환' },
+    { value: 'light' as const, label: 'Light Mode', icon: Sun, description: 'Always use light theme' },
+    { value: 'dark' as const, label: 'Dark Mode', icon: Moon, description: 'Always use dark theme' },
+    { value: 'system' as const, label: 'System', icon: Monitor, description: 'Auto switch based on system settings' },
   ];
 
   const llmOptions = [
-    { value: 'groq', label: 'Groq (Llama)', description: 'Llama 3.3 70B - 무료, 가장 빠른 추론', model: 'llama-3.3-70b-versatile' },
+    { value: 'groq', label: 'Groq (Llama)', description: 'Llama 3.3 70B - Free, fastest inference', model: 'llama-3.3-70b-versatile' },
     { value: 'anthropic', label: 'Claude (Anthropic)', description: 'Claude Haiku 4.5', model: 'claude-haiku-4-5-20251001' },
     { value: 'openai', label: 'GPT-4 (OpenAI)', description: 'GPT-4o', model: 'gpt-4o' },
     { value: 'google', label: 'Gemini (Google)', description: 'Gemini 1.5 Pro', model: 'gemini-1.5-pro' },
   ];
 
   const languageOptions = [
-    { value: 'ko', label: '한국어', flag: '🇰🇷' },
+    { value: 'ko', label: 'Korean', flag: '🇰🇷' },
     { value: 'en', label: 'English', flag: '🇺🇸' },
   ];
 
@@ -88,7 +88,7 @@ export default function SettingsPage() {
       }
     } catch (err) {
       console.error('Failed to load API keys:', err);
-      showSaveMessage('API 키 로드 실패', false);
+      showSaveMessage('Failed to load API keys', false);
     } finally {
       setLoading(false);
     }
@@ -105,10 +105,10 @@ export default function SettingsPage() {
         llm_model: selectedOption.model
       });
       setLlmProvider(value);
-      showSaveMessage('LLM 제공자 설정 저장됨');
+      showSaveMessage('LLM provider settings saved');
     } catch (err) {
       console.error('Failed to update LLM provider:', err);
-      showSaveMessage('LLM 제공자 저장 실패', false);
+      showSaveMessage('Failed to save LLM provider', false);
     } finally {
       setProviderSaving(false);
     }
@@ -131,7 +131,7 @@ export default function SettingsPage() {
 
   const handleValidateKey = async (provider: string) => {
     if (!keyInput.trim()) {
-      setValidationResult({ valid: false, message: 'API 키를 입력하세요' });
+      setValidationResult({ valid: false, message: 'Enter API key' });
       return;
     }
 
@@ -140,7 +140,7 @@ export default function SettingsPage() {
       const result = await api.validateApiKey(provider, keyInput);
       setValidationResult(result);
     } catch (err) {
-      setValidationResult({ valid: false, message: '검증 실패' });
+      setValidationResult({ valid: false, message: 'Validation failed' });
     } finally {
       setValidating(false);
     }
@@ -148,7 +148,7 @@ export default function SettingsPage() {
 
   const handleSaveKey = async (provider: string) => {
     if (!keyInput.trim()) {
-      showSaveMessage('API 키를 입력하세요', false);
+      showSaveMessage('Enter API key', false);
       return;
     }
 
@@ -159,17 +159,17 @@ export default function SettingsPage() {
       setEditingKey(null);
       setKeyInput('');
       setValidationResult(null);
-      showSaveMessage('API 키 저장됨');
+      showSaveMessage('API key saved');
     } catch (err) {
       console.error('Failed to save API key:', err);
-      showSaveMessage('API 키 저장 실패', false);
+      showSaveMessage('Failed to save API key', false);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteKey = async (provider: string) => {
-    if (!confirm('정말 이 API 키를 삭제하시겠습니까?')) {
+    if (!confirm('Are you sure you want to delete this API key?')) {
       return;
     }
 
@@ -177,10 +177,10 @@ export default function SettingsPage() {
       setSaving(true);
       await api.updateApiKeys({ [provider]: '' });
       await loadApiKeys();
-      showSaveMessage('API 키 삭제됨');
+      showSaveMessage('API key deleted');
     } catch (err) {
       console.error('Failed to delete API key:', err);
-      showSaveMessage('API 키 삭제 실패', false);
+      showSaveMessage('Failed to delete API key', false);
     } finally {
       setSaving(false);
     }
@@ -202,7 +202,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-paper dark:bg-ink flex flex-col">
       <a href="#main-content" className="skip-link">
-        메인 콘텐츠로 건너뛰기
+        Skip to main content
       </a>
 
       <Header
@@ -231,7 +231,7 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <Sun className="w-5 h-5 text-accent-amber" />
-                테마 설정
+                Theme Settings
               </h3>
               <div className="grid sm:grid-cols-3 gap-3">
                 {themeOptions.map((option) => {
@@ -269,7 +269,7 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <Cpu className="w-5 h-5 text-accent-violet" />
-                AI 모델 설정
+                AI Model Settings
               </h3>
 
               {loading ? (
@@ -317,15 +317,15 @@ export default function SettingsPage() {
                     <div className="mt-4 border-l-2 border-accent-teal bg-surface/5 p-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="font-mono text-sm text-ink dark:text-paper">
-                          {llmOptions.find(o => o.value === llmProvider)?.label} API 키
+                          {llmOptions.find(o => o.value === llmProvider)?.label} API Key
                         </span>
                         {getLlmProviderKey()?.is_set ? (
                           <span className="px-2 py-1 bg-accent-teal/10 text-accent-teal font-mono text-xs">
-                            설정됨
+                            Configured
                           </span>
                         ) : (
                           <span className="px-2 py-1 bg-surface/10 text-muted font-mono text-xs">
-                            미설정
+                            Not Set
                           </span>
                         )}
                       </div>
@@ -337,7 +337,7 @@ export default function SettingsPage() {
                               type={showKey ? 'text' : 'password'}
                               value={keyInput}
                               onChange={(e) => setKeyInput(e.target.value)}
-                              placeholder="API 키를 입력하세요"
+                              placeholder="Enter API key"
                               className="w-full px-3 py-2 pr-10 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 font-mono text-sm focus:outline-none focus:border-accent-teal"
                             />
                             <button
@@ -362,7 +362,7 @@ export default function SettingsPage() {
                               className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm disabled:opacity-50 flex items-center gap-2"
                             >
                               {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
-                              검증
+                              Validate
                             </button>
                             <button
                               onClick={() => handleSaveKey(llmProvider)}
@@ -370,13 +370,13 @@ export default function SettingsPage() {
                               className="flex-1 px-3 py-2 bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal font-mono text-sm uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                              저장
+                              Save
                             </button>
                             <button
                               onClick={handleCancelEdit}
                               className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
-                              취소
+                              Cancel
                             </button>
                           </div>
                         </div>
@@ -388,7 +388,7 @@ export default function SettingsPage() {
                             </span>
                           ) : (
                             <span className="text-sm font-mono text-muted">
-                              API 키가 설정되지 않았습니다
+                              API key not configured
                             </span>
                           )}
                           <div className="flex gap-2">
@@ -396,14 +396,14 @@ export default function SettingsPage() {
                               onClick={() => handleEditKey(llmProvider)}
                               className="px-3 py-1.5 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
-                              {getLlmProviderKey()?.is_set ? '수정' : '설정'}
+                              {getLlmProviderKey()?.is_set ? 'Edit' : 'Set'}
                             </button>
                             {getLlmProviderKey()?.is_set && (
                               <button
                                 onClick={() => handleDeleteKey(llmProvider)}
                                 className="px-3 py-1.5 bg-accent-red/10 hover:bg-accent-red/20 text-accent-red font-mono text-sm"
                               >
-                                삭제
+                                Delete
                               </button>
                             )}
                           </div>
@@ -413,7 +413,7 @@ export default function SettingsPage() {
                   )}
 
                   <p className="mt-4 text-xs sm:text-sm font-mono text-muted">
-                    선택한 AI 모델은 채팅 및 엔티티 추출에 사용됩니다.
+                    The selected AI model is used for chat and entity extraction.
                   </p>
                 </>
               )}
@@ -423,7 +423,7 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <Key className="w-5 h-5 text-accent-amber" />
-                외부 API 키
+                External API Keys
               </h3>
 
               {loading ? (
@@ -445,11 +445,11 @@ export default function SettingsPage() {
                         </div>
                         {keyData.is_set ? (
                           <span className="px-2 py-1 bg-accent-teal/10 text-accent-teal font-mono text-xs">
-                            설정됨
+                            Configured
                           </span>
                         ) : (
                           <span className="px-2 py-1 bg-surface/10 text-muted font-mono text-xs">
-                            미설정
+                            Not Set
                           </span>
                         )}
                       </div>
@@ -461,7 +461,7 @@ export default function SettingsPage() {
                               type={showKey ? 'text' : 'password'}
                               value={keyInput}
                               onChange={(e) => setKeyInput(e.target.value)}
-                              placeholder="API 키를 입력하세요"
+                              placeholder="Enter API key"
                               className="w-full px-3 py-2 pr-10 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 font-mono text-sm focus:outline-none focus:border-accent-teal"
                             />
                             <button
@@ -486,7 +486,7 @@ export default function SettingsPage() {
                               className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm disabled:opacity-50 flex items-center gap-2"
                             >
                               {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertCircle className="w-4 h-4" />}
-                              검증
+                              Validate
                             </button>
                             <button
                               onClick={() => handleSaveKey(keyData.provider)}
@@ -494,13 +494,13 @@ export default function SettingsPage() {
                               className="flex-1 px-3 py-2 bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal font-mono text-sm uppercase tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                              저장
+                              Save
                             </button>
                             <button
                               onClick={handleCancelEdit}
                               className="px-3 py-2 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
-                              취소
+                              Cancel
                             </button>
                           </div>
                         </div>
@@ -512,7 +512,7 @@ export default function SettingsPage() {
                             </span>
                           ) : (
                             <span className="text-sm font-mono text-muted">
-                              미설정
+                              Not configured
                             </span>
                           )}
                           <div className="flex gap-2">
@@ -520,14 +520,14 @@ export default function SettingsPage() {
                               onClick={() => handleEditKey(keyData.provider)}
                               className="px-3 py-1.5 bg-surface/10 hover:bg-surface/20 text-ink dark:text-paper font-mono text-sm"
                             >
-                              {keyData.is_set ? '수정' : '설정'}
+                              {keyData.is_set ? 'Edit' : 'Configure'}
                             </button>
                             {keyData.is_set && (
                               <button
                                 onClick={() => handleDeleteKey(keyData.provider)}
                                 className="px-3 py-1.5 bg-accent-red/10 hover:bg-accent-red/20 text-accent-red font-mono text-sm"
                               >
-                                삭제
+                                Delete
                               </button>
                             )}
                           </div>
@@ -538,7 +538,7 @@ export default function SettingsPage() {
 
                   {getExternalKeys().length === 0 && (
                     <p className="text-sm font-mono text-muted text-center py-4">
-                      설정 가능한 외부 API 키가 없습니다
+                      No external API keys available
                     </p>
                   )}
                 </div>
@@ -549,7 +549,7 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <Globe className="w-5 h-5 text-accent-teal" />
-                언어 설정
+                Language Settings
               </h3>
               <div className="flex gap-3">
                 {languageOptions.map((option) => {
@@ -581,20 +581,20 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <Database className="w-5 h-5 text-accent-violet" />
-                데이터베이스 정보
+                Database Information
               </h3>
               <div className="border-l-2 border-accent-violet bg-surface/5 p-4">
                 <div className="space-y-3 text-sm font-mono">
                   <div className="flex justify-between items-center py-2 border-b border-ink/10 dark:border-paper/10">
-                    <span className="text-muted">데이터베이스</span>
+                    <span className="text-muted">Database</span>
                     <span className="text-ink dark:text-paper">PostgreSQL + pgvector</span>
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-ink/10 dark:border-paper/10">
-                    <span className="text-muted">호스팅</span>
+                    <span className="text-muted">Hosting</span>
                     <span className="text-ink dark:text-paper">Supabase</span>
                   </div>
                   <div className="flex justify-between items-center py-2">
-                    <span className="text-muted">벡터 차원</span>
+                    <span className="text-muted">Vector Dimensions</span>
                     <span className="text-ink dark:text-paper">1536</span>
                   </div>
                 </div>
@@ -605,7 +605,7 @@ export default function SettingsPage() {
             <section className="border border-ink/10 dark:border-paper/10 p-5 sm:p-6">
               <h3 className="font-mono text-sm uppercase tracking-wider text-ink dark:text-paper mb-4 flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-accent-teal" />
-                쿼리 성능 메트릭
+                Query Performance Metrics
               </h3>
 
               {metricsLoading ? (
@@ -615,7 +615,7 @@ export default function SettingsPage() {
               ) : !queryMetrics || queryMetrics.total_queries === 0 ? (
                 <div className="bg-surface/5 border border-muted/20 p-6 text-center">
                   <p className="font-mono text-sm text-muted">
-                    채팅을 시작하면 쿼리 성능 데이터가 수집됩니다
+                    Query performance data will be collected once you start chatting
                   </p>
                 </div>
               ) : (
@@ -624,19 +624,19 @@ export default function SettingsPage() {
                   <div className="border-l-2 border-accent-teal bg-surface/5 p-4">
                     <div className="space-y-2 text-sm font-mono">
                       <div className="flex justify-between items-center py-1">
-                        <span className="text-muted">전체 쿼리</span>
-                        <span className="text-ink dark:text-paper">{queryMetrics.total_queries}회</span>
+                        <span className="text-muted">Total Queries</span>
+                        <span className="text-ink dark:text-paper">{queryMetrics.total_queries} queries</span>
                       </div>
                       <div className="flex justify-between items-center py-1">
-                        <span className="text-muted">평균 응답시간</span>
+                        <span className="text-muted">Average Latency</span>
                         <span className="text-ink dark:text-paper">{queryMetrics.avg_latency_ms.toFixed(0)}ms</span>
                       </div>
                       <div className="flex justify-between items-center py-1">
-                        <span className="text-muted">P95 응답시간</span>
+                        <span className="text-muted">P95 Latency</span>
                         <span className="text-ink dark:text-paper">{queryMetrics.p95_latency_ms.toFixed(0)}ms</span>
                       </div>
                       <div className="flex justify-between items-center py-1">
-                        <span className="text-muted">최대 응답시간</span>
+                        <span className="text-muted">Max Latency</span>
                         <span className="text-ink dark:text-paper">{queryMetrics.max_latency_ms.toFixed(0)}ms</span>
                       </div>
                     </div>
@@ -646,7 +646,7 @@ export default function SettingsPage() {
                   {Object.keys(queryMetrics.by_hop_count).length > 0 && (
                     <div>
                       <h4 className="font-mono text-xs uppercase tracking-wider text-muted mb-3">
-                        홉 수별 응답시간
+                        Latency by Hop Count
                       </h4>
                       <div className="space-y-2">
                         {Object.entries(queryMetrics.by_hop_count)
@@ -660,7 +660,7 @@ export default function SettingsPage() {
                             return (
                               <div key={hop} className="space-y-1">
                                 <div className="flex justify-between items-center text-xs font-mono">
-                                  <span className="text-muted">{hop}-hop ({metrics.count}회)</span>
+                                  <span className="text-muted">{hop}-hop ({metrics.count} queries)</span>
                                   <span className="text-ink dark:text-paper">{metrics.avg_latency_ms.toFixed(0)}ms</span>
                                 </div>
                                 <div className="h-2 bg-surface/10 border border-ink/5 dark:border-paper/5">
@@ -680,7 +680,7 @@ export default function SettingsPage() {
                   <div className="border-l-2 border-accent-violet bg-surface/5 p-4">
                     <div className="space-y-3">
                       <div className="font-mono text-xs text-muted">
-                        GraphDB 추천
+                        GraphDB Recommendation
                       </div>
                       <div className="font-mono text-sm text-ink dark:text-paper">
                         {queryMetrics.graphdb_recommendation}
@@ -688,7 +688,7 @@ export default function SettingsPage() {
                       {queryMetrics.threshold_info && (
                         <div className="space-y-2 mt-3">
                           <div className="flex justify-between items-center text-xs font-mono">
-                            <span className="text-muted">3-hop 목표</span>
+                            <span className="text-muted">3-hop Target</span>
                             <span className="text-accent-violet">
                               {queryMetrics.threshold_info.three_hop_target_ms}ms
                             </span>

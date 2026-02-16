@@ -101,6 +101,10 @@ interface Graph3DStore {
   setClusterCount: (count: number) => void;
   setOptimalK: (k: number) => void;
 
+  // v0.19.0: Cluster overlay state
+  showClusterOverlay: boolean;
+  toggleClusterOverlay: () => void;
+
   // LOD Utility
   getVisiblePercentage: () => number;
 }
@@ -137,6 +141,9 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
   // Initial Cluster State
   clusterCount: 5,
   optimalK: 5,
+
+  // v0.19.0: Cluster overlay
+  showClusterOverlay: false,
 
   // View Actions
   setViewMode: (mode) => {
@@ -277,6 +284,9 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
   setOptimalK: (k) => {
     set({ optimalK: k });
   },
+
+  // v0.19.0: Cluster overlay toggle
+  toggleClusterOverlay: () => set(state => ({ showClusterOverlay: !state.showClusterOverlay })),
 
   // LOD Utility
   getVisiblePercentage: () => {
