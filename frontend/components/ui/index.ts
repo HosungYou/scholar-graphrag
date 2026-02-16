@@ -10,3 +10,5 @@ export {
   TableRowSkeleton,
 } from './Skeleton';
 export { ThemeToggle } from './ThemeToggle';
+export { ScholaRAGLogo } from './ScholaRAGLogo';
+export { ResizeHandle } from './ResizeHandle';

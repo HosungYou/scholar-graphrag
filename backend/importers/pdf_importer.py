@@ -1,442 +1,956 @@
 """
-PDF File Importer
+Direct PDF Importer - Import PDFs without ScholaRAG project structure
 
-Imports individual PDF files and extracts paper entities.
+This importer allows users to upload PDF files directly and build a knowledge graph
+without needing a config.yaml or ScholaRAG folder structure.
 
 Process:
-1. Extract text from PDF using PyMuPDF
-2. Extract metadata (title, authors if available)
-3. Use LLM to extract title/abstract if metadata is incomplete
-4. Create Paper entity
-5. Optionally extract Concepts, Methods, Findings using LLM
+1. Accept uploaded PDF file(s)
+2. Extract text using PyMuPDF
+3. Extract metadata (title, authors, year) from PDF properties and first page
+4. Use LLM to extract concepts, methods, findings from full text
+5. Create project and paper records using GraphStore
+6. Build knowledge graph
 """
 
-import fitz  # PyMuPDF
 import logging
-import os
 import re
-from dataclasses import dataclass, field
-from datetime import datetime
+import tempfile
+import os
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, List, Callable, Dict, Any
 from uuid import uuid4
+from datetime import datetime
 
+import fitz  # PyMuPDF
+
+from database import Database
+from graph.graph_store import GraphStore
 from graph.entity_extractor import EntityExtractor
-
-try:
-    from config import settings
-except ImportError:
-    settings = None
+from graph.entity_resolution import EntityResolutionService
+from graph.relationship_builder import ConceptCentricRelationshipBuilder
+from graph.table_extractor import TableExtractor
+from importers.semantic_chunker import SemanticChunker
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PDFImportProgress:
-    """Track PDF import progress."""
-    status: str = "pending"
-    progress: float = 0.0
-    message: str = ""
-    filename: str = ""
-    paper_id: Optional[str] = None
-    entities_created: int = 0
-    error: Optional[str] = None
-
-
-@dataclass
-class ExtractedPDFData:
-    """Data extracted from a PDF file."""
-    title: str
-    abstract: str
-    authors: list[str]
-    year: Optional[int]
-    full_text: str
-    page_count: int
-    filename: str
-
-
 class PDFImporter:
-    """
-    Imports individual PDF files into ScholaRAG_Graph.
-    """
+    """Import PDF files directly without ScholaRAG project structure."""
 
     def __init__(
         self,
-        db_connection=None,
-        graph_store=None,
-        llm_provider=None,
-        progress_callback: Optional[Callable[[PDFImportProgress], None]] = None,
+        llm_provider: str = "anthropic",
+        llm_model: str = "claude-3-5-haiku-20241022",
+        db_connection: Optional[Database] = None,
+        graph_store: Optional[GraphStore] = None,
+        progress_callback: Optional[Callable[[str, float, str], None]] = None,
     ):
+        self.llm_provider = llm_provider
+        self.llm_model = llm_model
         self.db = db_connection
         self.graph_store = graph_store
-        self.llm = llm_provider
         self.progress_callback = progress_callback
-        self.progress = PDFImportProgress()
+
+        # Initialize entity extractor, semantic chunker, and table extractor
         self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
+        self.entity_resolution = EntityResolutionService(llm_provider=self.entity_extractor.llm)
+        self.semantic_chunker = SemanticChunker()
+        self.table_extractor = TableExtractor()
 
-    def _update_progress(
-        self,
-        status: Optional[str] = None,
-        progress: Optional[float] = None,
-        message: Optional[str] = None,
-        error: Optional[str] = None,
-    ):
-        """Update and broadcast progress."""
-        if status:
-            self.progress.status = status
-        if progress is not None:
-            self.progress.progress = progress
-        if message:
-            self.progress.message = message
-        if error:
-            self.progress.error = error
-
+    def _update_progress(self, stage: str, progress: float, message: str):
+        """Update import progress."""
         if self.progress_callback:
-            self.progress_callback(self.progress)
+            self.progress_callback(stage, progress, message)
+        logger.info(f"[{stage}] {progress:.0%} - {message}")
 
-    def extract_pdf_data(self, pdf_path: str) -> ExtractedPDFData:
+    async def _link_entities_to_chunks(
+        self,
+        project_id: str,
+        paper_id: str,
+        entity_ids_and_names: list[tuple[str, str]],
+    ) -> int:
         """
-        Extract text and metadata from a PDF file.
+        Phase 7A: Link entities to their source chunks by matching entity names
+        against chunk text. Updates entity properties with source_chunk_ids.
 
-        Uses PyMuPDF for extraction.
+        Args:
+            project_id: Project UUID
+            paper_id: Paper UUID (to scope chunk lookup)
+            entity_ids_and_names: List of (entity_id, canonical_name) tuples
+
+        Returns:
+            Number of entity-chunk links created
         """
-        path = Path(pdf_path)
-        if not path.exists():
-            raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-        filename = path.name
+        if not self.graph_store or not entity_ids_and_names or not paper_id:
+            return 0
 
         try:
-            doc = fitz.open(pdf_path)
+            # Fetch all chunks for this paper
+            chunks = await self.graph_store.get_chunks_by_paper(paper_id)
+            if not chunks:
+                return 0
+
+            links_created = 0
+
+            for entity_id, entity_name in entity_ids_and_names:
+                if not entity_name or len(entity_name) < 3:
+                    continue
+
+                # Find chunks that mention this entity (case-insensitive)
+                matching_chunk_ids = []
+                name_lower = entity_name.lower()
+                for chunk in chunks:
+                    chunk_text = (chunk.get("text") or "").lower()
+                    if name_lower in chunk_text:
+                        matching_chunk_ids.append(chunk["id"])
+
+                if matching_chunk_ids:
+                    # Update entity properties with source_chunk_ids
+                    try:
+                        if hasattr(self.graph_store, '_entity_dao') and self.graph_store._entity_dao.db:
+                            await self.graph_store._entity_dao.db.execute(
+                                """
+                                UPDATE entities
+                                SET properties = jsonb_set(
+                                    COALESCE(properties, '{}'::jsonb),
+                                    '{source_chunk_ids}',
+                                    (
+                                        SELECT jsonb_agg(DISTINCT val)
+                                        FROM (
+                                            SELECT jsonb_array_elements_text(
+                                                COALESCE(properties->'source_chunk_ids', '[]'::jsonb)
+                                            ) AS val
+                                            UNION
+                                            SELECT unnest($2::text[]) AS val
+                                        ) combined
+                                    )
+                                )
+                                WHERE id = $1
+                                """,
+                                entity_id,
+                                matching_chunk_ids,
+                            )
+                            links_created += len(matching_chunk_ids)
+                    except Exception as e:
+                        logger.debug(f"Failed to update source_chunk_ids for entity {entity_id}: {e}")
+
+            if links_created > 0:
+                logger.info(
+                    f"Phase 7A: Linked {links_created} chunk-entity pairs "
+                    f"for {len(entity_ids_and_names)} entities in paper {paper_id}"
+                )
+
+            return links_created
+
         except Exception as e:
-            raise ValueError(f"Failed to open PDF: {e}")
+            logger.warning(f"Phase 7A: Chunk-entity linking failed for paper {paper_id}: {e}")
+            return 0
 
-        # Extract metadata
-        metadata = doc.metadata or {}
-        title = metadata.get("title", "").strip()
-        author = metadata.get("author", "").strip()
-
-        # Parse authors
-        authors = []
-        if author:
-            # Try to split by common delimiters
-            for sep in [";", ",", " and ", "&"]:
-                if sep in author:
-                    authors = [a.strip() for a in author.split(sep) if a.strip()]
-                    break
-            if not authors:
-                authors = [author]
-
-        # Try to extract year from metadata or text
-        year = None
-        creation_date = metadata.get("creationDate", "")
-        if creation_date and len(creation_date) >= 4:
-            try:
-                year = int(creation_date[2:6])  # D:YYYYMMDD format
-            except ValueError:
-                pass
-
-        # Extract text from all pages
-        full_text = ""
-        for page in doc:
-            full_text += page.get_text() + "\n"
-
-        page_count = len(doc)
-        doc.close()
-
-        # Extract title from first page if not in metadata
-        if not title:
-            title = self._extract_title_from_text(full_text, filename)
-
-        # Extract abstract from text
-        abstract = self._extract_abstract_from_text(full_text)
-
-        # Try to find year in text if not found
-        if not year:
-            year = self._extract_year_from_text(full_text)
-
-        return ExtractedPDFData(
-            title=title,
-            abstract=abstract,
-            authors=authors,
-            year=year,
-            full_text=full_text,
-            page_count=page_count,
-            filename=filename,
+    def _accumulate_resolution_stats(self, stats: Dict[str, Any], resolution) -> None:
+        """Accumulate shared entity-resolution metrics into importer stats."""
+        stats["raw_entities_extracted"] = stats.get("raw_entities_extracted", 0) + int(resolution.raw_entities)
+        stats["entities_after_resolution"] = stats.get("entities_after_resolution", 0) + int(resolution.resolved_entities)
+        stats["merges_applied"] = stats.get("merges_applied", 0) + int(resolution.merged_entities)
+        stats["llm_pairs_reviewed"] = stats.get("llm_pairs_reviewed", 0) + int(
+            getattr(resolution, "llm_pairs_reviewed", 0)
         )
+        stats["llm_pairs_confirmed"] = stats.get("llm_pairs_confirmed", 0) + int(
+            getattr(resolution, "llm_pairs_confirmed", 0)
+        )
+        stats["potential_false_merge_count"] = stats.get("potential_false_merge_count", 0) + int(
+            getattr(resolution, "potential_false_merge_count", 0)
+        )
+        stats.setdefault("potential_false_merge_samples", [])
+        samples = getattr(resolution, "potential_false_merge_samples", []) or []
+        if samples:
+            stats["potential_false_merge_samples"].extend(samples)
+            stats["potential_false_merge_samples"] = stats["potential_false_merge_samples"][:15]
 
-    def _extract_title_from_text(self, text: str, filename: str) -> str:
-        """Extract title from PDF text or filename."""
-        lines = text.strip().split("\n")[:20]  # Look at first 20 lines
-
-        # Find the first non-empty line that looks like a title
-        for line in lines:
-            line = line.strip()
-            if len(line) > 10 and len(line) < 200:
-                # Skip lines that look like headers/footers
-                if not any(skip in line.lower() for skip in ["page", "copyright", "©", "doi:", "http"]):
-                    return line
-
-        # Fallback to filename
-        return filename.replace(".pdf", "").replace("_", " ").replace("-", " ").strip()
-
-    def _extract_abstract_from_text(self, text: str) -> str:
-        """Extract abstract from PDF text."""
-        text_lower = text.lower()
-
-        # Look for abstract section
-        abstract_patterns = [
-            r"abstract[:\s]*\n(.+?)(?:\n\s*\n|\nintroduction|\nkeywords)",
-            r"abstract[:\s]*(.+?)(?:\n\s*\n|\nintroduction|\nkeywords)",
-            r"summary[:\s]*\n(.+?)(?:\n\s*\n|\nintroduction)",
-        ]
-
-        for pattern in abstract_patterns:
-            match = re.search(pattern, text_lower, re.DOTALL | re.IGNORECASE)
-            if match:
-                abstract = match.group(1).strip()
-                # Clean up
-                abstract = re.sub(r"\s+", " ", abstract)
-                if len(abstract) > 100:
-                    return abstract[:2000]  # Limit length
-
-        # Fallback: use first few paragraphs
-        paragraphs = text.split("\n\n")
-        if len(paragraphs) > 1:
-            return paragraphs[1][:1000]
-
-        return ""
-
-    def _extract_year_from_text(self, text: str) -> Optional[int]:
-        """Extract publication year from PDF text."""
-        # Look for years in common formats
-        year_patterns = [
-            r"(?:published|received|accepted)[:\s]*.*?(\d{4})",
-            r"©\s*(\d{4})",
-            r"\b(19\d{2}|20[0-2]\d)\b",  # Match 1900-2029
-        ]
-
-        for pattern in year_patterns:
-            matches = re.findall(pattern, text[:5000], re.IGNORECASE)
-            if matches:
-                year = int(matches[0])
-                if 1900 <= year <= datetime.now().year + 1:
-                    return year
-
-        return None
-
-    async def import_pdf(
+    async def _extract_tables_from_pdf(
         self,
         pdf_path: str,
         project_id: str,
-        extract_entities: bool = True,
-    ) -> dict:
+        paper_id: str,
+        stats: Dict[str, Any],
+    ) -> None:
         """
-        Import a PDF file into a project.
+        Phase 9A: Extract SOTA comparison tables from a PDF and store
+        Method/Dataset/Metric entities with EVALUATED_ON relationships.
 
-        Returns:
-            dict with success status, paper_id, and stats
+        Runs silently -- if table detection fails, import continues normally.
         """
-        self.progress.filename = Path(pdf_path).name
-        self._update_progress(status="processing", progress=0.1, message="PDF 파일 읽는 중...")
+        try:
+            table_entities, table_relationships = self.table_extractor.extract_all_tables(pdf_path)
+
+            if not table_entities and not table_relationships:
+                return
+
+            self._update_progress("tables", 0.88, f"Storing {len(table_entities)} table entities...")
+
+            # Map entity names to stored entity IDs for relationship creation
+            entity_name_to_id: Dict[str, str] = {}
+
+            for te in table_entities:
+                entity_id = await self.graph_store.add_entity(
+                    project_id=project_id,
+                    entity_type=te.entity_type,
+                    name=te.name,
+                    properties={
+                        **te.properties,
+                        "source_type": "table",
+                    },
+                )
+                entity_name_to_id[te.name] = entity_id
+                stats["table_entities_extracted"] = stats.get("table_entities_extracted", 0) + 1
+
+                # Link entity to paper
+                if paper_id and entity_id:
+                    rel_type = {
+                        "Method": "USES_METHOD",
+                        "Dataset": "USES_DATASET",
+                        "Metric": "EVALUATES_WITH",
+                    }.get(te.entity_type, "RELATED_TO")
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=paper_id,
+                        target_id=entity_id,
+                        relationship_type=rel_type,
+                        properties={"source_type": "table"},
+                    )
+
+            # Create EVALUATED_ON relationships between Method and Dataset entities
+            for tr in table_relationships:
+                source_id = entity_name_to_id.get(tr.source_name)
+                target_id = entity_name_to_id.get(tr.target_name)
+                if source_id and target_id:
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=source_id,
+                        target_id=target_id,
+                        relationship_type=tr.relationship_type,
+                        properties=tr.properties,
+                    )
+                    stats["table_relationships_extracted"] = stats.get("table_relationships_extracted", 0) + 1
+
+            logger.info(
+                f"Table extraction complete: {stats.get('table_entities_extracted', 0)} entities, "
+                f"{stats.get('table_relationships_extracted', 0)} relationships"
+            )
+
+        except Exception as e:
+            logger.warning(f"Table extraction failed (non-fatal): {e}")
+            # Non-fatal: import continues without table data
+
+    def extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Extract all text from a PDF file."""
+        try:
+            doc = fitz.open(pdf_path)
+            text_parts = []
+
+            for page_num, page in enumerate(doc):
+                text = page.get_text()
+                if text.strip():
+                    text_parts.append(text)
+
+            doc.close()
+            return "\n\n".join(text_parts)
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {e}")
+            return ""
+
+    def extract_metadata_from_pdf(self, pdf_path: str) -> Dict[str, Any]:
+        """Extract metadata from PDF file."""
+        metadata = {
+            "title": None,
+            "authors": [],
+            "year": None,
+            "abstract": None,
+        }
 
         try:
-            # Extract PDF data
-            pdf_data = self.extract_pdf_data(pdf_path)
-            self._update_progress(progress=0.3, message="텍스트 추출 완료")
+            doc = fitz.open(pdf_path)
 
-            # Create Paper entity
-            paper_id = str(uuid4())
-            paper_properties = {
-                "title": pdf_data.title,
-                "abstract": pdf_data.abstract,
-                "authors": pdf_data.authors,
-                "year": pdf_data.year,
-                "source": "pdf_import",
-                "filename": pdf_data.filename,
-                "page_count": pdf_data.page_count,
-            }
+            # Try to get metadata from PDF properties
+            pdf_metadata = doc.metadata
+            if pdf_metadata:
+                if pdf_metadata.get("title"):
+                    metadata["title"] = pdf_metadata["title"]
+                if pdf_metadata.get("author"):
+                    # Authors might be comma or semicolon separated
+                    author_str = pdf_metadata["author"]
+                    authors = re.split(r'[;,]', author_str)
+                    metadata["authors"] = [a.strip() for a in authors if a.strip()]
+                if pdf_metadata.get("creationDate"):
+                    # Try to extract year from creation date
+                    date_str = pdf_metadata["creationDate"]
+                    year_match = re.search(r'(\d{4})', date_str)
+                    if year_match:
+                        metadata["year"] = int(year_match.group(1))
 
-            self._update_progress(progress=0.5, message="Paper 엔티티 생성 중...")
+            # If title not found, try to extract from first page
+            if not metadata["title"] and doc.page_count > 0:
+                first_page_text = doc[0].get_text()
+                lines = [l.strip() for l in first_page_text.split('\n') if l.strip()]
 
-            # Store Paper entity
+                # First substantial line is often the title
+                for line in lines[:5]:  # Check first 5 lines
+                    if len(line) > 10 and len(line) < 200:  # Reasonable title length
+                        metadata["title"] = line
+                        break
+
+            # Try to extract abstract
+            full_text = self.extract_text_from_pdf(pdf_path)
+            abstract_match = re.search(
+                r'abstract[:\s]*(.{100,2000}?)(?=\n\n|\nintroduction|\n1\.)',
+                full_text,
+                re.IGNORECASE | re.DOTALL
+            )
+            if abstract_match:
+                metadata["abstract"] = abstract_match.group(1).strip()
+
+            doc.close()
+
+        except Exception as e:
+            logger.error(f"Error extracting metadata: {e}")
+
+        # Use filename as fallback title
+        if not metadata["title"]:
+            metadata["title"] = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+
+        return metadata
+
+    async def import_single_pdf(
+        self,
+        pdf_content: bytes,
+        filename: str,
+        project_name: Optional[str] = None,
+        research_question: Optional[str] = None,
+        extract_concepts: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Import a single PDF file and create a knowledge graph.
+
+        Args:
+            pdf_content: Raw PDF file bytes
+            filename: Original filename
+            project_name: Optional project name (defaults to filename)
+            research_question: Optional research question (will be generated if not provided)
+            extract_concepts: Whether to use LLM for concept extraction
+
+        Returns:
+            Import result with project_id and statistics
+        """
+        self._update_progress("starting", 0.0, "Starting PDF import...")
+
+        # Save PDF to temp file
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+            tmp_file.write(pdf_content)
+            tmp_path = tmp_file.name
+
+        try:
+            # Extract text and metadata
+            self._update_progress("extracting", 0.1, "Extracting text from PDF...")
+            full_text = self.extract_text_from_pdf(tmp_path)
+
+            if not full_text or len(full_text) < 100:
+                return {
+                    "success": False,
+                    "error": "Could not extract text from PDF. The file may be scanned or image-based."
+                }
+
+            self._update_progress("extracting", 0.2, "Extracting metadata...")
+            metadata = self.extract_metadata_from_pdf(tmp_path)
+
+            # Generate project info
+            project_id = str(uuid4())
+            project_name_final = project_name or metadata["title"] or Path(filename).stem
+
+            # Generate research question if not provided
+            if not research_question:
+                research_question = f"Analysis of: {metadata['title'] or filename}"
+
+            self._update_progress("creating", 0.3, "Creating project...")
+
+            # Create project in database
+            if self.db:
+                await self.db.execute(
+                    """
+                    INSERT INTO projects (id, name, research_question, created_at)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    project_id, project_name_final, research_question, datetime.utcnow()
+                )
+
+            self._update_progress("storing", 0.4, "Storing paper metadata...")
+
+            # Create Paper entity using GraphStore
+            paper_id = None
             if self.graph_store:
-                await self.graph_store.create_entity(
+                paper_id = await self.graph_store.add_entity(
                     project_id=project_id,
                     entity_type="Paper",
-                    name=pdf_data.title,
-                    properties=paper_properties,
+                    name=metadata["title"] or filename,
+                    properties={
+                        "title": metadata["title"],
+                        "abstract": metadata.get("abstract") or full_text[:2000],
+                        "year": metadata.get("year"),
+                        "source": "direct_upload",
+                        "filename": filename,
+                        "full_text_preview": full_text[:5000],
+                    },
                 )
-                self.progress.entities_created += 1
 
-            # Create Author entities
-            if pdf_data.authors and self.graph_store:
-                self._update_progress(progress=0.6, message="저자 엔티티 생성 중...")
-                for author_name in pdf_data.authors:
-                    await self.graph_store.create_entity(
+                # Create Author entities and relationships
+                author_ids = []
+                for author_name in metadata.get("authors", []):
+                    author_id = await self.graph_store.add_entity(
                         project_id=project_id,
                         entity_type="Author",
                         name=author_name,
-                        properties={"affiliation": None},
+                        properties={
+                            "name": author_name,
+                        },
                     )
-                    self.progress.entities_created += 1
+                    author_ids.append(author_id)
 
-            # Extract concepts using LLM (optional)
-            if extract_entities and self.llm:
-                self._update_progress(progress=0.7, message="개념 추출 중 (LLM)...")
+                    # Create AUTHORED_BY relationship
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=paper_id,
+                        target_id=author_id,
+                        relationship_type="AUTHORED_BY",
+                        properties={},
+                    )
+
+            # Extract concepts if enabled
+            stats = {
+                "papers_imported": 1,
+                "authors_extracted": len(metadata.get("authors", [])),
+                "concepts_extracted": 0,
+                "methods_extracted": 0,
+                "findings_extracted": 0,
+                "raw_entities_extracted": 0,
+                "entities_after_resolution": 0,
+                "merges_applied": 0,
+                "llm_pairs_reviewed": 0,
+                "llm_pairs_confirmed": 0,
+                "potential_false_merge_count": 0,
+                "potential_false_merge_samples": [],
+                "table_entities_extracted": 0,
+                "table_relationships_extracted": 0,
+            }
+
+            if extract_concepts and self.graph_store:
+                self._update_progress("analyzing", 0.5, "Extracting concepts with LLM...")
+
                 try:
-                    use_full_text = (
-                        settings is not None
-                        and settings.lexical_graph_v1
-                        and pdf_data.full_text
-                        and len(pdf_data.full_text) > 500
+                    # Use abstract or first part of text for extraction
+                    text_for_extraction = metadata.get("abstract") or full_text[:4000]
+
+                    extraction_result = await self.entity_extractor.extract_from_paper(
+                        title=metadata["title"] or filename,
+                        abstract=text_for_extraction,
+                        paper_id=paper_id,
                     )
 
-                    if use_full_text:
-                        # Full-text section-aware extraction
-                        extraction_result = await self.entity_extractor.extract_from_full_text(
-                            title=pdf_data.title,
-                            full_text=pdf_data.full_text,
+                    self._update_progress("storing", 0.7, "Storing extracted entities...")
+
+                    # Store entities from all categories
+                    all_entities = (
+                        extraction_result.get("concepts", []) +
+                        extraction_result.get("methods", []) +
+                        extraction_result.get("findings", [])
+                    )
+                    resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
+                        all_entities,
+                        use_llm_confirmation=True,
+                    )
+                    self._accumulate_resolution_stats(stats, resolution)
+
+                    for entity in resolved_entities:
+                        # Get entity type as string
+                        entity_type_str = str(entity.entity_type.value) if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+
+                        entity_id = await self.graph_store.add_entity(
+                            project_id=project_id,
+                            entity_type=entity_type_str,
+                            name=self.entity_resolution.canonicalize_name(entity.name),
+                            properties={
+                                "definition": getattr(entity, 'definition', ''),
+                                "description": getattr(entity, 'description', ''),
+                                "source_paper_ids": [paper_id] if paper_id else [],
+                                "confidence": getattr(entity, 'confidence', 0.7),
+                            },
                         )
-                        # Store all extracted entity types
-                        for entity_key in ['concepts', 'methods', 'findings', 'results', 'claims', 'datasets']:
-                            for entity in extraction_result.get(entity_key, []):
-                                if self.graph_store and entity.name:
-                                    entity_type_map = {
-                                        'concepts': 'Concept',
-                                        'methods': 'Method',
-                                        'findings': 'Finding',
-                                        'results': 'Result',
-                                        'claims': 'Claim',
-                                        'datasets': 'Dataset',
-                                    }
-                                    props = {
-                                        "description": entity.description,
-                                        "confidence": entity.confidence,
-                                        "source_paper": pdf_data.title,
-                                        "extraction_source": "full_text",
-                                    }
-                                    if entity.extraction_section:
-                                        props["extraction_section"] = entity.extraction_section
-                                    if entity.evidence_spans:
-                                        props["evidence_spans"] = entity.evidence_spans
 
-                                    await self.graph_store.create_entity(
-                                        project_id=project_id,
-                                        entity_type=entity_type_map.get(entity_key, 'Concept'),
-                                        name=entity.name,
-                                        properties=props,
-                                    )
-                                    self.progress.entities_created += 1
-                    elif pdf_data.abstract:
-                        # Existing abstract-only extraction (unchanged)
-                        concepts = await self._extract_concepts_with_llm(pdf_data.abstract)
-                        for concept in concepts[:10]:  # Limit to 10 concepts
-                            if self.graph_store:
-                                await self.graph_store.create_entity(
-                                    project_id=project_id,
-                                    entity_type="Concept",
-                                    name=concept,
-                                    properties={"source_paper": pdf_data.title},
-                                )
-                                self.progress.entities_created += 1
+                        # Create relationship from Paper to this entity
+                        if paper_id and entity_id:
+                            rel_type = {
+                                "Concept": "DISCUSSES_CONCEPT",
+                                "Method": "USES_METHOD",
+                                "Finding": "REPORTS_FINDING",
+                            }.get(entity_type_str, "RELATED_TO")
+
+                            await self.graph_store.add_relationship(
+                                project_id=project_id,
+                                source_id=paper_id,
+                                target_id=entity_id,
+                                relationship_type=rel_type,
+                                properties={"confidence": getattr(entity, 'confidence', 0.7)},
+                            )
+
+                        # Update stats
+                        if entity_type_str == "Concept":
+                            stats["concepts_extracted"] += 1
+                        elif entity_type_str == "Method":
+                            stats["methods_extracted"] += 1
+                        elif entity_type_str == "Finding":
+                            stats["findings_extracted"] += 1
+
+                    self._update_progress("building", 0.85, "Building relationships...")
+
+                    # Build additional relationships between entities
+                    builder = ConceptCentricRelationshipBuilder(
+                        llm_provider=self.entity_extractor.llm,
+                    )
+                    # Backward-compatible guard: some builder versions do not expose build_relationships().
+                    if hasattr(builder, "build_relationships"):
+                        await builder.build_relationships(project_id=project_id)
+
                 except Exception as e:
-                    logger.warning(f"Failed to extract concepts with LLM: {e}")
+                    logger.warning(f"Entity extraction failed: {e}")
+                    # Continue without entities - still create the project
 
-            self._update_progress(
-                status="completed",
-                progress=1.0,
-                message=f"Import 완료: {pdf_data.title}"
-            )
-            self.progress.paper_id = paper_id
+            # Table extraction: detect SOTA tables and extract Method/Dataset/Metric entities
+            if self.graph_store and paper_id:
+                await self._extract_tables_from_pdf(
+                    pdf_path=tmp_path,
+                    project_id=project_id,
+                    paper_id=paper_id,
+                    stats=stats,
+                )
+
+            if stats["raw_entities_extracted"] > 0:
+                stats["canonicalization_rate"] = (
+                    stats["merges_applied"] / stats["raw_entities_extracted"]
+                )
+            else:
+                stats["canonicalization_rate"] = 0.0
+
+            self._update_progress("complete", 1.0, "Import complete!")
 
             return {
                 "success": True,
+                "project_id": project_id,
                 "paper_id": paper_id,
-                "title": pdf_data.title,
-                "stats": {
-                    "entities_created": self.progress.entities_created,
-                    "authors": len(pdf_data.authors),
-                    "page_count": pdf_data.page_count,
-                },
+                "stats": stats,
+                "metadata": metadata,
             }
 
         except Exception as e:
-            logger.exception(f"PDF import failed: {e}")
-            self._update_progress(
-                status="failed",
-                progress=0.0,
-                message=f"Import 실패: {str(e)}",
-                error=str(e),
-            )
+            logger.error(f"PDF import failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
             }
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
 
-    async def _extract_concepts_with_llm(self, abstract: str) -> list[str]:
-        """Use LLM to extract key concepts from abstract."""
-        if not self.llm:
-            return []
+    async def import_multiple_pdfs(
+        self,
+        pdf_files: List[tuple],  # List of (filename, content) tuples
+        project_name: str,
+        research_question: Optional[str] = None,
+        extract_concepts: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Import multiple PDF files into a single project.
 
-        prompt = f"""Extract 5-10 key concepts/keywords from this academic abstract.
-Return only the concepts, one per line, without numbering or bullets.
+        Args:
+            pdf_files: List of (filename, content) tuples
+            project_name: Name for the project
+            research_question: Optional research question
+            extract_concepts: Whether to use LLM for concept extraction
 
-Abstract:
-{abstract}
+        Returns:
+            Import result with project_id and statistics
+        """
+        self._update_progress("starting", 0.0, f"Starting import of {len(pdf_files)} PDFs...")
 
-Concepts:"""
+        # Create project
+        project_id = str(uuid4())
+        research_question = research_question or f"Literature review: {project_name}"
+
+        if self.db:
+            await self.db.execute(
+                """
+                INSERT INTO projects (id, name, research_question, created_at)
+                VALUES ($1, $2, $3, $4)
+                """,
+                project_id, project_name, research_question, datetime.utcnow()
+            )
+
+        total_stats = {
+            "papers_imported": 0,
+            "papers_failed": 0,
+            "authors_extracted": 0,
+            "concepts_extracted": 0,
+            "methods_extracted": 0,
+            "findings_extracted": 0,
+            "raw_entities_extracted": 0,
+            "entities_after_resolution": 0,
+            "merges_applied": 0,
+            "llm_pairs_reviewed": 0,
+            "llm_pairs_confirmed": 0,
+            "potential_false_merge_count": 0,
+            "potential_false_merge_samples": [],
+            "table_entities_extracted": 0,
+            "table_relationships_extracted": 0,
+        }
+
+        for i, (filename, content) in enumerate(pdf_files):
+            progress = 0.1 + (0.8 * (i / len(pdf_files)))
+            self._update_progress(
+                "importing",
+                progress,
+                f"Processing {i+1}/{len(pdf_files)}: {filename}"
+            )
+
+            # Import single PDF (but use existing project)
+            result = await self._import_pdf_to_project(
+                pdf_content=content,
+                filename=filename,
+                project_id=project_id,
+                extract_concepts=extract_concepts,
+            )
+
+            if result["success"]:
+                total_stats["papers_imported"] += 1
+                for key in [
+                    "authors_extracted",
+                    "concepts_extracted",
+                    "methods_extracted",
+                    "findings_extracted",
+                    "raw_entities_extracted",
+                    "entities_after_resolution",
+                    "merges_applied",
+                    "llm_pairs_reviewed",
+                    "llm_pairs_confirmed",
+                    "potential_false_merge_count",
+                    "table_entities_extracted",
+                    "table_relationships_extracted",
+                ]:
+                    total_stats[key] += result.get("stats", {}).get(key, 0)
+                samples = result.get("stats", {}).get("potential_false_merge_samples", []) or []
+                if samples:
+                    total_stats["potential_false_merge_samples"].extend(samples)
+                    total_stats["potential_false_merge_samples"] = total_stats[
+                        "potential_false_merge_samples"
+                    ][:15]
+            else:
+                total_stats["papers_failed"] += 1
+
+        # Build relationships across all papers
+        if extract_concepts and self.graph_store:
+            self._update_progress("building", 0.9, "Building cross-paper relationships...")
+            builder = ConceptCentricRelationshipBuilder(
+                llm_provider=self.entity_extractor.llm,
+            )
+            if hasattr(builder, "build_relationships"):
+                await builder.build_relationships(project_id=project_id)
+
+        if total_stats["raw_entities_extracted"] > 0:
+            total_stats["canonicalization_rate"] = (
+                total_stats["merges_applied"] / total_stats["raw_entities_extracted"]
+            )
+        else:
+            total_stats["canonicalization_rate"] = 0.0
+
+        self._update_progress("complete", 1.0, "Import complete!")
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "stats": total_stats,
+        }
+
+    async def _import_pdf_to_project(
+        self,
+        pdf_content: bytes,
+        filename: str,
+        project_id: str,
+        extract_concepts: bool = True,
+    ) -> Dict[str, Any]:
+        """Import a single PDF into an existing project."""
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+            tmp_file.write(pdf_content)
+            tmp_path = tmp_file.name
 
         try:
-            response = await self.llm.generate(prompt, max_tokens=200)
-            concepts = [c.strip() for c in response.strip().split("\n") if c.strip()]
-            return concepts
+            full_text = self.extract_text_from_pdf(tmp_path)
+            if not full_text or len(full_text) < 100:
+                return {"success": False, "error": "Could not extract text"}
+
+            metadata = self.extract_metadata_from_pdf(tmp_path)
+
+            stats = {
+                "authors_extracted": 0,
+                "concepts_extracted": 0,
+                "methods_extracted": 0,
+                "findings_extracted": 0,
+                "chunks_created": 0,
+                "raw_entities_extracted": 0,
+                "entities_after_resolution": 0,
+                "merges_applied": 0,
+                "llm_pairs_reviewed": 0,
+                "llm_pairs_confirmed": 0,
+                "potential_false_merge_count": 0,
+                "potential_false_merge_samples": [],
+                "table_entities_extracted": 0,
+                "table_relationships_extracted": 0,
+            }
+            stored_entity_keys = set()
+
+            # Create Paper entity using GraphStore
+            paper_id = None
+            if self.graph_store:
+                paper_id = await self.graph_store.add_entity(
+                    project_id=project_id,
+                    entity_type="Paper",
+                    name=metadata["title"] or filename,
+                    properties={
+                        "title": metadata["title"],
+                        "abstract": metadata.get("abstract") or full_text[:2000],
+                        "year": metadata.get("year"),
+                        "source": "direct_upload",
+                        "filename": filename,
+                    },
+                )
+
+                # Create Author entities and relationships
+                for author_name in metadata.get("authors", []):
+                    author_id = await self.graph_store.add_entity(
+                        project_id=project_id,
+                        entity_type="Author",
+                        name=author_name,
+                        properties={"name": author_name},
+                    )
+                    stats["authors_extracted"] += 1
+
+                    # Create AUTHORED_BY relationship
+                    await self.graph_store.add_relationship(
+                        project_id=project_id,
+                        source_id=paper_id,
+                        target_id=author_id,
+                        relationship_type="AUTHORED_BY",
+                        properties={},
+                    )
+
+            # Semantic Chunking: Create hierarchical chunks from full text
+            chunks_created = 0
+            if paper_id and self.graph_store and len(full_text) > 500:
+                try:
+                    # Chunk the full text with section detection
+                    chunked_result = self.semantic_chunker.chunk_academic_text(
+                        text=full_text,
+                        paper_id=paper_id,
+                        detect_sections=True,
+                        max_chunk_tokens=400,
+                    )
+                    
+                    if chunked_result.get("chunks"):
+                        # Store chunks using graph_store
+                        await self.graph_store.store_chunks(
+                            project_id=project_id,
+                            paper_id=paper_id,
+                            chunks=chunked_result["chunks"],
+                        )
+                        chunks_created = len(chunked_result["chunks"])
+                        logger.info(f"Created {chunks_created} semantic chunks for {filename}")
+                        
+                        # Use section-aware extraction if sections detected
+                        _section_entity_ids_and_names: list[tuple[str, str]] = []
+                        if chunked_result.get("sections") and extract_concepts:
+                            try:
+                                section_entities = await self.entity_extractor.extract_from_sections(
+                                    sections=chunked_result["sections"],
+                                    paper_id=paper_id,
+                                )
+                                resolved_section_entities, section_resolution = await self.entity_resolution.resolve_entities_async(
+                                    section_entities,
+                                    use_llm_confirmation=True,
+                                )
+                                self._accumulate_resolution_stats(stats, section_resolution)
+                                # Merge section entities into main extraction
+                                if resolved_section_entities:
+                                    for entity in resolved_section_entities:
+                                        entity_type_str = str(entity.entity_type.value) if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                                        canonical_name = self.entity_resolution.canonicalize_name(entity.name)
+                                        entity_key = f"{entity_type_str}:{canonical_name}"
+                                        if entity_key in stored_entity_keys:
+                                            stats["merges_applied"] += 1
+                                            continue
+
+                                        entity_id = await self.graph_store.add_entity(
+                                            project_id=project_id,
+                                            entity_type=entity_type_str,
+                                            name=canonical_name,
+                                            properties={
+                                                "definition": getattr(entity, 'definition', ''),
+                                                "description": getattr(entity, 'description', ''),
+                                                "source_paper_ids": [paper_id],
+                                                "confidence": getattr(entity, 'confidence', 0.7),
+                                                "source_section": getattr(entity, 'source_section', ''),
+                                            },
+                                        )
+                                        if paper_id and entity_id:
+                                            rel_type = {
+                                                "Concept": "DISCUSSES_CONCEPT",
+                                                "Method": "USES_METHOD",
+                                                "Finding": "REPORTS_FINDING",
+                                                "Problem": "ADDRESSES_PROBLEM",
+                                                "Innovation": "PROPOSES_INNOVATION",
+                                                "Dataset": "USES_DATASET",
+                                            }.get(entity_type_str, "RELATED_TO")
+                                            await self.graph_store.add_relationship(
+                                                project_id=project_id,
+                                                source_id=paper_id,
+                                                target_id=entity_id,
+                                                relationship_type=rel_type,
+                                                properties={"confidence": getattr(entity, 'confidence', 0.7)},
+                                            )
+                                        if entity_type_str == "Concept":
+                                            stats["concepts_extracted"] += 1
+                                        elif entity_type_str == "Method":
+                                            stats["methods_extracted"] += 1
+                                        elif entity_type_str == "Finding":
+                                            stats["findings_extracted"] += 1
+                                        stored_entity_keys.add(entity_key)
+                                        # Phase 7A: Track for chunk-entity linking
+                                        if entity_id:
+                                            _section_entity_ids_and_names.append((entity_id, canonical_name))
+                            except Exception as e:
+                                logger.warning(f"Section-aware extraction failed: {e}")
+                except Exception as e:
+                    logger.warning(f"Semantic chunking failed for {filename}: {e}")
+
+            stats["chunks_created"] = chunks_created
+
+            # Phase 7A: Track entity_id -> name for chunk-entity linking
+            _entity_ids_and_names: list[tuple[str, str]] = []
+
+            if extract_concepts and self.graph_store:
+                try:
+                    text_for_extraction = metadata.get("abstract") or full_text[:4000]
+                    extraction_result = await self.entity_extractor.extract_from_paper(
+                        title=metadata["title"] or filename,
+                        abstract=text_for_extraction,
+                        paper_id=paper_id,
+                    )
+
+                    # Store entities from all categories
+                    all_entities = (
+                        extraction_result.get("concepts", []) +
+                        extraction_result.get("methods", []) +
+                        extraction_result.get("findings", [])
+                    )
+                    resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
+                        all_entities,
+                        use_llm_confirmation=True,
+                    )
+                    self._accumulate_resolution_stats(stats, resolution)
+
+                    for entity in resolved_entities:
+                        # Get entity type as string
+                        entity_type_str = str(entity.entity_type.value) if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                        canonical_name = self.entity_resolution.canonicalize_name(entity.name)
+                        entity_key = f"{entity_type_str}:{canonical_name}"
+                        if entity_key in stored_entity_keys:
+                            stats["merges_applied"] += 1
+                            continue
+
+                        entity_id = await self.graph_store.add_entity(
+                            project_id=project_id,
+                            entity_type=entity_type_str,
+                            name=canonical_name,
+                            properties={
+                                "definition": getattr(entity, 'definition', ''),
+                                "description": getattr(entity, 'description', ''),
+                                "source_paper_ids": [paper_id] if paper_id else [],
+                                "confidence": getattr(entity, 'confidence', 0.7),
+                            },
+                        )
+
+                        # Create relationship from Paper to this entity
+                        if paper_id and entity_id:
+                            rel_type = {
+                                "Concept": "DISCUSSES_CONCEPT",
+                                "Method": "USES_METHOD",
+                                "Finding": "REPORTS_FINDING",
+                            }.get(entity_type_str, "RELATED_TO")
+
+                            await self.graph_store.add_relationship(
+                                project_id=project_id,
+                                source_id=paper_id,
+                                target_id=entity_id,
+                                relationship_type=rel_type,
+                                properties={"confidence": getattr(entity, 'confidence', 0.7)},
+                            )
+
+                        if entity_type_str == "Concept":
+                            stats["concepts_extracted"] += 1
+                        elif entity_type_str == "Method":
+                            stats["methods_extracted"] += 1
+                        elif entity_type_str == "Finding":
+                            stats["findings_extracted"] += 1
+                        stored_entity_keys.add(entity_key)
+                        # Phase 7A: Track for chunk-entity linking
+                        if entity_id:
+                            _entity_ids_and_names.append((entity_id, canonical_name))
+
+                except Exception as e:
+                    logger.warning(f"Entity extraction failed for {filename}: {e}")
+
+            # Phase 7A: Link entities to source chunks for provenance
+            if paper_id and chunks_created > 0:
+                all_tracked = list(_entity_ids_and_names)
+                # Merge section-extracted entities if they were tracked
+                try:
+                    all_tracked = _section_entity_ids_and_names + all_tracked
+                except NameError:
+                    pass  # _section_entity_ids_and_names not defined (no chunking occurred)
+                if all_tracked:
+                    await self._link_entities_to_chunks(project_id, paper_id, all_tracked)
+
+            # Phase 9A: Table extraction for SOTA comparison tables
+            if self.graph_store and paper_id:
+                await self._extract_tables_from_pdf(
+                    pdf_path=tmp_path,
+                    project_id=project_id,
+                    paper_id=paper_id,
+                    stats=stats,
+                )
+
+            if stats["raw_entities_extracted"] > 0:
+                stats["canonicalization_rate"] = (
+                    stats["merges_applied"] / stats["raw_entities_extracted"]
+                )
+            else:
+                stats["canonicalization_rate"] = 0.0
+
+            return {"success": True, "paper_id": paper_id, "stats": stats}
+
         except Exception as e:
-            logger.warning(f"LLM concept extraction failed: {e}")
-            return []
-
-
-async def import_pdf_from_upload(
-    file_content: bytes,
-    filename: str,
-    project_id: str,
-    db_connection=None,
-    graph_store=None,
-    progress_callback=None,
-) -> dict:
-    """
-    Import a PDF from uploaded content.
-
-    Saves the file temporarily, imports it, then cleans up.
-    """
-    import tempfile
-
-    # Save to temp file
-    temp_dir = tempfile.mkdtemp()
-    temp_path = os.path.join(temp_dir, filename)
-
-    try:
-        with open(temp_path, "wb") as f:
-            f.write(file_content)
-
-        importer = PDFImporter(
-            db_connection=db_connection,
-            graph_store=graph_store,
-            progress_callback=progress_callback,
-        )
-
-        result = await importer.import_pdf(
-            pdf_path=temp_path,
-            project_id=project_id,
-            extract_entities=True,
-        )
-
-        return result
-
-    finally:
-        # Cleanup temp file
-        try:
-            os.remove(temp_path)
-            os.rmdir(temp_dir)
-        except Exception:
-            pass
+            logger.error(f"Failed to import {filename}: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass

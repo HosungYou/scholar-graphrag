@@ -5,22 +5,92 @@ AGENTiGraph-style GraphRAG platform for visualizing and exploring
 knowledge graphs built from ScholaRAG literature review data.
 """
 
+import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import db, init_db, close_db
-from routers.projects import router as projects_router
-from routers.graph import router as graph_router
-from routers.chat import router as chat_router
-from routers.import_ import router as import_router
-from routers.metrics import router as metrics_router
-from routers.settings import router as settings_router
+from cache import init_llm_cache, get_llm_cache
+from routers import auth, chat, graph, import_, integrations, prisma, projects, teams, system, quota
+from routers import settings as settings_router
+from auth.supabase_client import supabase_client
+from auth.middleware import AuthMiddleware
+from middleware.rate_limiter import RateLimiterMiddleware, init_rate_limit_store
+from middleware.quota_service import init_quota_service, get_quota_service
+from middleware.quota_middleware import QuotaTrackingMiddleware
+from middleware.error_tracking import ErrorTrackingMiddleware, init_error_tracker
+from middleware.cors_error_handler import CORSErrorHandlerMiddleware
+from jobs.job_store import JobStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# PERF-011: Background cleanup task handle
+_cleanup_task: asyncio.Task | None = None
+
+
+async def periodic_cache_cleanup() -> None:
+    """
+    PERF-011: Periodically clean up expired cache entries.
+
+    Runs every 5 minutes to prevent unbounded memory growth.
+    """
+    maintenance_tick = 0
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            maintenance_tick += 1
+
+            cache = get_llm_cache()
+            cleaned = cache.cleanup_expired()
+            if cleaned > 0:
+                logger.info(f"PERF-011: Cleaned {cleaned} expired cache entries")
+
+            # Flush quota usage buffer regularly to avoid in-memory growth.
+            quota_service = get_quota_service()
+            flushed = await quota_service.flush_buffer()
+            if flushed > 0:
+                logger.info(f"PERF-011: Flushed {flushed} quota usage buffer entries")
+
+            # Run heavier maintenance every hour.
+            if maintenance_tick % 12 == 0:
+                cleaned_legacy = import_.cleanup_legacy_import_jobs(max_age_hours=24)
+                if cleaned_legacy > 0:
+                    logger.info(f"PERF-011: Cleaned {cleaned_legacy} legacy in-memory import jobs")
+
+                try:
+                    job_store = await import_.get_job_store()
+                    cleaned_jobs = await job_store.cleanup_old_jobs(days=7)
+                    if cleaned_jobs > 0:
+                        logger.info(f"PERF-011: Cleaned {cleaned_jobs} old JobStore records")
+                except Exception as e:
+                    logger.warning(f"PERF-011: Failed periodic job cleanup: {e}")
+        except asyncio.CancelledError:
+            logger.debug("Cache cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"Error in cache cleanup: {e}")
+
+
+def _sanitize_database_url(url: str) -> str:
+    """
+    Sanitize database URL for logging by removing credentials.
+
+    Transforms: postgresql://user:password@host:port/dbname
+    Into:       postgresql://***:***@host:port/dbname
+    """
+    if not url:
+        return "<not configured>"
+
+    # Pattern to match credentials in database URL
+    # Handles: protocol://user:password@host or protocol://user@host
+    pattern = r"(://)[^:@]+(?::[^@]+)?(@)"
+    sanitized = re.sub(pattern, r"\1***:***\2", url)
+    return sanitized
 
 
 @asynccontextmanager
@@ -28,17 +98,79 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("ScholaRAG_Graph Backend starting...")
-    db_url = settings.database_url
-    if "://" in db_url and "@" in db_url:
-        prefix, rest = db_url.split("://", 1)
-        creds, host = rest.split("@", 1)
-        if ":" in creds:
-            user, _password = creds.split(":", 1)
-            db_url = f"{prefix}://{user}:***@{host}"
-    logger.info(f"   Database: {db_url}")
-    logger.info(f"   Default LLM: {settings.default_llm_provider}/{settings.default_llm_model}")
+    logger.info(f"   Environment: {settings.environment}")
+    logger.info(f"   Database: {_sanitize_database_url(settings.database_url)}")
+
+    # Validate required settings
+    missing_settings = settings.validate_required_settings()
+    if missing_settings:
+        for missing in missing_settings:
+            logger.warning(f"   ⚠️ Missing: {missing}")
+        if settings.environment == "production":
+            logger.critical("   ❌ Cannot start in production with missing required settings!")
+            raise RuntimeError(f"Missing required settings: {', '.join(missing_settings)}")
+
+    # Get available LLM provider (may differ from default if key missing)
+    available_provider = settings.get_available_llm_provider()
+    if available_provider != settings.default_llm_provider:
+        logger.warning(f"   ⚠️ DEFAULT_LLM_PROVIDER={settings.default_llm_provider} but using {available_provider} (key available)")
+    logger.info(f"   LLM Provider: {available_provider}/{settings.default_llm_model}")
+
+    # Initialize LLM cache
+    init_llm_cache(
+        default_ttl=settings.llm_cache_ttl,
+        max_size=settings.llm_cache_max_size,
+        enabled=settings.llm_cache_enabled,
+    )
+    logger.info(f"   LLM Cache: {'enabled' if settings.llm_cache_enabled else 'disabled'} (TTL={settings.llm_cache_ttl}s)")
+
+    # Initialize rate limit store (Redis or in-memory)
+    init_rate_limit_store(
+        use_redis=settings.redis_rate_limit_enabled and bool(settings.redis_url),
+        redis_url=settings.redis_url if settings.redis_url else None,
+    )
+    logger.info(f"   Rate Limiter: {'Redis' if settings.redis_rate_limit_enabled and settings.redis_url else 'in-memory'}")
+
+    # Initialize API quota service
+    # Quota service tracks per-user/project API usage for external services
+    init_quota_service(db=None, cache_ttl=60)  # DB will be connected later
+    logger.info("   API Quota Service: initialized (in-memory cache)")
+
+    # Initialize error tracking service (PERF-004)
+    # Tracks HTTP errors for monitoring and alerting
+    init_error_tracker(max_recent_errors=100)
+    logger.info("   Error Tracker: initialized (in-memory, 100 recent errors)")
+
+    # Initialize Supabase Auth
+    # SEC-012: Validate auth configuration consistency
+    supabase_configured = bool(settings.supabase_url and settings.supabase_anon_key)
+
+    if supabase_configured:
+        supabase_client.initialize(settings.supabase_url, settings.supabase_anon_key)
+        logger.info("   Supabase Auth: configured")
+    else:
+        # Check for configuration mismatch: require_auth=true but Supabase not configured
+        if settings.require_auth:
+            if settings.environment in ("production", "staging"):
+                # Production: fail-fast - can't require auth without Supabase
+                logger.critical(
+                    "FATAL: require_auth=true but Supabase is not configured. "
+                    "Set SUPABASE_URL and SUPABASE_ANON_KEY, or set REQUIRE_AUTH=false."
+                )
+                raise RuntimeError(
+                    f"Authentication required but Supabase not configured in {settings.environment}"
+                )
+            else:
+                # Development: warn but auto-disable auth
+                logger.warning(
+                    "   Supabase Auth: NOT configured but require_auth=true. "
+                    "Auto-disabling auth for development. Set REQUIRE_AUTH=false to silence this warning."
+                )
+        else:
+            logger.warning("   Supabase Auth: NOT configured (running without auth)")
 
     # Initialize database connection
+    # ARCH-001: Fail-fast in production when DB connection fails
     try:
         await init_db()
         logger.info("   Database connected successfully")
@@ -48,14 +180,82 @@ async def lifespan(app: FastAPI):
             logger.info("   pgvector extension: available")
         else:
             logger.warning("   pgvector extension: NOT available")
+
+        # BUG-028: Mark interrupted jobs on server restart
+        # When server restarts (e.g., Render auto-deploy), background tasks are killed.
+        # Mark RUNNING jobs as INTERRUPTED so users know what happened.
+        try:
+            job_store = JobStore(db_connection=db if db.is_connected else None)
+            await job_store.init_table()
+            interrupted_count = await job_store.mark_running_as_interrupted()
+            if interrupted_count > 0:
+                logger.warning(f"   BUG-028: Marked {interrupted_count} interrupted import jobs")
+        except Exception as job_err:
+            logger.warning(f"   Failed to check interrupted jobs: {job_err}")
     except Exception as e:
         logger.error(f"   Database connection failed: {e}")
-        logger.warning("   Running in memory-only mode")
+
+        # In production/staging: fail-fast - don't start the app without DB
+        # Most endpoints require DB and will return 500 errors anyway
+        if settings.environment in ("production", "staging"):
+            logger.critical(
+                "FATAL: Database connection required in production. "
+                "Cannot start application without database."
+            )
+            raise RuntimeError(
+                f"Database connection failed in {settings.environment} environment"
+            ) from e
+
+        # In development: allow memory-only mode for testing
+        logger.warning("   Running in memory-only mode (development only)")
+
+    # PERF-011: Start periodic cache cleanup task
+    global _cleanup_task
+    _cleanup_task = asyncio.create_task(periodic_cache_cleanup())
+    logger.info("   PERF-011: Periodic cache cleanup task started")
 
     yield
 
     # Shutdown
     logger.info("ScholaRAG_Graph Backend shutting down...")
+
+    # PERF-011: Cancel cleanup task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("   PERF-011: Cache cleanup task stopped")
+
+    # Flush and clear quota service caches
+    try:
+        quota_service = get_quota_service()
+        flushed = await quota_service.flush_buffer()
+        quota_service.clear_cache()
+        logger.info(f"   PERF-011: Quota cache cleared (flushed {flushed} buffered entries)")
+    except Exception as e:
+        logger.warning(f"   PERF-011: Failed to flush quota service buffer: {e}")
+
+    # Clean legacy in-memory import jobs and old persisted jobs
+    try:
+        cleaned_legacy = import_.cleanup_legacy_import_jobs(max_age_hours=0)
+        if cleaned_legacy > 0:
+            logger.info(f"   PERF-011: Cleared {cleaned_legacy} legacy in-memory import jobs")
+
+        job_store = await import_.get_job_store()
+        cleaned_jobs = await job_store.cleanup_old_jobs(days=7)
+        if cleaned_jobs > 0:
+            logger.info(f"   PERF-011: Cleaned {cleaned_jobs} old JobStore records on shutdown")
+    except Exception as e:
+        logger.warning(f"   PERF-011: Failed shutdown import/job cleanup: {e}")
+
+    # PERF-011: Clean up LLM cache to free memory
+    cache = get_llm_cache()
+    cache_size = len(cache._cache)
+    cache.invalidate()
+    logger.info(f"   PERF-011: Cleared {cache_size} LLM cache entries")
+
     await close_db()
 
 
@@ -66,21 +266,89 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# ============================================================================
+# Middleware Stack (INFRA-008)
+# ============================================================================
+# FastAPI middleware is LIFO: last added = outermost = runs first on request.
+# Execution order (request): CORS → ErrorTracking → Quota → Auth → RateLimit → CORSErrorHandler → App
+# Execution order (response): App → CORSErrorHandler → RateLimit → Auth → Quota → ErrorTracking → CORS
+#
+# CRITICAL: CORSMiddleware MUST be outermost so that ALL responses
+# (including Auth 401) get CORS headers. Without this, the browser
+# blocks 401 responses as CORS violations and the frontend cannot
+# distinguish "not logged in" from "server down".
+# ============================================================================
+
+# --- Innermost middleware (added first) ---
+
+# INFRA-007: CORS Error Handler Middleware
+# Catches unhandled exceptions and converts to JSONResponse so that
+# the response passes through CORS and gets proper headers.
+app.add_middleware(CORSErrorHandlerMiddleware)
+logger.info("CORS Error Handler: enabled (INFRA-007)")
+
+# Rate limiting middleware
+# Limits: /api/auth/* - 10/min, /api/chat/* - 30/min, /api/import/* - 5/min
+_rate_limit_enabled = settings.rate_limit_enabled and settings.environment != "development"
+app.add_middleware(RateLimiterMiddleware, enabled=_rate_limit_enabled)
+logger.info(f"Rate Limiting: {'enabled' if _rate_limit_enabled else 'disabled (development mode)'}")
+
+# Authentication middleware (enforces centralized auth policies)
+# See auth/policies.py for route-level policy configuration
+app.add_middleware(AuthMiddleware)
+
+# API Quota tracking middleware
+# Tracks usage for /api/integrations/* endpoints
+_quota_tracking_enabled = settings.environment != "development"
+app.add_middleware(QuotaTrackingMiddleware, enabled=_quota_tracking_enabled)
+logger.info(f"Quota Tracking: {'enabled' if _quota_tracking_enabled else 'disabled (development mode)'}")
+
+# Error tracking middleware (PERF-004)
+# Tracks HTTP errors for monitoring and alerting
+app.add_middleware(ErrorTrackingMiddleware, enabled=True)
+logger.info("Error Tracking: enabled")
+
+# --- Outermost middleware (added last, runs first on request) ---
+
+# CORS middleware — MUST be outermost (INFRA-008)
+# SECURITY: Use explicit origins + strict regex for Vercel previews.
+_cors_origins = settings.cors_origins_list or []
+if settings.environment == "development":
+    _cors_origins = list(set(_cors_origins + [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+    ]))
+
+# Vercel Preview URL regex pattern (project/team scoped)
+_vercel_preview_regex = r"^https://schola-rag-graph-[a-z0-9]+-hosung-yous-projects\.vercel\.app$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=_cors_origins,
+    allow_origin_regex=_vercel_preview_regex,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+logger.info("CORS: enabled (outermost — INFRA-008)")
 
-app.include_router(projects_router, prefix="/api/projects", tags=["Projects"])
-app.include_router(graph_router, prefix="/api/graph", tags=["Graph"])
-app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
-app.include_router(import_router, prefix="/api/import", tags=["Import"])
-app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
-app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+# Include routers
+app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
+app.include_router(graph.router, prefix="/api/graph", tags=["Graph"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(import_.router, prefix="/api/import", tags=["Import"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
+app.include_router(prisma.router, prefix="/api/prisma", tags=["PRISMA"])
+app.include_router(integrations.router, tags=["Integrations"])
+app.include_router(quota.router, tags=["Quota"])
+app.include_router(system.router, tags=["System"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
+
+# Evaluation endpoints (Phase 11E)
+from routers import evaluation
+app.include_router(evaluation.router, tags=["Evaluation"])
 
 
 @app.get("/")
@@ -95,24 +363,56 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check."""
+    """
+    Detailed health check.
+
+    Returns 503 Service Unavailable if database is not connected.
+    This helps load balancers and monitoring systems detect unhealthy instances.
+    """
     db_status = "disconnected"
     pgvector_status = "unavailable"
+    db_error = None
 
     try:
-        if await db.health_check():
+        health_snapshot = await db.get_health_snapshot()
+        if health_snapshot["db_ok"]:
             db_status = "connected"
-        if await db.check_pgvector():
+        if health_snapshot["pgvector_ok"]:
             pgvector_status = "available"
-    except Exception:
-        pass
+    except Exception as e:
+        db_error = str(e)
+        logger.error(f"Health check failed - Database error: {e}")
 
-    return {
-        "status": "healthy",
+    # Check LLM configuration
+    available_provider = settings.get_available_llm_provider()
+    llm_configured = bool(getattr(settings, f"{available_provider}_api_key", None))
+
+    # Get LLM cache stats
+    cache_stats = get_llm_cache().get_stats()
+
+    # Determine overall health status
+    is_healthy = db_status == "connected"
+    status = "healthy" if is_healthy else "unhealthy"
+
+    response_data = {
+        "status": status,
         "database": db_status,
         "pgvector": pgvector_status,
-        "llm_provider": settings.default_llm_provider,
+        "llm_provider": available_provider,
+        "llm_configured": llm_configured,
+        "llm_cache": cache_stats,
+        "environment": settings.environment,
     }
+
+    # Return 503 if database is not connected
+    if not is_healthy:
+        response_data["error"] = db_error or "Database connection failed"
+        raise HTTPException(
+            status_code=503,
+            detail=response_data,
+        )
+
+    return response_data
 
 
 if __name__ == "__main__":

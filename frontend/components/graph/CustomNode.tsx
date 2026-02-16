@@ -1,18 +1,15 @@
 'use client';
 
-import { memo, useMemo } from 'react';
+import { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { FileText, User, Lightbulb, Beaker, Trophy, Activity, MessageSquare } from 'lucide-react';
+import { FileText, User, Lightbulb, Beaker, Trophy } from 'lucide-react';
 import clsx from 'clsx';
 
 interface CustomNodeData {
   label: string;
   entityType: string;
-  properties?: Record<string, unknown>;
+  properties?: Record<string, any>;
   isHighlighted?: boolean;
-  importance?: number;
-  citationCount?: number;
-  paperCount?: number;
 }
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -21,134 +18,125 @@ const iconMap: Record<string, React.ReactNode> = {
   Concept: <Lightbulb className="w-4 h-4" />,
   Method: <Beaker className="w-4 h-4" />,
   Finding: <Trophy className="w-4 h-4" />,
-  Result: <Trophy className="w-4 h-4" />,
-  Claim: <MessageSquare className="w-4 h-4" />,
+  // TTO entities
+  Invention: <Lightbulb className="w-4 h-4" />,
+  Patent: <FileText className="w-4 h-4" />,
+  Inventor: <User className="w-4 h-4" />,
+  Technology: <Lightbulb className="w-4 h-4" />,
+  License: <FileText className="w-4 h-4" />,
+  Grant: <Lightbulb className="w-4 h-4" />,
+  Department: <User className="w-4 h-4" />,
 };
 
-const nexusColors: Record<string, string> = {
-  Paper: '#3b82f6',
-  Author: '#10b981',
-  Concept: '#8b5cf6',
-  Method: '#f59e0b',
-  Finding: '#ef4444',
-  Result: '#ef4444',
-  Claim: '#ec4899',
+const colorMap: Record<string, { bg: string; border: string; text: string }> = {
+  Paper: {
+    bg: 'bg-blue-50',
+    border: 'border-blue-400',
+    text: 'text-blue-700',
+  },
+  Author: {
+    bg: 'bg-green-50',
+    border: 'border-green-400',
+    text: 'text-green-700',
+  },
+  Concept: {
+    bg: 'bg-purple-50',
+    border: 'border-purple-400',
+    text: 'text-purple-700',
+  },
+  Method: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-400',
+    text: 'text-amber-700',
+  },
+  Finding: {
+    bg: 'bg-red-50',
+    border: 'border-red-400',
+    text: 'text-red-700',
+  },
+  // TTO entities
+  Invention: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-400',
+    text: 'text-amber-700',
+  },
+  Patent: {
+    bg: 'bg-indigo-50',
+    border: 'border-indigo-400',
+    text: 'text-indigo-700',
+  },
+  Inventor: {
+    bg: 'bg-violet-50',
+    border: 'border-violet-400',
+    text: 'text-violet-700',
+  },
+  Technology: {
+    bg: 'bg-cyan-50',
+    border: 'border-cyan-400',
+    text: 'text-cyan-700',
+  },
+  License: {
+    bg: 'bg-emerald-50',
+    border: 'border-emerald-400',
+    text: 'text-emerald-700',
+  },
+  Grant: {
+    bg: 'bg-orange-50',
+    border: 'border-orange-400',
+    text: 'text-orange-700',
+  },
+  Department: {
+    bg: 'bg-purple-50',
+    border: 'border-purple-400',
+    text: 'text-purple-700',
+  },
 };
 
 function CustomNodeComponent({ data, selected }: NodeProps<CustomNodeData>) {
-  const nodeColor = nexusColors[data.entityType] || nexusColors.Paper;
+  const colors = colorMap[data.entityType] || colorMap.Paper;
   const icon = iconMap[data.entityType] || iconMap.Paper;
 
-  const paperCount = useMemo(() => {
-    return (data.properties?.paper_count as number) || 0;
-  }, [data.properties?.paper_count]);
-
-  const scale = useMemo(() => {
-    let baseScale = 1;
-    if (data.importance) baseScale += data.importance * 0.15;
-
-    // Add frequency-based boost
-    if (paperCount > 0) {
-      const frequencyBoost = Math.min(Math.log2(paperCount + 1) * 0.08, 0.3);
-      baseScale += frequencyBoost;
-    }
-
-    return baseScale;
-  }, [data.importance, paperCount]);
-
-  const year = data.properties?.year as string | number | undefined;
-
-  // Use CSS transitions instead of Framer Motion for performance
   return (
     <div
       className={clsx(
-        'relative px-5 py-4 rounded border-2',
-        'min-w-[160px] max-w-[240px]',
-        'bg-surface-2',
-        'transition-all duration-200 ease-out',
-        'hover:scale-105 hover:-translate-y-1',
-        selected ? 'border-text-primary ring-4 ring-teal' : 'border-border',
-        data.isHighlighted ? 'z-50 scale-105' : 'z-0'
+        'px-4 py-3 rounded-lg border-2 shadow-sm transition-all duration-200 min-w-[120px] max-w-[200px]',
+        colors.bg,
+        colors.border,
+        selected && 'ring-2 ring-blue-500 ring-offset-2',
+        data.isHighlighted && 'ring-4 ring-yellow-400 ring-opacity-75 animate-pulse'
       )}
-      style={{
-        transform: `scale(${data.isHighlighted ? scale * 1.05 : scale})`,
-        borderColor: data.isHighlighted || selected ? nodeColor : 'rgba(255,255,255,0.1)',
-        boxShadow: data.isHighlighted
-          ? `0 0 30px ${nodeColor}66, inset 0 0 15px ${nodeColor}33`
-          : '0 10px 30px -10px rgba(0,0,0,0.5)',
-      }}
     >
-      {/* Background Glow - simplified */}
-      <div
-        className="absolute inset-0 rounded-2xl opacity-10 pointer-events-none"
-        style={{ background: `radial-gradient(circle at center, ${nodeColor}, transparent)` }}
+      {/* Handles for connections */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="w-2 h-2 !bg-gray-400"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="w-2 h-2 !bg-gray-400"
       />
 
-      {/* Pulsing indicator for important nodes - CSS animation only */}
-      {data.importance && data.importance > 0.7 && (
-        <div
-          className="absolute -inset-1 rounded-2xl opacity-20 pointer-events-none animate-pulse"
-          style={{ border: `2px solid ${nodeColor}` }}
-        />
-      )}
-
-      <Handle type="target" position={Position.Top} className="!bg-surface-3 !border-none !w-2 !h-2" />
-      <Handle type="source" position={Position.Bottom} className="!bg-surface-3 !border-none !w-2 !h-2" />
-
-      <div className="relative flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div
-            className="p-1.5 rounded-lg text-white"
-            style={{ backgroundColor: `${nodeColor}33`, color: nodeColor }}
+      {/* Node content */}
+      <div className="flex items-start gap-2">
+        <div className={clsx('flex-shrink-0 mt-0.5', colors.text)}>{icon}</div>
+        <div className="min-w-0 flex-1">
+          <p
+            className={clsx(
+              'text-sm font-medium truncate',
+              colors.text
+            )}
+            title={data.label}
           >
-            {icon}
-          </div>
-          {year && (
-            <span className="text-[10px] font-mono text-text-ghost uppercase tracking-widest">
-              {year}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col">
-          <p className="text-sm font-medium text-text-primary leading-tight line-clamp-2 font-display">
             {data.label}
           </p>
-          <span className="text-[10px] font-medium uppercase tracking-tighter mt-1 opacity-50" style={{ color: nodeColor }}>
-            {data.entityType}
-          </span>
+          <p className="text-xs text-gray-500">{data.entityType}</p>
+          {data.properties?.year && (
+            <p className="text-xs text-gray-400">{data.properties.year}</p>
+          )}
         </div>
-
-        {data.citationCount && data.citationCount > 0 && (
-          <div className="flex items-center gap-1 mt-1">
-            <Activity className="w-3 h-3 text-teal opacity-70" />
-            <span className="text-[10px] text-teal font-mono">
-              {data.citationCount} CITATIONS
-            </span>
-          </div>
-        )}
-
-        {paperCount > 0 && data.entityType !== 'Paper' && (
-          <div className="flex items-center gap-1 mt-1">
-            <span className="text-[10px] text-text-ghost font-mono">
-              📄 {paperCount} papers
-            </span>
-          </div>
-        )}
       </div>
-
-      {/* Progress Bar (Importance) - CSS transition */}
-      {data.importance !== undefined && (
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b overflow-hidden bg-surface-3">
-          <div
-            className="h-full transition-all duration-500"
-            style={{
-              backgroundColor: nodeColor,
-              width: `${data.importance * 100}%`
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }

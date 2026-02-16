@@ -23,7 +23,6 @@ class ResponseResult(BaseModel):
     highlighted_nodes: list[str] = []
     highlighted_edges: list[str] = []
     suggested_follow_ups: list[str] = []
-    retrieval_trace: dict | None = None
 
 
 class ResponseAgent:
@@ -75,50 +74,59 @@ Confidence: {reasoning_result.confidence}"""
             json_str = response.strip().replace("```json", "").replace("```", "").strip()
             data = json.loads(json_str)
 
-            # Build retrieval trace
-            trace = None
-            if hasattr(reasoning_result, 'trace_steps') and reasoning_result.trace_steps:
-                trace = {
-                    "strategy": "hybrid",
-                    "steps": [
-                        {
-                            "step_index": s.step_index,
-                            "action": s.action,
-                            "node_ids": s.node_ids,
-                            "thought": s.thought,
-                            "duration_ms": s.duration_ms,
-                        } if hasattr(s, 'step_index') else s
-                        for s in reasoning_result.trace_steps
-                    ],
-                    "reasoning_path": reasoning_result.supporting_nodes[:20],
-                    "metrics": {
-                        "total_steps": len(reasoning_result.trace_steps),
-                        "total_latency_ms": sum(
-                            getattr(s, 'duration_ms', 0) for s in reasoning_result.trace_steps
-                        ),
-                    },
-                }
+            answer = data.get("answer", reasoning_result.final_conclusion)
+
+            # Guard against LLM hallucination about graph initialization
+            hallucination_phrases = [
+                "not being initialized", "not initialized", "currently unavailable",
+                "graph is unavailable", "no data available", "knowledge graph is empty",
+                "unable to access the knowledge graph"
+            ]
+            if any(phrase in answer.lower() for phrase in hallucination_phrases):
+                logger.warning(f"LLM hallucinated unavailability: {answer[:100]}...")
+                # Use the reasoning result's conclusion which is based on actual data
+                answer = reasoning_result.final_conclusion
+                if reasoning_result.research_gaps:
+                    answer += "\n\n**Research Gaps Found:**\n"
+                    for gap in reasoning_result.research_gaps:
+                        answer += f"- {gap.gap_description}\n"
+                        if gap.suggested_questions:
+                            for q in gap.suggested_questions[:2]:
+                                answer += f"  - {q}\n"
 
             return ResponseResult(
-                answer=data.get("answer", reasoning_result.final_conclusion),
+                answer=answer,
                 citations=[],
                 highlighted_nodes=reasoning_result.supporting_nodes,
                 highlighted_edges=reasoning_result.supporting_edges,
                 suggested_follow_ups=data.get("suggested_follow_ups", self._default_follow_ups(intent)),
-                retrieval_trace=trace,
             )
         except Exception:
             return self._generate_fallback(query, reasoning_result, intent)
 
     def _generate_fallback(self, query: str, reasoning_result, intent) -> ResponseResult:
-        """Fallback response generation."""
+        """
+        Fallback response generation.
+
+        v0.6.0 Fix: Enhanced to include more context from reasoning steps.
+        """
         answer_parts = [reasoning_result.final_conclusion]
 
+        # v0.6.0: Include evidence from steps if available
+        has_meaningful_evidence = False
         if reasoning_result.steps:
-            answer_parts.append("\n**Analysis:**")
             for step in reasoning_result.steps:
-                if step.conclusion:
-                    answer_parts.append(f"• {step.conclusion}")
+                if step.evidence and any(e for e in step.evidence if e and len(e) > 10):
+                    has_meaningful_evidence = True
+                    break
+
+        if reasoning_result.steps and has_meaningful_evidence:
+            answer_parts.append("\n**Analysis Details:**")
+            for step in reasoning_result.steps:
+                if step.evidence:
+                    for evidence in step.evidence:
+                        if evidence and len(evidence) > 10:
+                            answer_parts.append(f"• {evidence}")
 
         return ResponseResult(
             answer="\n".join(answer_parts),
@@ -126,7 +134,6 @@ Confidence: {reasoning_result.confidence}"""
             highlighted_nodes=reasoning_result.supporting_nodes,
             highlighted_edges=reasoning_result.supporting_edges,
             suggested_follow_ups=self._default_follow_ups(intent),
-            retrieval_trace=None,
         )
 
     def _default_follow_ups(self, intent) -> list[str]:

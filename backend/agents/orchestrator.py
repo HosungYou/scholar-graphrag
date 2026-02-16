@@ -13,9 +13,9 @@ Coordinates the 6-agent system for processing user queries:
 import logging
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from .intent_agent import IntentAgent, IntentResult
+from .intent_agent import IntentAgent, IntentResult, IntentType
 from .concept_extraction_agent import ConceptExtractionAgent, ExtractionResult
 from .task_planning_agent import TaskPlanningAgent, TaskPlan
 from .query_execution_agent import QueryExecutionAgent, ExecutionResult
@@ -38,6 +38,14 @@ class ConversationContext:
 
 
 @dataclass
+class ResearchGapSummary:
+    """Summary of a research gap suggestion."""
+    description: str
+    questions: list[str] = field(default_factory=list)
+    bridge_concepts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class OrchestratorResult:
     """Complete result from the orchestration pipeline."""
     content: str
@@ -48,6 +56,9 @@ class OrchestratorResult:
     intent: Optional[str] = None
     confidence: float = 0.0
     processing_steps: list[Dict[str, Any]] = field(default_factory=list)
+    # New: Gap-based suggestions
+    research_gaps: list[ResearchGapSummary] = field(default_factory=list)
+    hidden_connections: list[str] = field(default_factory=list)
 
 
 class AgentOrchestrator:
@@ -58,6 +69,10 @@ class AgentOrchestrator:
     Query → Intent → Concept Extraction → Task Planning →
     Query Execution → Reasoning → Response
     """
+
+    # PERF-011: Memory optimization - limit conversation context storage
+    MAX_CONTEXTS = 50  # Maximum number of conversations to keep in memory
+    CONTEXT_TTL_HOURS = 24  # Hours before context is eligible for cleanup
 
     def __init__(
         self,
@@ -76,16 +91,49 @@ class AgentOrchestrator:
         self.concept_agent = ConceptExtractionAgent(llm_provider, graph_store)
         self.planning_agent = TaskPlanningAgent(llm_provider)
         self.execution_agent = QueryExecutionAgent(db_connection, vector_store, graph_store)
-        self.reasoning_agent = ReasoningAgent(llm_provider)
+        self.reasoning_agent = ReasoningAgent(llm_provider, db_connection)  # Pass db for gap analysis
         self.response_agent = ResponseAgent(llm_provider)
 
         # Conversation contexts
         self._contexts: Dict[str, ConversationContext] = {}
 
+    def _cleanup_old_contexts(self) -> int:
+        """
+        PERF-011: Remove old conversation contexts to free memory.
+
+        Returns:
+            Number of contexts removed
+        """
+        cutoff = datetime.now() - timedelta(hours=self.CONTEXT_TTL_HOURS)
+        to_remove = [
+            cid for cid, ctx in self._contexts.items()
+            if ctx.last_updated < cutoff
+        ]
+
+        for cid in to_remove:
+            del self._contexts[cid]
+
+        if to_remove:
+            logger.info(f"PERF-011: Cleaned up {len(to_remove)} old conversation contexts")
+
+        return len(to_remove)
+
     def get_or_create_context(
         self, conversation_id: str, project_id: str
     ) -> ConversationContext:
         """Get existing context or create new one."""
+        # PERF-011: Cleanup old contexts if at capacity
+        if len(self._contexts) >= self.MAX_CONTEXTS:
+            cleaned = self._cleanup_old_contexts()
+            # If still at capacity after cleanup, remove oldest
+            if len(self._contexts) >= self.MAX_CONTEXTS:
+                oldest_id = min(
+                    self._contexts.keys(),
+                    key=lambda k: self._contexts[k].last_updated
+                )
+                del self._contexts[oldest_id]
+                logger.debug(f"PERF-011: Evicted oldest context {oldest_id[:8]}...")
+
         if conversation_id not in self._contexts:
             self._contexts[conversation_id] = ConversationContext(
                 conversation_id=conversation_id,
@@ -93,12 +141,45 @@ class AgentOrchestrator:
             )
         return self._contexts[conversation_id]
 
+    async def _get_node_context(self, project_id: str, node_ids: list[str]) -> str:
+        """
+        Fetch node metadata for query enhancement.
+
+        Args:
+            project_id: Project UUID
+            node_ids: List of entity UUIDs
+
+        Returns:
+            Formatted context string with node names and types
+        """
+        if not node_ids or not self.db:
+            return ""
+
+        try:
+            # Query node names from database
+            sql = """
+            SELECT id, name, entity_type
+            FROM entities
+            WHERE project_id = $1 AND id = ANY($2::uuid[])
+            """
+            rows = await self.db.fetch(sql, project_id, node_ids)
+
+            if rows:
+                concepts = [f"{row['name']} ({row['entity_type']})" for row in rows]
+                return f"[User-selected concepts: {', '.join(concepts)}]"
+        except Exception as e:
+            logger.warning(f"Failed to get node context: {e}")
+
+        return ""
+
     async def process_query(
         self,
         query: str,
         project_id: str,
         conversation_id: Optional[str] = None,
         include_processing_steps: bool = False,
+        selected_node_ids: Optional[list[str]] = None,
+        pinned_node_ids: Optional[list[str]] = None,
     ) -> OrchestratorResult:
         """
         Process a user query through the full agent pipeline.
@@ -108,6 +189,8 @@ class AgentOrchestrator:
             project_id: ID of the project/knowledge graph
             conversation_id: Optional conversation ID for context
             include_processing_steps: Whether to include detailed processing info
+            selected_node_ids: Currently selected nodes in graph view
+            pinned_node_ids: User-pinned nodes for persistent context
 
         Returns:
             OrchestratorResult with answer and metadata
@@ -115,6 +198,15 @@ class AgentOrchestrator:
         processing_steps = []
 
         try:
+            # v0.7.0: Enhance query with selected node context (Graph-to-Prompt)
+            node_context = ""
+            all_node_ids = (selected_node_ids or []) + (pinned_node_ids or [])
+            if all_node_ids:
+                node_context = await self._get_node_context(project_id, all_node_ids)
+                if node_context:
+                    query = f"{node_context}\n\n{query}"
+                    logger.info(f"Graph-to-Prompt: Enhanced query with {len(all_node_ids)} nodes")
+
             # Step 1: Intent Classification
             logger.info(f"[1/6] Classifying intent for: {query[:50]}...")
             intent_result = await self.intent_agent.classify(query)
@@ -125,6 +217,7 @@ class AgentOrchestrator:
                     "confidence": intent_result.confidence,
                 }
             })
+
 
             # Step 2: Concept/Entity Extraction
             logger.info(f"[2/6] Extracting concepts...")
@@ -162,16 +255,22 @@ class AgentOrchestrator:
                 }
             })
 
-            # Step 5: Reasoning
-            logger.info(f"[5/6] Applying reasoning...")
+            # Step 5: Reasoning (with gap analysis)
+            logger.info(f"[5/6] Applying reasoning with gap analysis...")
             reasoning_result = await self.reasoning_agent.reason(
-                query, intent_result.intent, execution_result
+                query,
+                intent_result.intent,
+                execution_result,
+                project_id=project_id,  # Pass project_id for gap analysis
+                include_gaps=True,
             )
             processing_steps.append({
                 "step": "reasoning",
                 "result": {
                     "num_steps": len(reasoning_result.steps),
                     "confidence": reasoning_result.confidence,
+                    "research_gaps": len(reasoning_result.research_gaps),
+                    "hidden_connections": len(reasoning_result.hidden_connections),
                 }
             })
 
@@ -205,6 +304,16 @@ class AgentOrchestrator:
                 context.highlighted_edges = response_result.highlighted_edges
                 context.last_updated = datetime.now()
 
+            # Convert research gaps to summaries
+            research_gap_summaries = [
+                ResearchGapSummary(
+                    description=gap.gap_description,
+                    questions=gap.suggested_questions,
+                    bridge_concepts=gap.bridge_concepts,
+                )
+                for gap in reasoning_result.research_gaps
+            ]
+
             return OrchestratorResult(
                 content=response_result.answer,
                 citations=[c.label for c in response_result.citations],
@@ -214,6 +323,8 @@ class AgentOrchestrator:
                 intent=intent_result.intent.value,
                 confidence=reasoning_result.confidence,
                 processing_steps=processing_steps if include_processing_steps else [],
+                research_gaps=research_gap_summaries,
+                hidden_connections=reasoning_result.hidden_connections,
             )
 
         except Exception as e:
@@ -314,23 +425,29 @@ class AgentOrchestrator:
             return "Graph context unavailable."
 
     def _build_system_prompt(self, graph_context: str) -> str:
-        """Build system prompt for LLM."""
-        return f"""You are a research assistant analyzing a knowledge graph of academic papers.
-Your role is to help researchers explore connections between papers, concepts, methods, and findings.
+        """Build system prompt for LLM - concept-centric design."""
+        return f"""You are a research assistant analyzing a concept-centric knowledge graph.
+This is NOT a paper-centric graph. Instead:
+- Concepts, Methods, Findings, Problems, Datasets, Metrics, Innovations, and Limitations are PRIMARY nodes
+- Papers and Authors are METADATA attached to concepts (not visible as separate nodes)
+- The focus is on understanding the research landscape through concept relationships
 
 {graph_context}
 
 Guidelines:
-1. Provide accurate, evidence-based responses
-2. Cite specific papers or concepts when relevant
-3. Highlight connections and relationships
-4. Suggest related areas to explore
-5. Be concise but comprehensive
+1. Focus on concepts and their relationships, not individual papers
+2. Identify patterns and themes across the literature
+3. Highlight research gaps - areas where concept clusters have weak connections
+4. Suggest bridge concepts that could connect different research areas
+5. Generate actionable research questions based on detected gaps
 
 When analyzing the graph:
-- Papers are connected to Authors, Concepts, Methods, and Findings
-- Relationships include: AUTHORED_BY, CITES, DISCUSSES_CONCEPT, USES_METHOD, HAS_FINDING
-- Help users discover research gaps and trends"""
+- Concepts connect via: RELATED_TO, CO_OCCURS_WITH, PREREQUISITE_OF
+- Methods connect to concepts via: APPLIES_TO
+- Findings connect to concepts via: SUPPORTS, CONTRADICTS
+- BRIDGES_GAP indicates AI-suggested connections across research gaps
+
+Your goal is to help researchers discover hidden connections and unexplored research opportunities."""
 
     def clear_context(self, conversation_id: str) -> bool:
         """Clear conversation context."""

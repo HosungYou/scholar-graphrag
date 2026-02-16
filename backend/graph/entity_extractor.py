@@ -1,185 +1,440 @@
 """
-LLM-based Entity Extractor
+LLM-based Entity Extractor for Academic Knowledge Graphs
 
-Extracts academic entities (Concepts, Methods, Findings) from paper text
-using Claude, GPT-4, or other LLM providers.
+Extracts structured academic entities from paper text using Claude 3.5 Haiku.
+Implements NLP-AKG methodology for few-shot knowledge graph construction.
+
+Entity Types:
+- Problem: Research questions/problems addressed
+- Concept: Key theoretical concepts (PRIMARY - become graph nodes)
+- Method: Research methodologies used
+- Dataset: Datasets mentioned
+- Metric: Evaluation metrics
+- Finding: Key research results
+- Innovation: Novel contributions
+- Limitation: Study limitations
+
+Reference: NLP-AKG (https://arxiv.org/html/2502.14192v1)
 """
 
+import asyncio
 import json
 import logging
-from typing import Optional
-from dataclasses import dataclass
+import re
+import time
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
 
 
+# PERF-011: Slow API call threshold (seconds)
+SLOW_API_THRESHOLD = 10.0
+
+
+# PERF-013: Optimized retry constants (reduced from 2/1.0 to 1/0.5)
+# - Max API calls: 3 → 2 (33% reduction)
+# - Recovery time: 1.0s → 0.5s
+MAX_RETRIES = 1
+RETRY_DELAY_SECONDS = 0.5
+
+# v0.10.0: Type-specific minimum confidence thresholds
+# Higher thresholds for types that need stronger evidence
+ENTITY_TYPE_CONFIDENCE_THRESHOLDS = {
+    "Concept": 0.6,       # Broad extraction - lower threshold
+    "Method": 0.7,        # Needs clear methodological evidence
+    "Finding": 0.7,       # Needs clear empirical evidence
+    "Problem": 0.65,      # Research questions are often implied
+    "Dataset": 0.7,       # Must be explicitly named
+    "Metric": 0.7,        # Must be explicitly mentioned
+    "Innovation": 0.65,   # Novel contributions can be subtle
+    "Limitation": 0.6,    # Often acknowledged briefly
+}
+
+
 class EntityType(str, Enum):
+    """Entity types for academic knowledge graph."""
+    # Metadata types (not visualized as nodes)
     PAPER = "Paper"
     AUTHOR = "Author"
+
+    # Primary node types (visualized)
     CONCEPT = "Concept"
     METHOD = "Method"
     FINDING = "Finding"
+
+    # Extended types (NLP-AKG style)
+    PROBLEM = "Problem"
     DATASET = "Dataset"
+    METRIC = "Metric"
+    INNOVATION = "Innovation"
+    LIMITATION = "Limitation"
+
+    # Legacy types
     INSTITUTION = "Institution"
-    RESULT = "Result"
-    CLAIM = "Claim"
 
 
 @dataclass
 class ExtractedEntity:
-    """Entity extracted from text."""
+    """Entity extracted from academic text."""
 
     entity_type: EntityType
     name: str
-    description: str = ""
+    definition: str = ""  # Brief definition in context
+    description: str = ""  # Extended description
     confidence: float = 0.0
-    properties: dict = None
-    extraction_section: str = ""
-    evidence_spans: list = None
+    source_paper_id: Optional[str] = None
+    properties: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.properties is None:
-            self.properties = {}
-        if self.evidence_spans is None:
-            self.evidence_spans = []
+        # Normalize name: lowercase, strip whitespace
+        self.name = self.name.strip().lower() if self.name else ""
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "entity_type": self.entity_type.value if isinstance(self.entity_type, EntityType) else self.entity_type,
+            "name": self.name,
+            "definition": self.definition,
+            "description": self.description,
+            "confidence": self.confidence,
+            "source_paper_id": self.source_paper_id,
+            "properties": self.properties,
+        }
 
 
-EXTRACTION_PROMPT = """You are an expert academic research analyst. Extract structured entities from the following paper information.
+# ============================================================================
+# NLP-AKG Style Extraction Prompt
+# ============================================================================
 
-Paper Title: {title}
+CONCEPT_CENTRIC_EXTRACTION_PROMPT = """You are an expert academic research analyst building a concept-centric knowledge graph.
+Your task is to extract structured entities from academic papers, with CONCEPTS as the primary focus.
+
+## Paper Information
+Title: {title}
 Abstract: {abstract}
 
-Extract the following entity types:
+## Extraction Guidelines
 
-1. **Concepts** (key theoretical concepts, topics, or themes discussed)
-2. **Methods** (research methodologies, techniques, or approaches used)
-3. **Findings** (key results, conclusions, or discoveries)
+### CONCEPTS (Most Important - become graph nodes)
+Extract the key theoretical concepts, theories, and domain-specific terms.
+- Focus on concepts that connect to other concepts across papers
+- Include both broad concepts (e.g., "machine learning") and specific ones (e.g., "transformer architecture")
+- Each concept should be a noun or noun phrase
+- Provide a brief definition in the context of this paper
 
-Return your response as a JSON object with this structure:
+### METHODS
+Research methodologies, techniques, or approaches used.
+- Include study design (e.g., "randomized controlled trial")
+- Include analytical methods (e.g., "regression analysis")
+- Include tools/frameworks if significant
+
+### FINDINGS
+Key results, conclusions, or discoveries.
+- Focus on empirical findings with evidence
+- Include effect sizes, statistical significance if mentioned
+- Phrase as declarative statements
+
+### PROBLEMS (Research Questions)
+The research questions or problems being addressed.
+- What gap in knowledge does this paper address?
+- What is the main research question?
+
+### INNOVATIONS
+Novel contributions this paper makes.
+- What is new or different about this work?
+- What advances does it provide?
+
+### LIMITATIONS
+Study limitations acknowledged or implied.
+- What are the constraints of this research?
+- What couldn't be addressed?
+
+### DATASETS
+Named datasets used in the research.
+- Include specific dataset names (e.g., "ImageNet", "GLUE benchmark")
+- Include data collection instruments if named
+- Note size and domain if mentioned
+
+### METRICS
+Evaluation metrics used to measure outcomes.
+- Include specific metric names (e.g., "accuracy", "F1 score", "Cohen's d")
+- Include statistical measures if they are central to findings
+- Note both primary and secondary metrics
+
+## Response Format
+
+Return a JSON object with this exact structure:
 {{
     "concepts": [
-        {{"name": "concept name", "description": "brief description", "confidence": 0.9}}
+        {{
+            "name": "concept name (lowercase, 1-4 words)",
+            "definition": "brief definition in this paper's context (1-2 sentences)",
+            "confidence": 0.9
+        }}
     ],
     "methods": [
-        {{"name": "method name", "description": "brief description", "confidence": 0.9}}
+        {{
+            "name": "method name",
+            "description": "how it was applied",
+            "type": "quantitative|qualitative|mixed",
+            "confidence": 0.85
+        }}
     ],
     "findings": [
-        {{"name": "finding summary", "description": "detailed finding", "confidence": 0.9}}
+        {{
+            "name": "brief finding statement (1 sentence)",
+            "description": "detailed finding with evidence",
+            "effect_type": "positive|negative|neutral|mixed",
+            "confidence": 0.8
+        }}
+    ],
+    "problems": [
+        {{
+            "name": "research problem/question",
+            "description": "context and importance",
+            "confidence": 0.85
+        }}
+    ],
+    "innovations": [
+        {{
+            "name": "innovation summary",
+            "description": "what makes it novel",
+            "confidence": 0.75
+        }}
+    ],
+    "limitations": [
+        {{
+            "name": "limitation summary",
+            "description": "details and implications",
+            "confidence": 0.7
+        }}
+    ],
+    "datasets": [
+        {{
+            "name": "dataset name",
+            "description": "domain, size, characteristics",
+            "confidence": 0.7
+        }}
+    ],
+    "metrics": [
+        {{
+            "name": "metric name",
+            "description": "what it measures and context",
+            "confidence": 0.7
+        }}
     ]
 }}
 
-Rules:
-- Extract only entities actually mentioned in the text
-- Keep names concise (1-5 words)
-- Confidence should be between 0.5 and 1.0
-- Return empty arrays if no entities of that type are found
-- Maximum 5 entities per type
-- Focus on the most important and specific entities
+## Rules
+1. Extract ONLY entities explicitly mentioned or strongly implied
+2. Concept names: lowercase, singular form, 1-4 words
+3. Confidence: 0.5 (uncertain) to 1.0 (explicit mention)
+4. Maximum per type: concepts=10, methods=5, findings=5, others=3
+5. Prioritize quality over quantity
+6. Return ONLY valid JSON, no additional text
 
-Return only the JSON object, no additional text."""
+JSON Response:"""
 
+
+# ============================================================================
+# Simplified Prompt for High-Speed Extraction (Claude 3.5 Haiku)
+# v0.6.0: Fixed to ensure all entity types are extracted, not just concepts
+# ============================================================================
+
+FAST_EXTRACTION_PROMPT = """You are an academic entity extraction system. Extract EXACTLY these 7 entity types from the paper. Return ALL categories, even if empty.
+
+## Paper
+Title: {title}
+Abstract: {abstract}
+
+## Required Entity Types (extract ALL 7):
+
+### 1. CONCEPTS (max 10)
+Key theoretical concepts, theories, domain terms.
+Example: "machine learning", "cognitive load"
+
+### 2. METHODS (max 3)
+Research methodologies, techniques, approaches.
+Example: "meta-analysis", "randomized controlled trial"
+
+### 3. FINDINGS (max 3)
+Key results, conclusions, discoveries.
+Example: "positive effect on learning outcomes"
+
+### 4. PROBLEMS (max 2)
+Research questions or problems addressed.
+Example: "gap in understanding ai adoption"
+
+### 5. INNOVATIONS (max 2)
+Novel contributions of this work.
+Example: "new framework for evaluation"
+
+### 6. LIMITATIONS (max 2)
+Study limitations acknowledged.
+Example: "small sample size"
+
+### 7. DATASETS (max 2)
+Datasets used or created.
+Example: "imagenet", "custom survey n=500"
+
+## Examples
+
+### Example 1: AI in Education Paper
+
+Title: "Effects of AI Chatbots on Second Language Speaking Skills: A Meta-Analysis"
+Abstract: "This meta-analysis examines 23 studies on AI chatbot interventions for second language acquisition. We analyzed speaking skills improvement through conversational AI agents. Results showed moderate positive effects (d=0.45, p<0.01) on speaking proficiency, with stronger effects for intermediate learners. Publication bias was detected but did not substantially alter findings."
+
+Expected output:
+{{"concepts": [{{"name": "ai chatbot", "confidence": 0.95}}, {{"name": "second language acquisition", "confidence": 0.9}}, {{"name": "speaking skills", "confidence": 0.85}}, {{"name": "conversational agent", "confidence": 0.8}}], "methods": [{{"name": "meta-analysis", "confidence": 0.95}}], "findings": [{{"name": "moderate positive effect on speaking", "confidence": 0.85}}, {{"name": "stronger effects for intermediate learners", "confidence": 0.8}}], "problems": [{{"name": "limited chatbot effectiveness research", "confidence": 0.7}}], "innovations": [], "limitations": [{{"name": "publication bias", "confidence": 0.75}}], "datasets": []}}
+
+### Example 2: Deep Learning Paper
+
+Title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+Abstract: "We introduce BERT, a new language representation model which stands for Bidirectional Encoder Representations from Transformers. BERT is designed to pre-train deep bidirectional representations by jointly conditioning on both left and right context. Our pre-trained BERT model can be fine-tuned with just one additional output layer to achieve state-of-the-art results on eleven natural language processing tasks including the GLUE benchmark."
+
+Expected output:
+{{"concepts": [{{"name": "language representation", "confidence": 0.95}}, {{"name": "transfer learning", "confidence": 0.9}}, {{"name": "pre-training", "confidence": 0.9}}, {{"name": "bidirectional transformer", "confidence": 0.95}}, {{"name": "contextualized embedding", "confidence": 0.85}}], "methods": [{{"name": "masked language modeling", "confidence": 0.9}}, {{"name": "next sentence prediction", "confidence": 0.85}}], "findings": [{{"name": "state of the art on 11 nlp tasks", "confidence": 0.9}}], "problems": [{{"name": "unidirectional language model limitations", "confidence": 0.8}}], "innovations": [{{"name": "bidirectional pre-training", "confidence": 0.9}}], "limitations": [], "datasets": [{{"name": "glue benchmark", "confidence": 0.9}}]}}
+
+## Output Format
+Return ONLY valid JSON. ALL 7 keys MUST be present. Use empty arrays [] if no entities found.
+
+{{"concepts": [...], "methods": [...], "findings": [...], "problems": [...], "innovations": [...], "limitations": [...], "datasets": [...]}}
+
+Each entity: {{"name": "lowercase 1-4 words", "confidence": 0.0-1.0}}
+
+JSON:"""
+
+
+# Legacy prompt (deprecated, kept for reference)
+FAST_EXTRACTION_PROMPT_LEGACY = """Extract key entities from this academic paper.
+
+Title: {title}
+Abstract: {abstract}
+
+Return JSON with these categories:
+- concepts: [{{"name": "...", "definition": "...", "confidence": 0.9}}] (max 10) - Key theoretical concepts
+- methods: [{{"name": "...", "type": "quantitative|qualitative|mixed"}}] (max 3) - Research methodologies
+- findings: [{{"name": "...", "effect_type": "positive|negative|neutral"}}] (max 3) - Key results
+- problems: [{{"name": "...", "description": "..."}}] (max 2) - Research problems/questions addressed
+- innovations: [{{"name": "...", "novelty": "..."}}] (max 2) - Novel contributions
+- limitations: [{{"name": "...", "impact": "..."}}] (max 2) - Study limitations
+- datasets: [{{"name": "...", "size": "...", "domain": "..."}}] (max 2) - Datasets used/created
+
+Rules: lowercase names, 1-4 words each, only JSON output. Omit empty categories.
+
+JSON:"""
+
+
+# ============================================================================
+# Section-Specific Prompts for Section-Aware Extraction
+# ============================================================================
 
 SECTION_PROMPTS = {
-    "methodology": """You are an expert academic research analyst. Extract structured entities from the METHODOLOGY section of a paper.
+    "introduction": """Extract entities from the INTRODUCTION section of this academic paper.
 
-Paper Title: {title}
-Methodology Section Text: {text}
+Section Text: {text}
 
-Extract the following entity types:
-1. **Methods** (research methodologies, techniques, algorithms, or approaches used) - up to 5
-2. **Datasets** (datasets, corpora, or data sources used) - up to 3
-3. **Concepts** (key concepts mentioned in the methodology) - up to 3
+Focus on:
+- Research problems/questions being addressed
+- Key concepts that frame the study
+- Background theories or frameworks
 
-Return your response as a JSON object:
-{{
-    "methods": [{{"name": "...", "description": "...", "confidence": 0.9}}],
-    "datasets": [{{"name": "...", "description": "...", "confidence": 0.9}}],
-    "concepts": [{{"name": "...", "description": "...", "confidence": 0.9}}]
-}}
+Return JSON with:
+- concepts: [{{"name": "...", "definition": "...", "confidence": 0.9}}] (max 5)
+- problems: [{{"name": "...", "description": "..."}}] (max 3)
 
-Rules:
-- Extract only entities actually mentioned in the text
-- Keep names concise (1-5 words)
-- Confidence between 0.5 and 1.0
-- Return empty arrays if none found
-- Return only the JSON object""",
+Rules: lowercase names, 1-4 words each, only JSON output.
 
-    "results": """You are an expert academic research analyst. Extract structured entities from the RESULTS section of a paper.
+JSON:""",
 
-Paper Title: {title}
-Results Section Text: {text}
+    "methodology": """Extract entities from the METHODOLOGY section of this academic paper.
 
-Extract the following entity types:
-1. **Results** (key experimental results, statistical findings, performance metrics) - up to 5
-2. **Concepts** (key concepts related to the results) - up to 3
+Section Text: {text}
 
-Return your response as a JSON object:
-{{
-    "results": [{{"name": "...", "description": "...", "confidence": 0.9, "evidence": "exact quote from text"}}],
-    "concepts": [{{"name": "...", "description": "...", "confidence": 0.9}}]
-}}
+Focus on:
+- Research methods and approaches used
+- Datasets mentioned or created
+- Measurement metrics and instruments
+- Sample characteristics
 
-Rules:
-- Results should include specific numbers/metrics when available
-- Keep names concise (1-8 words)
-- Evidence should be a short verbatim quote
-- Return only the JSON object""",
+Return JSON with:
+- methods: [{{"name": "...", "type": "quantitative|qualitative|mixed", "description": "..."}}] (max 5)
+- datasets: [{{"name": "...", "size": "...", "domain": "..."}}] (max 3)
 
-    "discussion": """You are an expert academic research analyst. Extract structured entities from the DISCUSSION section of a paper.
+Rules: lowercase names, 1-4 words each, only JSON output.
 
-Paper Title: {title}
-Discussion Section Text: {text}
+JSON:""",
 
-Extract the following entity types:
-1. **Claims** (key claims, conclusions, or implications made by the authors) - up to 3
-2. **Concepts** (theoretical concepts discussed) - up to 3
+    "results": """Extract entities from the RESULTS section of this academic paper.
 
-Return your response as a JSON object:
-{{
-    "claims": [{{"name": "...", "description": "...", "confidence": 0.9, "evidence": "exact quote"}}],
-    "concepts": [{{"name": "...", "description": "...", "confidence": 0.9}}]
-}}
+Section Text: {text}
 
-Rules:
-- Claims should be specific assertions, not general observations
-- Include evidence quotes when possible
-- Return only the JSON object""",
+Focus on:
+- Key findings and discoveries
+- Statistical results and effect sizes
+- Metrics and their values
 
-    "introduction": """You are an expert academic research analyst. Extract structured entities from the INTRODUCTION section of a paper.
+Return JSON with:
+- findings: [{{"name": "...", "effect_type": "positive|negative|neutral", "description": "..."}}] (max 5)
+- concepts: [{{"name": "...", "definition": "...", "confidence": 0.8}}] (max 3)
 
-Paper Title: {title}
-Introduction Section Text: {text}
+Rules: lowercase names, 1-4 words each, only JSON output.
 
-Extract the following entity types:
-1. **Concepts** (key theoretical concepts, topics, research problems) - up to 5
-2. **Methods** (mentioned methodologies or approaches) - up to 2
+JSON:""",
 
-Return your response as a JSON object:
-{{
-    "concepts": [{{"name": "...", "description": "...", "confidence": 0.9}}],
-    "methods": [{{"name": "...", "description": "...", "confidence": 0.9}}]
-}}
+    "discussion": """Extract entities from the DISCUSSION section of this academic paper.
 
-Rules:
-- Focus on the most important and specific concepts
-- Return only the JSON object"""
+Section Text: {text}
+
+Focus on:
+- Implications and contributions
+- Limitations of the study
+- Future research directions
+- Novel innovations or insights
+
+Return JSON with:
+- innovations: [{{"name": "...", "novelty": "..."}}] (max 3)
+- limitations: [{{"name": "...", "impact": "..."}}] (max 3)
+- concepts: [{{"name": "...", "definition": "...", "confidence": 0.7}}] (max 3)
+
+Rules: lowercase names, 1-4 words each, only JSON output.
+
+JSON:""",
 }
 
 
 class EntityExtractor:
     """
     Extracts entities from academic papers using LLM.
+
+    Uses Claude 3.5 Haiku for fast, cost-effective extraction.
+    Implements NLP-AKG methodology for academic knowledge graph construction.
     """
 
-    def __init__(self, llm_provider=None):
+    def __init__(self, llm_provider=None, use_fast_mode: bool = True, extraction_provider: str = "default"):
+        """
+        Initialize entity extractor.
+
+        Args:
+            llm_provider: LLM provider instance (Claude, OpenAI, etc.)
+            use_fast_mode: Use simplified prompt for faster extraction
+            extraction_provider: LLM provider preference ("default", "groq", "anthropic")
+        """
         self.llm = llm_provider
+        self.use_fast_mode = use_fast_mode
+        self.extraction_provider = extraction_provider
+        self._extraction_cache: Dict[str, dict] = {}
 
     async def extract_from_paper(
         self,
         title: str,
         abstract: str,
+        paper_id: Optional[str] = None,
         use_accurate_model: bool = False,
+        seed_concepts: Optional[List[str]] = None,
+        user_notes: Optional[List[str]] = None,
     ) -> dict:
         """
         Extract entities from a paper's title and abstract.
@@ -187,336 +442,842 @@ class EntityExtractor:
         Args:
             title: Paper title
             abstract: Paper abstract
+            paper_id: Optional paper ID for tracking source
             use_accurate_model: Use more accurate (slower/expensive) model
+            seed_concepts: User-provided concepts (from Zotero tags) to boost
+            user_notes: User notes to include in extraction context
 
         Returns:
-            Dictionary with 'concepts', 'methods', 'findings' lists
+            Dictionary with extracted entities by type
         """
-        if not self.llm:
-            return self._fallback_extraction(title, abstract)
+        if not title and not abstract:
+            return self._empty_result()
 
-        prompt = EXTRACTION_PROMPT.format(
+        # Check cache
+        cache_key = f"{title[:50]}_{hash(abstract[:100])}"
+        if cache_key in self._extraction_cache:
+            logger.debug(f"Cache hit for: {title[:50]}...")
+            return self._extraction_cache[cache_key]
+
+        # Use LLM if available
+        if self.llm:
+            try:
+                result = await self._llm_extraction(
+                    title, abstract, paper_id, use_accurate_model,
+                    seed_concepts=seed_concepts, user_notes=user_notes
+                )
+                self._extraction_cache[cache_key] = result
+                return result
+            except Exception as e:
+                logger.warning(f"LLM extraction failed: {e}, using fallback")
+
+        # Fallback to keyword extraction
+        result = self._fallback_extraction(title, abstract, paper_id)
+        self._extraction_cache[cache_key] = result
+        return result
+
+    async def extract_entities(
+        self,
+        text: str,
+        title: str = "",
+        context: str = "",
+        seed_concepts: Optional[List[str]] = None,
+        user_notes: Optional[List[str]] = None,
+    ) -> list:
+        """
+        Extract entities from text (wrapper for compatibility with importers).
+
+        Args:
+            text: Text to extract entities from (abstract or full text)
+            title: Paper title
+            context: Research context (not used, for API compatibility)
+            seed_concepts: User-provided concepts (from Zotero tags) to boost
+            user_notes: User notes to include in extraction context
+
+        Returns:
+            List of ExtractedEntity objects
+        """
+        # Use extract_from_paper internally
+        result = await self.extract_from_paper(
             title=title,
-            abstract=abstract[:3000],  # Limit abstract length
+            abstract=text,
+            paper_id=None,
+            use_accurate_model=False,
+            seed_concepts=seed_concepts,
+            user_notes=user_notes,
         )
 
-        try:
-            response = await self.llm.generate(
-                prompt,
-                max_tokens=1000,
-                temperature=0.1,
-                use_accurate=use_accurate_model,
+        # Convert dict result to list of ExtractedEntity
+        entities = []
+
+        for entity_type, entity_list in result.items():
+            if entity_type in ("concepts", "methods", "findings", "problems", "innovations", "limitations", "datasets", "metrics"):
+                type_map = {
+                    "concepts": EntityType.CONCEPT,
+                    "methods": EntityType.METHOD,
+                    "findings": EntityType.FINDING,
+                    "problems": EntityType.PROBLEM,
+                    "innovations": EntityType.INNOVATION,
+                    "limitations": EntityType.LIMITATION,
+                    "datasets": EntityType.DATASET,
+                    "metrics": EntityType.METRIC,
+                }
+                for entity_data in entity_list:
+                    if isinstance(entity_data, dict):
+                        entities.append(ExtractedEntity(
+                            name=entity_data.get("name", ""),
+                            entity_type=type_map.get(entity_type, EntityType.CONCEPT),
+                            description=entity_data.get("description", ""),
+                            confidence=entity_data.get("confidence", 0.5),
+                            source_paper_id=entity_data.get("source_paper_id"),
+                            properties=entity_data.get("properties", {}),
+                        ))
+                    elif isinstance(entity_data, ExtractedEntity):
+                        entities.append(entity_data)
+
+        # Add seed concepts as high-confidence USER_TAG entities
+        if seed_concepts:
+            for tag in seed_concepts:
+                # Check if tag already exists in extracted entities
+                tag_normalized = tag.strip().lower()
+                if not any(e.name == tag_normalized for e in entities):
+                    entities.append(ExtractedEntity(
+                        name=tag_normalized,
+                        entity_type=EntityType.CONCEPT,
+                        description=f"User-tagged concept from Zotero",
+                        confidence=0.95,  # High confidence for user-provided tags
+                        properties={"source": "zotero_tag", "user_provided": True},
+                    ))
+
+        return entities
+
+    async def _llm_extraction(
+        self,
+        title: str,
+        abstract: str,
+        paper_id: Optional[str],
+        use_accurate: bool,
+        seed_concepts: Optional[List[str]] = None,
+        user_notes: Optional[List[str]] = None,
+    ) -> dict:
+        """Extract entities using LLM with retry logic (BUG-031 Fix)."""
+        # Build additional context from seed concepts and notes
+        additional_context = ""
+        if seed_concepts:
+            additional_context += f"\nUser-tagged keywords: {', '.join(seed_concepts)}"
+        if user_notes:
+            # Truncate notes to avoid token overflow
+            notes_text = " | ".join(n[:200] for n in user_notes[:3])
+            additional_context += f"\nUser notes: {notes_text}"
+
+        # Select prompt based on mode
+        if self.use_fast_mode:
+            prompt = FAST_EXTRACTION_PROMPT.format(
+                title=title,
+                abstract=abstract[:2000] + additional_context,
+            )
+        else:
+            prompt = CONCEPT_CENTRIC_EXTRACTION_PROMPT.format(
+                title=title,
+                abstract=abstract[:3000] + additional_context,
             )
 
-            # Parse JSON response
-            result = self._parse_llm_response(response)
+        # BUG-031 Fix: Add retry logic for resilience
+        # PERF-011: Track timing for debugging long API calls
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                # PERF-011: Log before API call to track gaps
+                api_start_time = time.time()
+                logger.debug(f"PERF-011: Starting LLM API call for '{title[:40]}...' (attempt {attempt + 1})")
+
+                # Try generate_json() first if available (BUG-031 Fix)
+                if hasattr(self.llm, 'generate_json'):
+                    try:
+                        response = await self.llm.generate_json(
+                            prompt,
+                            max_tokens=1500,
+                            temperature=0.1,
+                        )
+                        # PERF-011: Log API call timing
+                        api_elapsed = time.time() - api_start_time
+                        if api_elapsed > SLOW_API_THRESHOLD:
+                            logger.warning(f"PERF-011: Slow LLM API call: {api_elapsed:.1f}s for '{title[:40]}...'")
+
+                        # generate_json returns dict directly
+                        if isinstance(response, dict) and response:
+                            result = self._parse_json_data(response, paper_id)
+                            logger.info(
+                                f"Extracted from '{title[:40]}...' ({api_elapsed:.1f}s): "
+                                f"{len(result['concepts'])} concepts, "
+                                f"{len(result['methods'])} methods, "
+                                f"{len(result['findings'])} findings"
+                            )
+                            return result
+                    except Exception as json_err:
+                        logger.warning(f"generate_json() failed: {json_err}")
+                        # If JSON parsing failed with generate_json(), try fallback with generate()
+                        # This handles cases where Groq returns malformed JSON
+                        if "JSON" in str(json_err) or "parse" in str(json_err).lower():
+                            logger.info(f"JSON parse error detected, falling back to generate() for '{title[:40]}...'")
+                            # Fall through to generate() below
+                        else:
+                            # Re-raise non-JSON errors
+                            raise
+
+                # Fallback to generate() with manual JSON parsing
+                # PERF-011: Reset timer for generate() fallback
+                if not hasattr(self.llm, 'generate_json'):
+                    api_start_time = time.time()
+                    logger.debug(f"PERF-011: Starting LLM generate() for '{title[:40]}...'")
+
+                response = await self.llm.generate(
+                    prompt,
+                    max_tokens=1500,
+                    temperature=0.1,
+                    use_accurate=use_accurate,
+                )
+
+                # PERF-011: Log API call timing for generate()
+                api_elapsed = time.time() - api_start_time
+                if api_elapsed > SLOW_API_THRESHOLD:
+                    logger.warning(f"PERF-011: Slow LLM generate() call: {api_elapsed:.1f}s for '{title[:40]}...'")
+
+                # Parse response
+                result = self._parse_llm_response(response, paper_id)
+
+                # PERF-013: Accept valid responses even if empty (prevent unnecessary retries)
+                # A valid response with no entities is better than retrying and hitting rate limits
+                if result is not None:
+                    if result['concepts'] or result['methods'] or result['findings']:
+                        logger.info(
+                            f"Extracted from '{title[:40]}...' ({api_elapsed:.1f}s): "
+                            f"{len(result['concepts'])} concepts, "
+                            f"{len(result['methods'])} methods, "
+                            f"{len(result['findings'])} findings"
+                        )
+                    else:
+                        # PERF-013: Empty but valid result - don't retry
+                        logger.info(f"No entities in '{title[:40]}...' ({api_elapsed:.1f}s, valid response)")
+                    return result
+
+                # Only retry if result is None (actual failure)
+                if attempt < MAX_RETRIES:
+                    logger.warning(f"Null result, retrying ({attempt + 1}/{MAX_RETRIES})")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    logger.warning(f"LLM extraction attempt {attempt + 1} failed: {e}, retrying...")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                else:
+                    logger.error(f"All LLM extraction attempts failed: {e}")
+
+        # All retries exhausted, return empty result
+        if last_error:
+            logger.error(f"LLM extraction failed after {MAX_RETRIES + 1} attempts: {last_error}")
+        return self._empty_result()
+
+    def _extract_json_from_text(self, text: str) -> Optional[dict]:
+        """
+        BUG-031 Fix: Extract JSON from LLM response using multiple strategies.
+
+        Strategies (in order):
+        1. Direct JSON parse (if response is pure JSON)
+        2. Code block extraction (```json ... ```)
+        3. Greedy brace matching (first { to last })
+        4. Relaxed brace matching (any valid JSON object)
+
+        Returns:
+            Parsed JSON dict or None if extraction fails
+        """
+        if not text or not text.strip():
+            return None
+
+        text = text.strip()
+
+        # Handle if already a dict (from generate_json)
+        if isinstance(text, dict):
+            return text
+
+        # Strategy 1: Try direct JSON parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Strategy 2: Extract from code block (```json ... ``` or ``` ... ```)
+        code_block_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
+        if code_block_match:
+            try:
+                return json.loads(code_block_match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 3: Greedy brace matching (first { to last })
+        first_brace = text.find('{')
+        last_brace = text.rfind('}')
+        if first_brace != -1 and last_brace > first_brace:
+            try:
+                return json.loads(text[first_brace:last_brace + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 4: Find any valid JSON object using regex
+        json_patterns = [
+            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Nested objects
+            r'\{[\s\S]*?\}',  # Any JSON-like structure
+        ]
+        for pattern in json_patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                try:
+                    parsed = json.loads(match)
+                    if isinstance(parsed, dict) and any(k in parsed for k in ['concepts', 'methods', 'findings']):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
+
+        logger.warning(f"Failed to extract JSON from response (length={len(text)})")
+        return None
+
+    def _parse_json_data(self, data: dict, paper_id: Optional[str]) -> dict:
+        """
+        BUG-031 Fix: Parse already-extracted JSON data into structured entities.
+        Separated from _parse_llm_response for use with generate_json().
+
+        v0.6.0 Fix: Validates all expected keys are present and logs missing categories.
+        """
+        result = self._empty_result()
+
+        if not data or not isinstance(data, dict):
             return result
 
-        except Exception as e:
-            logger.warning(f"LLM extraction failed: {e}, using fallback")
-            return self._fallback_extraction(title, abstract)
+        # v0.6.0: Validate all expected keys are present
+        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets', 'metrics'}
+        missing_keys = expected_keys - set(data.keys())
+        if missing_keys:
+            logger.warning(f"Entity extraction missing categories: {missing_keys}")
+            for key in missing_keys:
+                data[key] = []
 
-    def _parse_llm_response(self, response: str) -> dict:
-        """Parse LLM response into structured entities."""
+        # Log extraction distribution for monitoring
+        non_empty_counts = {k: len(v) for k, v in data.items() if isinstance(v, list) and len(v) > 0}
+        if non_empty_counts:
+            logger.debug(f"Extraction distribution: {non_empty_counts}")
+
         try:
-            # Try to extract JSON from response
-            # Handle cases where LLM adds extra text
-            json_start = response.find("{")
-            json_end = response.rfind("}") + 1
+            # Parse concepts (primary nodes)
+            for c in data.get("concepts", [])[:10]:
+                if not c.get("name"):
+                    continue
+                result["concepts"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.CONCEPT,
+                        name=c.get("name", ""),
+                        definition=c.get("definition", ""),
+                        description=c.get("description", ""),
+                        confidence=float(c.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
 
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end]
-                data = json.loads(json_str)
+            # Parse methods
+            for m in data.get("methods", [])[:5]:
+                if not m.get("name"):
+                    continue
+                result["methods"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.METHOD,
+                        name=m.get("name", ""),
+                        description=m.get("description", ""),
+                        confidence=float(m.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                        properties={"type": m.get("type", "unknown")},
+                    )
+                )
 
-                return {
-                    "concepts": [
-                        ExtractedEntity(
-                            entity_type=EntityType.CONCEPT,
-                            name=c.get("name", ""),
-                            description=c.get("description", ""),
-                            confidence=c.get("confidence", 0.7),
+            # Parse findings
+            for f in data.get("findings", [])[:5]:
+                if not f.get("name"):
+                    continue
+                result["findings"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.FINDING,
+                        name=f.get("name", ""),
+                        description=f.get("description", ""),
+                        confidence=float(f.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                        properties={"effect_type": f.get("effect_type", "neutral")},
+                    )
+                )
+
+            # Parse problems
+            for p in data.get("problems", [])[:3]:
+                if not p.get("name"):
+                    continue
+                result["problems"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.PROBLEM,
+                        name=p.get("name", ""),
+                        description=p.get("description", ""),
+                        confidence=float(p.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # Parse innovations
+            for i in data.get("innovations", [])[:3]:
+                if not i.get("name"):
+                    continue
+                result["innovations"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.INNOVATION,
+                        name=i.get("name", ""),
+                        description=i.get("description", ""),
+                        confidence=float(i.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # Parse limitations
+            for l in data.get("limitations", [])[:3]:
+                if not l.get("name"):
+                    continue
+                result["limitations"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.LIMITATION,
+                        name=l.get("name", ""),
+                        description=l.get("description", ""),
+                        confidence=float(l.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # Parse datasets
+            for d in data.get("datasets", [])[:3]:
+                if not d.get("name"):
+                    continue
+                result["datasets"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.DATASET,
+                        name=d.get("name", ""),
+                        description=d.get("description", ""),
+                        confidence=float(d.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                        properties={
+                            "size": d.get("size", ""),
+                            "domain": d.get("domain", ""),
+                        },
+                    )
+                )
+
+            # v0.10.0: Parse metrics
+            for mt in data.get("metrics", [])[:3]:
+                if not mt.get("name"):
+                    continue
+                result["metrics"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.METRIC,
+                        name=mt.get("name", ""),
+                        description=mt.get("description", ""),
+                        confidence=float(mt.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # v0.10.0: Apply type-specific confidence thresholds
+            for type_key in result:
+                if isinstance(result[type_key], list):
+                    result[type_key] = [
+                        entity for entity in result[type_key]
+                        if entity.confidence >= ENTITY_TYPE_CONFIDENCE_THRESHOLDS.get(
+                            entity.entity_type.value if isinstance(entity.entity_type, EntityType) else entity.entity_type,
+                            0.5  # Default threshold if type not in map
                         )
-                        for c in data.get("concepts", [])
-                        if c.get("name")
-                    ],
-                    "methods": [
-                        ExtractedEntity(
-                            entity_type=EntityType.METHOD,
-                            name=m.get("name", ""),
-                            description=m.get("description", ""),
-                            confidence=m.get("confidence", 0.7),
-                        )
-                        for m in data.get("methods", [])
-                        if m.get("name")
-                    ],
-                    "findings": [
-                        ExtractedEntity(
-                            entity_type=EntityType.FINDING,
-                            name=f.get("name", ""),
-                            description=f.get("description", ""),
-                            confidence=f.get("confidence", 0.7),
-                        )
-                        for f in data.get("findings", [])
-                        if f.get("name")
-                    ],
-                }
+                    ]
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            # Q2: Reclassify overly long Concept names as Findings
+            if "concepts" in result and "findings" in result:
+                long_concepts = [e for e in result["concepts"] if len(e.name) > 60]
+                result["concepts"] = [e for e in result["concepts"] if len(e.name) <= 60]
+                for entity in long_concepts:
+                    entity.entity_type = EntityType.FINDING
+                    result["findings"].append(entity)
+                    logger.info(f"Reclassified long concept as Finding: {entity.name[:50]}...")
 
-        return {"concepts": [], "methods": [], "findings": []}
-
-    def _parse_section_response(self, response: str, section: str) -> dict:
-        """Parse section-specific JSON responses into ExtractedEntity objects."""
-        try:
-            # Extract JSON from response
-            json_start = response.find("{")
-            json_end = response.rfind("}") + 1
-
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end]
-                data = json.loads(json_str)
-
-                result = {}
-
-                # Map response keys to entity types
-                type_mapping = {
-                    "results": EntityType.RESULT,
-                    "claims": EntityType.CLAIM,
-                    "methods": EntityType.METHOD,
-                    "concepts": EntityType.CONCEPT,
-                    "datasets": EntityType.DATASET,
-                }
-
-                for key, entity_type in type_mapping.items():
-                    if key in data:
-                        entities = []
-                        for item in data[key]:
-                            if not item.get("name"):
-                                continue
-
-                            entity = ExtractedEntity(
-                                entity_type=entity_type,
-                                name=item.get("name", ""),
-                                description=item.get("description", ""),
-                                confidence=item.get("confidence", 0.7),
-                            )
-
-                            # Add evidence spans if available
-                            if "evidence" in item and item["evidence"]:
-                                entity.evidence_spans = [item["evidence"]]
-
-                            entities.append(entity)
-
-                        result[key] = entities
-
-                return result
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse section response as JSON: {e}")
         except Exception as e:
-            logger.warning(f"Error parsing section response: {e}")
+            logger.error(f"Error parsing JSON data: {e}")
 
-        return {}
+        return result
 
-    def _fallback_extraction(self, title: str, abstract: str) -> dict:
+    def _parse_llm_response(self, response: str, paper_id: Optional[str]) -> dict:
         """
-        Simple keyword-based extraction as fallback.
-        Used when LLM is not available or fails.
+        Parse LLM response into structured entities.
+        BUG-031 Fix: Delegates to improved JSON extraction and unified parsing.
         """
-        import re
+        # Extract JSON using improved multi-strategy approach
+        data = self._extract_json_from_text(response)
+        if not data:
+            return self._empty_result()
 
+        # Delegate to unified JSON parsing
+        return self._parse_json_data(data, paper_id)
+
+    def _fallback_extraction(
+        self, title: str, abstract: str, paper_id: Optional[str]
+    ) -> dict:
+        """
+        Keyword-based extraction fallback when LLM is unavailable.
+        """
         text = f"{title} {abstract}".lower()
-        concepts = []
-        methods = []
-        findings = []
+        result = self._empty_result()
 
-        # Common concept patterns
+        # Concept patterns (domain-agnostic academic concepts)
         concept_patterns = [
-            (r"\b(artificial intelligence|ai)\b", "Artificial Intelligence"),
-            (r"\b(machine learning|ml)\b", "Machine Learning"),
-            (r"\b(deep learning)\b", "Deep Learning"),
-            (r"\b(neural network)\b", "Neural Network"),
-            (r"\b(natural language processing|nlp)\b", "Natural Language Processing"),
-            (r"\b(large language model|llm)\b", "Large Language Model"),
-            (r"\b(chatbot|chat bot)\b", "Chatbot"),
-            (r"\b(generative ai|genai)\b", "Generative AI"),
-            (r"\b(education|educational)\b", "Education"),
-            (r"\b(learning outcome)\b", "Learning Outcome"),
-            (r"\b(student engagement)\b", "Student Engagement"),
-            (r"\b(personalized learning)\b", "Personalized Learning"),
+            # AI/ML concepts
+            (r"\b(artificial intelligence|ai)\b", "artificial intelligence", "Computer systems that perform tasks requiring human intelligence"),
+            (r"\b(machine learning|ml)\b", "machine learning", "Algorithms that learn from data"),
+            (r"\b(deep learning)\b", "deep learning", "Neural network-based learning"),
+            (r"\b(neural network)\b", "neural network", "Computing systems inspired by biological networks"),
+            (r"\b(natural language processing|nlp)\b", "natural language processing", "Computer understanding of human language"),
+            (r"\b(large language model|llm)\b", "large language model", "Large-scale text generation models"),
+            (r"\b(generative ai|genai)\b", "generative ai", "AI that creates new content"),
+            (r"\b(chatbot|conversational agent)\b", "chatbot", "Automated conversational systems"),
+            (r"\b(transformer)\b", "transformer architecture", "Attention-based neural network architecture"),
+
+            # Education concepts
+            (r"\b(learning outcome)\b", "learning outcome", "Measurable results of educational activities"),
+            (r"\b(student engagement)\b", "student engagement", "Student involvement in learning"),
+            (r"\b(personalized learning)\b", "personalized learning", "Individualized educational approaches"),
+            (r"\b(self-regulated learning)\b", "self-regulated learning", "Learner control over learning process"),
+            (r"\b(cognitive load)\b", "cognitive load", "Mental effort required for learning"),
+            (r"\b(formative assessment)\b", "formative assessment", "Ongoing evaluation for learning improvement"),
+
+            # Research concepts
+            (r"\b(effect size)\b", "effect size", "Magnitude of research effect"),
+            (r"\b(statistical significance)\b", "statistical significance", "Probability-based evidence threshold"),
+            (r"\b(validity)\b", "validity", "Accuracy of measurement or conclusions"),
+            (r"\b(reliability)\b", "reliability", "Consistency of measurement"),
         ]
 
-        # Common method patterns
+        # Method patterns
         method_patterns = [
-            (r"\b(experimental study|experiment)\b", "Experimental Study"),
-            (r"\b(quasi-experimental)\b", "Quasi-experimental Design"),
-            (r"\b(randomized controlled trial|rct)\b", "Randomized Controlled Trial"),
-            (r"\b(survey|questionnaire)\b", "Survey"),
-            (r"\b(interview)\b", "Interview"),
-            (r"\b(meta-analysis)\b", "Meta-analysis"),
-            (r"\b(systematic review)\b", "Systematic Review"),
-            (r"\b(case study)\b", "Case Study"),
-            (r"\b(mixed method)\b", "Mixed Methods"),
-            (r"\b(qualitative)\b", "Qualitative Research"),
-            (r"\b(quantitative)\b", "Quantitative Research"),
+            (r"\b(randomized controlled trial|rct)\b", "randomized controlled trial", "quantitative"),
+            (r"\b(experimental study|experiment)\b", "experimental study", "quantitative"),
+            (r"\b(quasi-experimental)\b", "quasi-experimental design", "quantitative"),
+            (r"\b(meta-analysis)\b", "meta-analysis", "quantitative"),
+            (r"\b(systematic review)\b", "systematic review", "mixed"),
+            (r"\b(survey|questionnaire)\b", "survey", "quantitative"),
+            (r"\b(interview)\b", "interview", "qualitative"),
+            (r"\b(case study)\b", "case study", "qualitative"),
+            (r"\b(mixed method)\b", "mixed methods", "mixed"),
+            (r"\b(content analysis)\b", "content analysis", "qualitative"),
+            (r"\b(regression analysis)\b", "regression analysis", "quantitative"),
+            (r"\b(anova|analysis of variance)\b", "analysis of variance", "quantitative"),
         ]
 
         # Extract concepts
-        for pattern, name in concept_patterns:
+        for pattern, name, definition in concept_patterns:
             if re.search(pattern, text):
-                concepts.append(
+                result["concepts"].append(
                     ExtractedEntity(
                         entity_type=EntityType.CONCEPT,
                         name=name,
-                        description="Extracted via keyword matching",
+                        definition=definition,
                         confidence=0.6,
+                        source_paper_id=paper_id,
                     )
                 )
 
         # Extract methods
-        for pattern, name in method_patterns:
+        for pattern, name, method_type in method_patterns:
             if re.search(pattern, text):
-                methods.append(
+                result["methods"].append(
                     ExtractedEntity(
                         entity_type=EntityType.METHOD,
                         name=name,
-                        description="Extracted via keyword matching",
                         confidence=0.6,
+                        source_paper_id=paper_id,
+                        properties={"type": method_type},
                     )
                 )
 
-        # Simple finding extraction (look for result indicators)
-        finding_indicators = [
-            r"(significantly (improved|increased|decreased|reduced))",
-            r"(positive (effect|impact|correlation))",
-            r"(negative (effect|impact|correlation))",
-            r"(no significant (difference|effect))",
-            r"(results (show|indicate|suggest))",
+        # Extract findings (pattern-based)
+        finding_patterns = [
+            (r"significantly (improved|increased|enhanced)", "significant improvement", "positive"),
+            (r"significantly (decreased|reduced|declined)", "significant decrease", "negative"),
+            (r"positive (effect|impact|correlation|relationship)", "positive effect", "positive"),
+            (r"negative (effect|impact|correlation|relationship)", "negative effect", "negative"),
+            (r"no significant (difference|effect|impact)", "no significant effect", "neutral"),
+            (r"outperformed", "superior performance", "positive"),
         ]
 
-        for pattern in finding_indicators:
-            match = re.search(pattern, text)
-            if match:
-                findings.append(
+        for pattern, name, effect_type in finding_patterns:
+            if re.search(pattern, text):
+                result["findings"].append(
                     ExtractedEntity(
                         entity_type=EntityType.FINDING,
-                        name=match.group(0).capitalize(),
-                        description="Extracted via pattern matching",
+                        name=name,
                         confidence=0.5,
+                        source_paper_id=paper_id,
+                        properties={"effect_type": effect_type},
                     )
                 )
-                break  # Only one finding from patterns
+                break  # Only first finding
 
+        # Limit results
+        result["concepts"] = result["concepts"][:10]
+        result["methods"] = result["methods"][:5]
+        result["findings"] = result["findings"][:5]
+
+        return result
+
+    def _empty_result(self) -> dict:
+        """Return empty result structure."""
         return {
-            "concepts": concepts[:5],
-            "methods": methods[:3],
-            "findings": findings[:3],
+            "concepts": [],
+            "methods": [],
+            "findings": [],
+            "problems": [],
+            "innovations": [],
+            "limitations": [],
+            "datasets": [],
+            "metrics": [],
         }
-
-    def _split_into_sections(self, full_text: str) -> dict[str, str]:
-        """Split full text into sections using regex patterns."""
-        import re
-        sections = {}
-
-        # Common section header patterns
-        section_patterns = [
-            (r'(?i)\b(?:introduction|1\.?\s+introduction)\b', 'introduction'),
-            (r'(?i)\b(?:method(?:ology|s)?|2\.?\s+method(?:ology|s)?|research\s+design)\b', 'methodology'),
-            (r'(?i)\b(?:results?|findings?|3\.?\s+results?)\b', 'results'),
-            (r'(?i)\b(?:discussion|4\.?\s+discussion|implications?)\b', 'discussion'),
-            (r'(?i)\b(?:conclusion|5\.?\s+conclusion)\b', 'discussion'),  # merge with discussion
-        ]
-
-        # Find section boundaries
-        boundaries = []
-        for pattern, section_name in section_patterns:
-            for match in re.finditer(pattern, full_text):
-                boundaries.append((match.start(), section_name))
-
-        # Sort by position
-        boundaries.sort(key=lambda x: x[0])
-
-        # Extract text between boundaries
-        for i, (start, name) in enumerate(boundaries):
-            end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(full_text)
-            text = full_text[start:end].strip()
-            if len(text) > 100:  # Only include substantial sections
-                if name in sections:
-                    sections[name] += "\n" + text  # Merge duplicate section names
-                else:
-                    sections[name] = text
-
-        return sections
-
-    async def extract_from_sections(self, title: str, sections: dict[str, str]) -> dict:
-        """Extract entities from paper sections with section-specific prompts."""
-        all_entities = {"concepts": [], "methods": [], "findings": [], "results": [], "claims": [], "datasets": []}
-
-        for section_name, text in sections.items():
-            if section_name not in SECTION_PROMPTS:
-                continue
-
-            prompt = SECTION_PROMPTS[section_name].format(title=title, text=text[:3000])
-
-            try:
-                response = await self.llm.generate(prompt, max_tokens=1000, temperature=0.1)
-                parsed = self._parse_section_response(response, section_name)
-
-                # Add section attribution to each entity
-                for entity_list in parsed.values():
-                    for entity in entity_list:
-                        entity.extraction_section = section_name
-
-                # Merge into all_entities
-                for key, entities in parsed.items():
-                    if key in all_entities:
-                        all_entities[key].extend(entities)
-            except Exception as e:
-                logger.warning(f"Section extraction failed for {section_name}: {e}")
-
-        return all_entities
-
-    async def extract_from_full_text(self, title: str, full_text: str) -> dict:
-        """Extract entities from full paper text by splitting into sections first."""
-        if not self.llm:
-            return self._fallback_extraction(title, full_text[:3000])
-
-        sections = self._split_into_sections(full_text)
-
-        if not sections:
-            # Fallback to abstract-based extraction if section detection fails
-            return await self.extract_from_paper(title=title, abstract=full_text[:3000])
-
-        return await self.extract_from_sections(title, sections)
 
     async def batch_extract(
         self,
-        papers: list[dict],
+        papers: List[dict],
         batch_size: int = 10,
         progress_callback=None,
-    ) -> list[dict]:
+    ) -> List[dict]:
         """
         Extract entities from multiple papers in batches.
 
         Args:
-            papers: List of dicts with 'title' and 'abstract'
-            batch_size: Number of papers to process before yielding
-            progress_callback: Optional callback for progress updates
+            papers: List of dicts with 'title', 'abstract', 'paper_id'
+            batch_size: Number of papers to process before progress update
+            progress_callback: Optional callback(current, total)
 
         Returns:
             List of extraction results
         """
         results = []
+        total = len(papers)
 
         for i, paper in enumerate(papers):
             result = await self.extract_from_paper(
                 title=paper.get("title", ""),
                 abstract=paper.get("abstract", ""),
+                paper_id=paper.get("paper_id"),
             )
             results.append(result)
 
             if progress_callback and (i + 1) % batch_size == 0:
-                progress_callback(i + 1, len(papers))
+                progress_callback(i + 1, total)
+
+        if progress_callback:
+            progress_callback(total, total)
 
         return results
+
+    def clear_cache(self):
+        """Clear extraction cache."""
+        self._extraction_cache.clear()
+        logger.debug("Extraction cache cleared")
+
+    async def extract_from_sections(
+        self,
+        sections: List[Dict],
+        paper_id: Optional[str] = None,
+    ) -> List:
+        """
+        Extract entities from paper sections using section-specific prompts.
+
+        This method provides more accurate extraction by using prompts
+        tailored to each section type (introduction, methodology, results, discussion).
+
+        Args:
+            sections: List of dicts with 'section_type', 'text', 'title' keys
+                      (compatible with SemanticChunker Section output)
+            paper_id: Optional paper ID for tracking source
+
+        Returns:
+            List of ExtractedEntity objects
+        """
+        all_entities = []
+
+        for section in sections:
+            section_type = section.get("section_type", "unknown").lower()
+            text = section.get("text", "")
+
+            if not text or len(text) < 50:
+                continue
+
+            # Get section-specific prompt or fall back to default
+            if section_type in ("methodology", "methods"):
+                prompt_template = SECTION_PROMPTS.get("methodology")
+            elif section_type in ("results", "findings"):
+                prompt_template = SECTION_PROMPTS.get("results")
+            elif section_type in ("discussion", "conclusion"):
+                prompt_template = SECTION_PROMPTS.get("discussion")
+            elif section_type == "introduction":
+                prompt_template = SECTION_PROMPTS.get("introduction")
+            else:
+                # Use fast extraction for other sections
+                prompt_template = None
+
+            if prompt_template and self.llm:
+                try:
+                    # Use section-specific prompt
+                    prompt = prompt_template.format(text=text[:3000])
+
+                    response = await self.llm.generate(
+                        prompt,
+                        max_tokens=1000,
+                        temperature=0.1,
+                    )
+
+                    # Parse response
+                    result = self._parse_llm_response(response, paper_id)
+
+                    # Convert to entities with section metadata
+                    for entity_type, entity_list in result.items():
+                        for entity in entity_list:
+                            if isinstance(entity, ExtractedEntity):
+                                entity.properties["source_section"] = section_type
+                                all_entities.append(entity)
+
+                    logger.debug(f"Extracted {len(result)} entity types from {section_type} section")
+
+                except Exception as e:
+                    logger.warning(f"Section extraction failed for {section_type}: {e}")
+            else:
+                # Fall back to general extraction
+                result = await self.extract_from_paper(
+                    title=section.get("title", ""),
+                    abstract=text[:2000],
+                    paper_id=paper_id,
+                )
+
+                for entity_type, entity_list in result.items():
+                    for entity in entity_list:
+                        if isinstance(entity, ExtractedEntity):
+                            entity.properties["source_section"] = section_type
+                            all_entities.append(entity)
+
+        # Deduplicate entities by name
+        seen_names = set()
+        unique_entities = []
+        for entity in all_entities:
+            if entity.name not in seen_names:
+                seen_names.add(entity.name)
+                unique_entities.append(entity)
+
+        logger.info(f"Section-aware extraction: {len(unique_entities)} unique entities from {len(sections)} sections")
+
+        return unique_entities
+
+
+# ============================================================================
+# Entity Disambiguator (NLP-AKG style)
+# ============================================================================
+
+class EntityDisambiguator:
+    """
+    Disambiguates extracted entities using embedding similarity.
+
+    Groups similar entities and selects canonical names.
+    Prevents duplicate concepts like "AI" and "artificial intelligence".
+    """
+
+    def __init__(self, similarity_threshold: float = 0.85):
+        self.similarity_threshold = similarity_threshold
+        self._canonical_map: Dict[str, str] = {}
+
+    def add_synonym(self, canonical: str, *synonyms: str):
+        """Add manual synonym mapping."""
+        for syn in synonyms:
+            self._canonical_map[syn.lower()] = canonical.lower()
+
+    def get_canonical_name(self, name: str) -> str:
+        """Get canonical name for an entity."""
+        name_lower = name.lower().strip()
+
+        # Check manual mappings first
+        if name_lower in self._canonical_map:
+            return self._canonical_map[name_lower]
+
+        return name_lower
+
+    def disambiguate_entities(
+        self, entities: List[ExtractedEntity]
+    ) -> List[ExtractedEntity]:
+        """
+        Merge duplicate entities, keeping highest confidence.
+
+        Returns deduplicated list with merged source papers.
+        """
+        # Group by canonical name
+        entity_groups: Dict[str, List[ExtractedEntity]] = {}
+
+        for entity in entities:
+            canonical = self.get_canonical_name(entity.name)
+            if canonical not in entity_groups:
+                entity_groups[canonical] = []
+            entity_groups[canonical].append(entity)
+
+        # Merge groups
+        result = []
+        for canonical, group in entity_groups.items():
+            # Take entity with highest confidence
+            best = max(group, key=lambda e: e.confidence)
+
+            # Merge source papers
+            all_sources = set()
+            for e in group:
+                if e.source_paper_id:
+                    all_sources.add(e.source_paper_id)
+
+            # Create merged entity
+            merged = ExtractedEntity(
+                entity_type=best.entity_type,
+                name=canonical,
+                definition=best.definition,
+                description=best.description,
+                confidence=max(e.confidence for e in group),
+                source_paper_id=None,  # Will be stored as array
+                properties={
+                    **best.properties,
+                    "source_count": len(all_sources),
+                    "source_paper_ids": list(all_sources),
+                },
+            )
+            result.append(merged)
+
+        return result
+
+
+# Pre-configured synonyms for academic concepts
+DEFAULT_SYNONYMS = [
+    ("artificial intelligence", "ai", "A.I."),
+    ("machine learning", "ml", "M.L."),
+    ("natural language processing", "nlp", "N.L.P."),
+    ("large language model", "llm", "L.L.M.", "large language models"),
+    ("randomized controlled trial", "rct", "R.C.T."),
+    ("chatbot", "chat bot", "conversational agent", "dialogue system"),
+    ("deep learning", "dl", "D.L."),
+    ("neural network", "nn", "neural net", "neural networks"),
+]
+
+
+def create_default_disambiguator() -> EntityDisambiguator:
+    """Create disambiguator with default academic synonyms."""
+    disambiguator = EntityDisambiguator()
+    for synonyms in DEFAULT_SYNONYMS:
+        canonical = synonyms[0]
+        disambiguator.add_synonym(canonical, *synonyms[1:])
+    return disambiguator

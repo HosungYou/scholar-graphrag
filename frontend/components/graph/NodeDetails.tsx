@@ -1,11 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, MessageSquare, Share2, Loader2, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
-import clsx from 'clsx';
-import type { GraphEntity, EntityType, PaperProperties, AuthorProperties, ConceptProperties, MethodProperties, FindingProperties, ResultProperties, ClaimProperties } from '@/types';
+import { X, ExternalLink, MessageSquare, Share2, Loader2, ChevronDown, ChevronUp, Hexagon, Diamond, Pentagon, Square, Octagon } from 'lucide-react';
+import type { GraphEntity, EntityType, PaperProperties, AuthorProperties, ConceptProperties, MethodProperties, FindingProperties } from '@/types';
 import { api } from '@/lib/api';
+
+/* ============================================================
+   NodeDetails - VS Design Diverge Style
+   Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Line-based layout (minimal border-radius)
+   - Left accent bar for entity type
+   - Monospace labels and metadata
+   - Polygon icons
+   ============================================================ */
 
 interface NodeDetailsProps {
   node: GraphEntity | null;
@@ -15,77 +24,76 @@ interface NodeDetailsProps {
   onShowConnections?: (nodeId: string) => void;
 }
 
-const entityTypeConfig: Record<EntityType, {
-  bg: string;
-  border: string;
-  text: string;
-  gradient: string;
-}> = {
+// VS Design Diverge palette - matching PolygonNode.tsx exactly
+const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNode }> = {
   Paper: {
-    bg: 'bg-teal-dim',
-    border: 'border-teal',
-    text: 'text-teal',
-    gradient: 'from-teal to-teal-dim'
+    color: '#6366F1', // Indigo - matches PolygonNode
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
   },
   Author: {
-    bg: 'bg-surface-2',
-    border: 'border-node-author',
-    text: 'text-node-author',
-    gradient: 'from-node-author to-node-author'
+    color: '#A855F7', // Purple - matches PolygonNode
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
   },
   Concept: {
-    bg: 'bg-surface-2',
-    border: 'border-node-concept',
-    text: 'text-node-concept',
-    gradient: 'from-node-concept to-node-concept'
+    color: '#8B5CF6', // Violet - matches PolygonNode
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
   },
   Method: {
-    bg: 'bg-surface-2',
-    border: 'border-copper',
-    text: 'text-copper',
-    gradient: 'from-copper to-copper'
+    color: '#F59E0B', // Amber - matches PolygonNode
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
   },
   Finding: {
-    bg: 'bg-surface-2',
-    border: 'border-node-finding',
-    text: 'text-node-finding',
-    gradient: 'from-node-finding to-node-finding'
+    color: '#10B981', // Emerald - matches PolygonNode
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
   },
-  Result: {
-    bg: 'bg-surface-2',
-    border: 'border-node-finding',
-    text: 'text-node-finding',
-    gradient: 'from-node-finding to-node-finding'
+  Problem: {
+    color: '#EF4444', // Red
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
   },
-  Claim: {
-    bg: 'bg-surface-2',
-    border: 'border-pink-500',
-    text: 'text-pink-500',
-    gradient: 'from-pink-500 to-pink-500'
+  Dataset: {
+    color: '#3B82F6', // Blue
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
   },
-};
-
-const slideVariants = {
-  hidden: { 
-    x: '-100%', 
-    opacity: 0,
+  Metric: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
   },
-  visible: { 
-    x: 0, 
-    opacity: 1,
-    transition: {
-      type: 'spring' as const,
-      stiffness: 300,
-      damping: 30,
-    }
+  Innovation: {
+    color: '#14B8A6', // Teal
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
   },
-  exit: { 
-    x: '-100%', 
-    opacity: 0,
-    transition: {
-      duration: 0.2,
-    }
-  }
+  Limitation: {
+    color: '#F97316', // Orange
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Invention: {
+    color: '#7C3AED', // Violet
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Patent: {
+    color: '#2563EB', // Blue
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Inventor: {
+    color: '#DB2777', // Pink
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Technology: {
+    color: '#059669', // Green
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  License: {
+    color: '#D97706', // Amber
+    icon: <Square className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Grant: {
+    color: '#4F46E5', // Indigo
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Department: {
+    color: '#0891B2', // Cyan
+    icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
+  },
 };
 
 export function NodeDetails({
@@ -102,48 +110,49 @@ export function NodeDetails({
   if (!node) return null;
 
   const config = entityTypeConfig[node.entity_type] || {
-    bg: 'bg-surface-2',
-    border: 'border-border',
-    text: 'text-text-primary',
-    gradient: 'from-surface-3 to-surface-3',
+    color: '#64748B',
+    icon: <Square className="w-4 h-4" />,
   };
 
   const handleGetExplanation = async () => {
     setIsLoadingExplanation(true);
     try {
-      const result = await api.explainNode(node.id, projectId);
+      // v0.9.0: Pass node name and type to avoid UUID in AI response
+      const result = await api.explainNode(
+        node.id,
+        projectId,
+        node.name,
+        node.entity_type
+      );
       setAiExplanation(result.explanation);
     } catch (error) {
       console.error('Failed to get AI explanation:', error);
-      setAiExplanation('AI 설명을 가져오는데 실패했습니다.');
+      setAiExplanation('Failed to fetch AI explanation.');
     } finally {
       setIsLoadingExplanation(false);
     }
   };
 
   const renderPaperDetails = (props: PaperProperties) => (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {props.abstract && (
         <div>
-          <p className="text-sm font-medium text-text-primary mb-1">Abstract</p>
-          <p className={clsx(
-            "text-sm text-text-secondary leading-relaxed",
-            !showFullAbstract && "line-clamp-4"
-          )}>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">Abstract</p>
+          <p className={`text-sm text-ink dark:text-paper leading-relaxed ${showFullAbstract ? '' : 'line-clamp-4'}`}>
             {props.abstract}
           </p>
           {props.abstract.length > 200 && (
             <button
               onClick={() => setShowFullAbstract(!showFullAbstract)}
-              className="text-xs text-teal hover:text-teal mt-1 flex items-center gap-1 font-medium"
+              className="font-mono text-xs text-accent-teal hover:text-accent-teal/80 mt-2 flex items-center gap-1 transition-colors"
             >
               {showFullAbstract ? (
                 <>
-                  <ChevronUp className="w-3 h-3" /> Show less
+                  <ChevronUp className="w-3 h-3" /> Collapse
                 </>
               ) : (
                 <>
-                  <ChevronDown className="w-3 h-3" /> Show more
+                  <ChevronDown className="w-3 h-3" /> Expand
                 </>
               )}
             </button>
@@ -151,42 +160,45 @@ export function NodeDetails({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 text-sm">
+      <div className="grid grid-cols-2 gap-4 text-sm">
         {props.year && (
           <div>
-            <span className="text-text-secondary">Year:</span>{' '}
-            <span className="text-text-primary font-medium">{props.year}</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Year</span>
+            <p className="font-mono text-ink dark:text-paper">{props.year}</p>
           </div>
         )}
         {props.citation_count !== undefined && (
           <div>
-            <span className="text-text-secondary">Citations:</span>{' '}
-            <span className="text-text-primary font-medium">{props.citation_count}</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Citations</span>
+            <p className="font-mono text-ink dark:text-paper">{props.citation_count}</p>
           </div>
         )}
         {props.source && (
-          <div>
-            <span className="text-text-secondary">Source:</span>{' '}
-            <span className="text-text-primary">{props.source}</span>
+          <div className="col-span-2">
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Source</span>
+            <p className="text-ink dark:text-paper">{props.source}</p>
           </div>
         )}
         {props.authors && props.authors.length > 0 && (
           <div className="col-span-2">
-            <span className="text-text-secondary">Authors:</span>{' '}
-            <span className="text-text-primary">{props.authors.slice(0, 3).join(', ')}{props.authors.length > 3 ? ` +${props.authors.length - 3}` : ''}</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Authors</span>
+            <p className="text-ink dark:text-paper">
+              {props.authors.slice(0, 3).join(', ')}
+              {props.authors.length > 3 ? ` +${props.authors.length - 3}` : ''}
+            </p>
           </div>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 pt-2">
+      <div className="flex gap-2 pt-2">
         {props.doi && (
           <a
             href={`https://doi.org/${props.doi}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-teal hover:text-teal px-2.5 py-1.5 bg-teal-dim rounded font-medium transition-colors"
+            className="inline-flex items-center gap-1 font-mono text-xs text-accent-teal hover:text-accent-teal/80 px-2 py-1 border border-accent-teal/30 hover:border-accent-teal transition-colors"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3 h-3" />
             DOI
           </a>
         )}
@@ -195,9 +207,9 @@ export function NodeDetails({
             href={`https://arxiv.org/abs/${props.arxiv_id}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-copper hover:text-copper px-2.5 py-1.5 bg-surface-3 rounded font-medium transition-colors"
+            className="inline-flex items-center gap-1 font-mono text-xs text-accent-amber hover:text-accent-amber/80 px-2 py-1 border border-accent-amber/30 hover:border-accent-amber transition-colors"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3 h-3" />
             arXiv
           </a>
         )}
@@ -206,9 +218,9 @@ export function NodeDetails({
             href={props.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary px-2.5 py-1.5 bg-surface-2 rounded font-medium transition-colors"
+            className="inline-flex items-center gap-1 font-mono text-xs text-muted hover:text-ink dark:hover:text-paper px-2 py-1 border border-ink/10 dark:border-paper/10 hover:border-ink/30 dark:hover:border-paper/30 transition-colors"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3 h-3" />
             Link
           </a>
         )}
@@ -217,21 +229,21 @@ export function NodeDetails({
   );
 
   const renderAuthorDetails = (props: AuthorProperties) => (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {props.affiliation && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Affiliation</p>
-          <p className="text-sm text-text-primary">{props.affiliation}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Affiliation</p>
+          <p className="text-sm text-ink dark:text-paper">{props.affiliation}</p>
         </div>
       )}
       {props.orcid && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">ORCID</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">ORCID</p>
           <a
             href={`https://orcid.org/${props.orcid}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-node-author hover:text-node-author flex items-center gap-1 font-medium"
+            className="font-mono text-sm text-accent-teal hover:text-accent-teal/80 flex items-center gap-1 transition-colors"
           >
             {props.orcid}
             <ExternalLink className="w-3 h-3" />
@@ -240,33 +252,33 @@ export function NodeDetails({
       )}
       {props.paper_count !== undefined && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Papers in this collection</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Papers</p>
+          <p className="font-mono text-lg text-ink dark:text-paper">{props.paper_count}</p>
         </div>
       )}
     </div>
   );
 
   const renderConceptDetails = (props: ConceptProperties) => (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {props.description && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Description</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.description}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Description</p>
+          <p className="text-sm text-ink dark:text-paper leading-relaxed">{props.description}</p>
         </div>
       )}
       {props.domain && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Domain</p>
-          <p className="text-sm text-text-primary">{props.domain}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Domain</p>
+          <p className="text-sm text-ink dark:text-paper">{props.domain}</p>
         </div>
       )}
       {props.synonyms && props.synonyms.length > 0 && (
         <div>
-          <p className="text-sm text-text-secondary mb-1">Related terms</p>
-          <div className="flex flex-wrap gap-1.5">
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">Related Terms</p>
+          <div className="flex flex-wrap gap-1">
             {props.synonyms.map((s, i) => (
-              <span key={i} className="text-xs bg-surface-3 text-node-concept px-2.5 py-1 rounded-full font-medium">
+              <span key={i} className="font-mono text-xs text-accent-teal px-2 py-0.5 border border-accent-teal/30">
                 {s}
               </span>
             ))}
@@ -275,155 +287,74 @@ export function NodeDetails({
       )}
       {props.paper_count !== undefined && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Mentioned in</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count} papers</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Mentioned In</p>
+          <p className="font-mono text-lg text-ink dark:text-paper">{props.paper_count} <span className="text-sm text-muted">papers</span></p>
         </div>
       )}
     </div>
   );
 
   const renderMethodDetails = (props: MethodProperties) => (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {props.description && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Description</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.description}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Description</p>
+          <p className="text-sm text-ink dark:text-paper leading-relaxed">{props.description}</p>
         </div>
       )}
       {props.type && (
         <div>
-          <p className="text-sm text-text-secondary mb-1">Type</p>
-          <span className={clsx(
-            "text-xs px-2.5 py-1 rounded-full font-medium",
-            props.type === 'quantitative' && 'bg-teal-dim text-teal',
-            props.type === 'qualitative' && 'bg-surface-3 text-node-author',
-            props.type === 'mixed' && 'bg-surface-3 text-node-concept'
-          )}>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Type</p>
+          <span className={`font-mono text-xs px-2 py-0.5 border ${
+            props.type === 'quantitative' ? 'text-accent-teal border-accent-teal/30' :
+            props.type === 'qualitative' ? 'text-accent-amber border-accent-amber/30' :
+            'text-accent-red border-accent-red/30'
+          }`}>
             {props.type}
           </span>
         </div>
       )}
       {props.paper_count !== undefined && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Used in</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count} papers</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Used In</p>
+          <p className="font-mono text-lg text-ink dark:text-paper">{props.paper_count} <span className="text-sm text-muted">papers</span></p>
         </div>
       )}
     </div>
   );
 
   const renderFindingDetails = (props: FindingProperties) => (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {props.statement && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Statement</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.statement}</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Statement</p>
+          <p className="text-sm text-ink dark:text-paper leading-relaxed">{props.statement}</p>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3 text-sm">
+      <div className="grid grid-cols-2 gap-4 text-sm">
         {props.effect_size && (
           <div>
-            <span className="text-text-secondary">Effect Size:</span>{' '}
-            <span className="text-text-primary font-medium">{props.effect_size}</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Effect Size</span>
+            <p className="font-mono text-ink dark:text-paper">{props.effect_size}</p>
           </div>
         )}
         {props.significance && (
           <div>
-            <span className="text-text-secondary">Significance:</span>{' '}
-            <span className="text-text-primary">{props.significance}</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Significance</span>
+            <p className="text-ink dark:text-paper">{props.significance}</p>
           </div>
         )}
         {props.confidence !== undefined && (
           <div>
-            <span className="text-text-secondary">Confidence:</span>{' '}
-            <span className="text-text-primary font-medium">{Math.round(props.confidence * 100)}%</span>
+            <span className="font-mono text-xs text-muted uppercase tracking-wider">Confidence</span>
+            <p className="font-mono text-ink dark:text-paper">{Math.round(props.confidence * 100)}%</p>
           </div>
         )}
       </div>
       {props.paper_count !== undefined && (
         <div>
-          <p className="text-sm text-text-secondary mb-0.5">Supported by</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count} papers</p>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderResultDetails = (props: ResultProperties) => (
-    <div className="space-y-3">
-      {props.statement && (
-        <div>
-          <p className="text-sm text-text-secondary mb-0.5">Statement</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.statement}</p>
-        </div>
-      )}
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        {props.metrics && (
-          <div>
-            <span className="text-text-secondary">Metrics:</span>{' '}
-            <span className="text-text-primary font-medium">{props.metrics}</span>
-          </div>
-        )}
-        {props.significance && (
-          <div>
-            <span className="text-text-secondary">Significance:</span>{' '}
-            <span className="text-text-primary">{props.significance}</span>
-          </div>
-        )}
-        {props.confidence !== undefined && (
-          <div>
-            <span className="text-text-secondary">Confidence:</span>{' '}
-            <span className="text-text-primary font-medium">{Math.round(props.confidence * 100)}%</span>
-          </div>
-        )}
-        {props.extraction_section && (
-          <div>
-            <span className="text-text-secondary">Section:</span>{' '}
-            <span className="text-text-primary">{props.extraction_section}</span>
-          </div>
-        )}
-      </div>
-      {props.paper_count !== undefined && (
-        <div>
-          <p className="text-sm text-text-secondary mb-0.5">Reported in</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count} papers</p>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderClaimDetails = (props: ClaimProperties) => (
-    <div className="space-y-3">
-      {props.statement && (
-        <div>
-          <p className="text-sm text-text-secondary mb-0.5">Statement</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.statement}</p>
-        </div>
-      )}
-      {props.evidence && (
-        <div>
-          <p className="text-sm text-text-secondary mb-0.5">Evidence</p>
-          <p className="text-sm text-text-primary leading-relaxed">{props.evidence}</p>
-        </div>
-      )}
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        {props.confidence !== undefined && (
-          <div>
-            <span className="text-text-secondary">Confidence:</span>{' '}
-            <span className="text-text-primary font-medium">{Math.round(props.confidence * 100)}%</span>
-          </div>
-        )}
-        {props.extraction_section && (
-          <div>
-            <span className="text-text-secondary">Section:</span>{' '}
-            <span className="text-text-primary">{props.extraction_section}</span>
-          </div>
-        )}
-      </div>
-      {props.paper_count !== undefined && (
-        <div>
-          <p className="text-sm text-text-secondary mb-0.5">Found in</p>
-          <p className="text-sm text-text-primary font-medium">{props.paper_count} papers</p>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">Supported By</p>
+          <p className="font-mono text-lg text-ink dark:text-paper">{props.paper_count} <span className="text-sm text-muted">papers</span></p>
         </div>
       )}
     </div>
@@ -447,22 +378,17 @@ export function NodeDetails({
     if (entityType === 'Finding') {
       return renderFindingDetails(node.properties as FindingProperties);
     }
-    if (entityType === 'Result') {
-      return renderResultDetails(node.properties as ResultProperties);
-    }
-    if (entityType === 'Claim') {
-      return renderClaimDetails(node.properties as ClaimProperties);
-    }
 
+    // Fallback for unknown entity types
     const props = node.properties as Record<string, unknown>;
     return (
       <div className="space-y-3">
         {Object.entries(props).map(([key, value]) => (
           <div key={key}>
-            <p className="text-sm text-text-secondary capitalize mb-0.5">
+            <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">
               {key.replace(/_/g, ' ')}
             </p>
-            <p className="text-sm text-text-primary">
+            <p className="text-sm text-ink dark:text-paper">
               {typeof value === 'object' ? JSON.stringify(value) : String(value)}
             </p>
           </div>
@@ -472,168 +398,94 @@ export function NodeDetails({
   };
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={node.id}
-        variants={slideVariants}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
-        className={clsx(
-          "absolute bottom-4 left-4 max-w-md w-[calc(100%-2rem)] sm:w-96",
-          "bg-surface-1 rounded overflow-hidden z-10",
-          "border border-border"
-        )}
-      >
-        <div className={clsx(
-          config.bg,
-          "px-4 py-3 border-b border-border"
-        )}>
-          <div className="flex items-start justify-between">
-            <div className="flex-1 min-w-0">
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="flex items-center gap-2 mb-2"
+    <div className="absolute bottom-4 left-4 right-4 max-w-md bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 overflow-hidden z-10">
+      {/* Header with left accent bar */}
+      <div className="relative border-b border-ink/10 dark:border-paper/10 px-4 py-3">
+        {/* Left accent bar */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-1"
+          style={{ backgroundColor: config.color }}
+        />
+
+        <div className="flex items-start justify-between pl-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span style={{ color: config.color }}>
+                {config.icon}
+              </span>
+              <span
+                className="font-mono text-xs uppercase tracking-wider"
+                style={{ color: config.color }}
               >
-                <span className={clsx(
-                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
-                  "bg-gradient-to-r text-text-primary",
-                  config.gradient
-                )}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-text-primary animate-pulse" />
-                  {node.entity_type}
-                </span>
-                {(() => {
-                  const props = node.properties as Record<string, unknown>;
-                  const paperCount = props?.paper_count;
-                  if (node.entity_type !== 'Paper' && paperCount && Number(paperCount) > 0) {
-                    return (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-surface-3 text-text-secondary">
-                        {String(paperCount)} papers
-                      </span>
-                    );
-                  }
-                  return null;
-                })()}
-              </motion.div>
-              <motion.h3
-                initial={{ opacity: 0, y: 5 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-                className="font-medium text-text-primary truncate text-lg"
-                title={node.name}
-              >
-                {node.name}
-              </motion.h3>
+                {node.entity_type}
+              </span>
             </div>
-            <motion.button
-              whileHover={{ scale: 1.1, rotate: 90 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={onClose}
-              className={clsx(
-                "p-1.5 rounded transition-colors",
-                "hover:bg-surface-2"
-              )}
-              aria-label="Close"
-            >
-              <X className="w-5 h-5 text-text-tertiary" />
-            </motion.button>
+            <h3 className="font-display text-lg text-ink dark:text-paper truncate" title={node.name}>
+              {node.name}
+            </h3>
           </div>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="p-4 max-h-64 overflow-y-auto bg-surface-2"
-        >
-          {renderDetails()}
-
-          <AnimatePresence>
-            {aiExplanation && (
-              <motion.div
-                initial={{ opacity: 0, y: 10, height: 0 }}
-                animate={{ opacity: 1, y: 0, height: 'auto' }}
-                exit={{ opacity: 0, y: -10, height: 0 }}
-                className="mt-4 p-3 bg-gradient-to-r from-teal-dim to-surface-3 rounded border border-teal"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="w-4 h-4 text-teal" />
-                  <p className="text-xs font-medium text-teal">AI Analysis</p>
-                </div>
-                <p className="text-sm text-text-primary leading-relaxed">{aiExplanation}</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="px-4 py-3 border-t border-border bg-surface-2 flex gap-2"
-        >
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleGetExplanation}
-            disabled={isLoadingExplanation}
-            className={clsx(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2.5",
-              "bg-gradient-to-r from-teal to-node-concept",
-              "text-text-primary text-sm font-medium rounded",
-              "hover:from-teal hover:to-node-concept",
-              "transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            )}
+          <button
+            onClick={onClose}
+            className="p-1 text-muted hover:text-accent-red transition-colors"
+            aria-label="Close"
           >
-            {isLoadingExplanation ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Analyzing...
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                AI Explain
-              </>
-            )}
-          </motion.button>
-          {onAskAbout && (
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => onAskAbout(node.id, node.name)}
-              className={clsx(
-                "flex items-center justify-center gap-2 px-3 py-2.5",
-                "bg-surface-1 border border-border",
-                "text-text-secondary text-sm font-medium rounded",
-                "hover:bg-surface-2 transition-colors"
-              )}
-            >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-4 max-h-64 overflow-y-auto">
+        {renderDetails()}
+
+        {/* AI Explanation Section */}
+        {aiExplanation && (
+          <div className="mt-4 pt-4 border-t border-ink/10 dark:border-paper/10">
+            <div className="relative pl-3">
+              <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-teal" />
+              <p className="font-mono text-xs uppercase tracking-wider text-accent-teal mb-2">AI Analysis</p>
+              <p className="text-sm text-ink dark:text-paper leading-relaxed">{aiExplanation}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="px-4 py-3 border-t border-ink/10 dark:border-paper/10 flex gap-2">
+        <button
+          onClick={handleGetExplanation}
+          disabled={isLoadingExplanation}
+          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-accent-teal text-ink text-sm font-mono uppercase tracking-wider hover:bg-accent-teal/90 transition-colors disabled:opacity-50"
+        >
+          {isLoadingExplanation ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Analyzing...
+            </>
+          ) : (
+            <>
               <MessageSquare className="w-4 h-4" />
-              Chat
-            </motion.button>
+              AI Explain
+            </>
           )}
-          {onShowConnections && (
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => onShowConnections(node.id)}
-              className={clsx(
-                "flex items-center justify-center gap-2 px-3 py-2.5",
-                "bg-surface-1 border border-border",
-                "text-text-secondary text-sm font-medium rounded",
-                "hover:bg-surface-2 transition-colors"
-              )}
-            >
-              <Share2 className="w-4 h-4" />
-              Expand
-            </motion.button>
-          )}
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+        </button>
+        {onAskAbout && (
+          <button
+            onClick={() => onAskAbout(node.id, node.name)}
+            className="flex items-center justify-center gap-2 px-3 py-2 border border-ink/10 dark:border-paper/10 text-muted text-sm hover:text-ink dark:hover:text-paper hover:border-ink/30 dark:hover:border-paper/30 transition-colors"
+          >
+            <MessageSquare className="w-4 h-4" />
+          </button>
+        )}
+        {onShowConnections && (
+          <button
+            onClick={() => onShowConnections(node.id)}
+            className="flex items-center justify-center gap-2 px-3 py-2 border border-ink/10 dark:border-paper/10 text-muted text-sm hover:text-ink dark:hover:text-paper hover:border-ink/30 dark:hover:border-paper/30 transition-colors"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -15,37 +15,21 @@ import ReactFlow, {
   Panel,
   useReactFlow,
   ReactFlowProvider,
-  Viewport,
+  EdgeMouseHandler,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { motion, AnimatePresence } from 'framer-motion';
-import clsx from 'clsx';
 
-import { CustomNode } from './CustomNode';
-import { ClusterNode } from './ClusterNode';
-import { HUD } from '../ui/HUD';
-import { useGraphStore, ViewMode } from '@/hooks/useGraphStore';
+import { CircularNode } from './CircularNode';
+import { GapPanel } from './GapPanel';
+import { GraphLegend } from './GraphLegend';
+import { StatusBar } from './StatusBar';
+import { EdgeContextModal } from './EdgeContextModal';
+import { TemporalSlider } from './TemporalSlider';
+import { useGraphStore } from '@/hooks/useGraphStore';
+import { useTemporalGraph } from '@/hooks/useTemporalGraph';
 import { applyLayout, updateNodeHighlights, updateEdgeHighlights, LayoutType } from '@/lib/layout';
-import {
-  shouldCluster,
-  type ClusterConfig
-} from '@/lib/clustering';
-import type { GraphEntity } from '@/types';
-import {
-  Grid,
-  Workflow,
-  Circle,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
-  Layers,
-  Zap,
-  Lightbulb,
-  FileText,
-  Eye,
-  X
-} from 'lucide-react';
-import { useGraphKeyboard, KEYBOARD_SHORTCUTS } from '@/hooks/useGraphKeyboard';
+import type { GraphEntity, EntityType, StructuralGap } from '@/types';
+import { Circle, Target, RotateCcw, Info, Sparkles, Hexagon, Clock } from 'lucide-react';
 
 interface KnowledgeGraphProps {
   projectId: string;
@@ -54,33 +38,59 @@ interface KnowledgeGraphProps {
   highlightedEdges?: string[];
 }
 
-const nodeTypes: NodeTypes = {
-  paper: CustomNode,
-  author: CustomNode,
-  concept: CustomNode,
-  method: CustomNode,
-  finding: CustomNode,
-  cluster: ClusterNode,
-};
+// Define custom node types OUTSIDE component to prevent React Flow warning
+// "It looks like you've created a new nodeTypes or edgeTypes object"
+// This ensures stable reference across re-renders
+const NODE_TYPES: NodeTypes = {
+  circular: CircularNode,
+  // Legacy types redirect to circular
+  concept: CircularNode,
+  method: CircularNode,
+  finding: CircularNode,
+  problem: CircularNode,
+  dataset: CircularNode,
+  metric: CircularNode,
+  innovation: CircularNode,
+  limitation: CircularNode,
+  // TTO node types
+  invention: CircularNode,
+  patent: CircularNode,
+  inventor: CircularNode,
+  technology: CircularNode,
+  license: CircularNode,
+  grant: CircularNode,
+  department: CircularNode,
+} as const;
 
-const layoutOptions: { type: LayoutType; icon: any; label: string }[] = [
-  { type: 'conceptCentric', icon: Lightbulb, label: 'Concepts' },
-  { type: 'force', icon: Grid, label: 'Neural' },
-  { type: 'hierarchical', icon: Workflow, label: 'Tree' },
-  { type: 'radial', icon: Circle, label: 'Orbit' },
+// Cluster color palette for minimap
+const clusterColors = [
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
+  '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
+  '#BB8FCE', '#85C1E9', '#F8B500', '#82E0AA',
 ];
 
-const viewModeOptions: { mode: ViewMode; icon: any; label: string }[] = [
-  { mode: 'concepts', icon: Lightbulb, label: 'Concepts' },
-  { mode: 'papers', icon: FileText, label: 'Papers' },
-  { mode: 'full', icon: Eye, label: 'All' },
-];
-
-const CLUSTER_CONFIG: ClusterConfig = {
-  enabled: true,
-  threshold: 150, // Lowered for better performance
-  gridSize: 120,
-  minZoom: 0.5, // Higher min zoom for better performance
+// Entity type colors for legend (Hybrid Mode - matches FilterPanel/PolygonNode)
+const entityTypeColors: Record<string, string> = {
+  // Hybrid Mode entities
+  Paper: '#6366F1',     // Indigo
+  Author: '#A855F7',    // Purple
+  // Concept-centric entities
+  Concept: '#8B5CF6',   // Violet
+  Method: '#F59E0B',    // Amber
+  Finding: '#10B981',   // Emerald
+  Problem: '#EF4444',   // Red
+  Dataset: '#3B82F6',   // Blue
+  Metric: '#EC4899',    // Pink
+  Innovation: '#14B8A6', // Teal
+  Limitation: '#F97316', // Orange
+  // TTO entities
+  Invention: '#F59E0B',
+  Patent: '#6366F1',
+  Inventor: '#8B5CF6',
+  Technology: '#06B6D4',
+  License: '#10B981',
+  Grant: '#F97316',
+  Department: '#A855F7',
 };
 
 function KnowledgeGraphInner({
@@ -91,67 +101,95 @@ function KnowledgeGraphInner({
 }: KnowledgeGraphProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [layoutType, setLayoutType] = useState<LayoutType>('conceptCentric'); // Default to concept-centric
+  const [layoutType, setLayoutType] = useState<LayoutType>('cluster');
   const [isLayouting, setIsLayouting] = useState(false);
-  const [showLegend, setShowLegend] = useState(false);
-  const [currentZoom, setCurrentZoom] = useState(1);
-  const [isClustered, setIsClustered] = useState(false);
-
+  const [showLegend, setShowLegend] = useState(true);
+  const [showGapPanel, setShowGapPanel] = useState(true);
+  const [isGapPanelMinimized, setIsGapPanelMinimized] = useState(false);
+  // Temporal Graph Evolution state (Phase 2: InfraNodus Integration)
+  const [showTemporalSlider, setShowTemporalSlider] = useState(false);
+  const [isTemporalMinimized, setIsTemporalMinimized] = useState(false);
+  // Edge Context Modal state (Phase 1: Contextual Edge Exploration)
+  const [edgeModalOpen, setEdgeModalOpen] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState<{
+    relationshipId: string;
+    sourceName?: string;
+    targetName?: string;
+    relationshipType?: string;
+    properties?: Record<string, unknown>; // Phase 11D: Edge properties
+  } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { fitView, zoomIn, zoomOut } = useReactFlow();
-  const [showFilters, setShowFilters] = useState(false);
-  const { showShortcuts, setShowShortcuts } = useGraphKeyboard({
-    onFitView: () => fitView({ duration: 800 }),
-    onToggleFilter: () => setShowFilters(prev => !prev),
-  });
+  const { fitView } = useReactFlow();
 
   const {
     graphData,
     getFilteredData,
-    getConceptCentricData,
     fetchGraphData,
     isLoading,
-    viewMode,
-    setViewMode
+    error,
+    // Gap Detection
+    gaps,
+    clusters,
+    isGapLoading,
+    fetchGapAnalysis,
+    setHighlightedNodes,
+    setHighlightedEdges,
+    clearHighlights,
   } = useGraphStore();
 
+  // Temporal Graph Hook (Phase 2: InfraNodus Integration)
+  const filteredData = getFilteredData();
+  const temporalGraph = useTemporalGraph(
+    filteredData ? { nodes: filteredData.nodes, edges: filteredData.edges } : null
+  );
+
+  // Get temporally filtered data when temporal slider is active
+  const getTemporalFilteredData = useCallback(() => {
+    if (!showTemporalSlider || !filteredData) {
+      return filteredData;
+    }
+    return {
+      nodes: temporalGraph.filteredNodes,
+      edges: temporalGraph.filteredEdges,
+    };
+  }, [showTemporalSlider, filteredData, temporalGraph.filteredNodes, temporalGraph.filteredEdges]);
+
+  // Fetch graph data on mount
   useEffect(() => {
     fetchGraphData(projectId);
-  }, [projectId, fetchGraphData]);
+    fetchGapAnalysis(projectId);
+  }, [projectId, fetchGraphData, fetchGapAnalysis]);
 
+  // Apply layout when graph data changes
   useEffect(() => {
-    // Use concept-centric data when in concepts view mode
-    const filteredData = viewMode === 'concepts' || viewMode === 'papers'
-      ? getConceptCentricData()
-      : getFilteredData();
-
-    if (!filteredData || filteredData.nodes.length === 0) return;
+    const dataToLayout = getTemporalFilteredData();
+    if (!dataToLayout || dataToLayout.nodes.length === 0) return;
 
     setIsLayouting(true);
+
+    // Get container dimensions
     const width = containerRef.current?.clientWidth || 1200;
     const height = containerRef.current?.clientHeight || 800;
 
-    // Use conceptCentric layout when in concepts mode
-    const effectiveLayoutType = viewMode === 'concepts' && layoutType === 'conceptCentric'
-      ? 'conceptCentric'
-      : layoutType;
-
+    // Apply layout
     const { nodes: layoutNodes, edges: layoutEdges } = applyLayout(
-      filteredData.nodes,
-      filteredData.edges,
-      effectiveLayoutType,
+      dataToLayout.nodes,
+      dataToLayout.edges,
+      layoutType,
       { width, height }
     );
 
     setNodes(layoutNodes);
     setEdges(layoutEdges);
 
+    // Fit view after layout
     setTimeout(() => {
-      fitView({ padding: 0.2, duration: 800 });
+      fitView({ padding: 0.15, duration: 500 });
       setIsLayouting(false);
     }, 100);
-  }, [graphData, layoutType, viewMode, getFilteredData, getConceptCentricData, setNodes, setEdges, fitView]);
+  }, [graphData, layoutType, getTemporalFilteredData, setNodes, setEdges, fitView, temporalGraph.currentYear, showTemporalSlider]);
 
+  // Update highlights when they change
   useEffect(() => {
     if (highlightedNodes.length > 0 || highlightedEdges.length > 0) {
       setNodes(nds => updateNodeHighlights(nds, highlightedNodes));
@@ -159,185 +197,357 @@ function KnowledgeGraphInner({
     }
   }, [highlightedNodes, highlightedEdges, setNodes, setEdges]);
 
+  // Handle node click - ResearchRabbit style highlighting
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_: React.MouseEvent, clickedNode: Node) => {
+      // 1. Find connected edges
+      const connectedEdgeList = edges.filter(
+        e => e.source === clickedNode.id || e.target === clickedNode.id
+      );
+
+      // 2. Collect connected node IDs
+      const connectedNodeIds = new Set<string>();
+      connectedNodeIds.add(clickedNode.id); // Include clicked node
+      connectedEdgeList.forEach(e => {
+        connectedNodeIds.add(e.source);
+        connectedNodeIds.add(e.target);
+      });
+
+      // 3. Apply highlights via store (for persistence)
+      const nodeIdsArray = Array.from(connectedNodeIds);
+      const edgeIdsArray = connectedEdgeList.map(e => e.id);
+
+      setHighlightedNodes(nodeIdsArray);
+      setHighlightedEdges(edgeIdsArray);
+
+      // 4. Update visual highlights on nodes and edges
+      setNodes(nds => updateNodeHighlights(nds, nodeIdsArray));
+      setEdges(eds => updateEdgeHighlights(eds, edgeIdsArray));
+
+      // 5. Call onNodeClick callback for detail panel
       if (onNodeClick) {
-        const entity = graphData?.nodes.find(n => n.id === node.id);
-        if (entity) onNodeClick(node.id, entity);
+        const filteredData = getFilteredData();
+        const entity = filteredData?.nodes.find(n => n.id === clickedNode.id);
+        if (entity) {
+          onNodeClick(clickedNode.id, entity);
+        }
       }
     },
-    [onNodeClick, graphData]
+    [edges, onNodeClick, getFilteredData, setHighlightedNodes, setHighlightedEdges, setNodes, setEdges]
   );
 
-  return (
-    <div ref={containerRef} className="w-full h-full relative bg-surface-0 overflow-hidden">
-      {/* Background Ambience */}
-      <div className="absolute inset-0 pointer-events-none opacity-40">
-        <div className="absolute top-0 left-0 w-full h-full bg-mesh-nexus" />
-      </div>
+  // Handle layout change
+  const handleLayoutChange = useCallback((type: LayoutType) => {
+    setLayoutType(type);
+  }, []);
 
+  // Handle recenter
+  const handleRecenter = useCallback(() => {
+    fitView({ padding: 0.15, duration: 500 });
+  }, [fitView]);
+
+  // Handle gap selection
+  const handleGapSelect = useCallback((gap: StructuralGap) => {
+    // This triggers highlighting via the store
+    console.log('Gap selected:', gap.id);
+  }, []);
+
+  // Handle gap node highlighting
+  const handleGapHighlight = useCallback((nodeIds: string[]) => {
+    setHighlightedNodes(nodeIds);
+    setNodes(nds => updateNodeHighlights(nds, nodeIds));
+  }, [setHighlightedNodes, setNodes]);
+
+  // Handle clear gap highlights
+  const handleClearGapHighlights = useCallback(() => {
+    clearHighlights();
+    setNodes(nds => updateNodeHighlights(nds, []));
+    setEdges(eds => updateEdgeHighlights(eds, []));
+  }, [clearHighlights, setNodes, setEdges]);
+
+  // Handle gap refresh
+  const handleRefreshGaps = useCallback(async () => {
+    await fetchGapAnalysis(projectId);
+  }, [projectId, fetchGapAnalysis]);
+
+  // Handle edge click - Contextual Edge Exploration (Phase 1)
+  const handleEdgeClick = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      // Get source and target node names for context
+      const filteredData = getFilteredData();
+      const sourceNode = filteredData?.nodes.find(n => n.id === edge.source);
+      const targetNode = filteredData?.nodes.find(n => n.id === edge.target);
+
+      setSelectedEdge({
+        relationshipId: edge.id,
+        sourceName: sourceNode?.name,
+        targetName: targetNode?.name,
+        relationshipType: edge.data?.relationshipType || edge.type,
+        properties: edge.data?.properties, // Phase 11D: Pass edge properties
+      });
+      setEdgeModalOpen(true);
+    },
+    [getFilteredData]
+  );
+
+  // Handle close edge modal
+  const handleCloseEdgeModal = useCallback(() => {
+    setEdgeModalOpen(false);
+    setSelectedEdge(null);
+  }, []);
+
+  // MiniMap node color based on cluster
+  const miniMapNodeColor = useCallback((node: Node) => {
+    const clusterId = node.data?.clusterId;
+    if (clusterId !== undefined) {
+      return clusterColors[clusterId % clusterColors.length];
+    }
+    return entityTypeColors[node.data?.entityType] || '#94A3B8';
+  }, []);
+
+  // Count nodes by type
+  const nodeCounts = useMemo(() => {
+    const filteredData = getFilteredData();
+    if (!filteredData) return {};
+
+    const counts: Record<string, number> = {};
+    for (const node of filteredData.nodes) {
+      counts[node.entity_type] = (counts[node.entity_type] || 0) + 1;
+    }
+    return counts;
+  }, [getFilteredData]);
+
+  // Count clusters
+  const clusterCounts = useMemo(() => {
+    const filteredData = getFilteredData();
+    if (!filteredData) return new Map<number, number>();
+
+    const counts = new Map<number, number>();
+    for (const node of filteredData.nodes) {
+      const clusterId = node.properties?.cluster_id;
+      if (clusterId !== undefined && typeof clusterId === 'number') {
+        counts.set(clusterId, (counts.get(clusterId) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [getFilteredData]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full bg-paper dark:bg-ink">
+        <div className="text-center">
+          <div className="w-16 h-16 flex items-center justify-center bg-accent-teal/10 mx-auto mb-4">
+            <Hexagon className="w-8 h-8 text-accent-teal animate-pulse" />
+          </div>
+          <p className="font-mono text-xs uppercase tracking-wider text-muted">Loading concept network...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full bg-paper dark:bg-ink">
+        <div className="text-center">
+          <div className="w-16 h-16 flex items-center justify-center bg-accent-red/10 mx-auto mb-4">
+            <span className="text-accent-red text-3xl">!</span>
+          </div>
+          <p className="font-mono text-xs uppercase tracking-wider text-accent-red mb-2">Failed to load graph</p>
+          <p className="text-sm text-muted">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="w-full h-full relative" style={{ backgroundColor: '#0D0D1A' }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={handleNodeClick}
-        nodeTypes={nodeTypes}
+        onEdgeClick={handleEdgeClick}
+        nodeTypes={NODE_TYPES}
         connectionMode={ConnectionMode.Loose}
         fitView
-        minZoom={0.02}
-        maxZoom={4}
+        fitViewOptions={{ padding: 0.15 }}
+        minZoom={0.1}
+        maxZoom={3}
         defaultEdgeOptions={{
-          type: 'smoothstep',
-          style: { stroke: 'rgba(255,255,255,0.08)', strokeWidth: 1.5 },
+          type: 'default',  // Straight line (Bezier curve) for better visibility
         }}
-        proOptions={{ hideAttribution: true }}
+        style={{ background: 'linear-gradient(180deg, #0D0D1A 0%, #1A1A2E 100%)' }}
       >
-        <Background 
-          variant={BackgroundVariant.Lines} 
-          gap={40} 
-          size={0.5}
-          color="rgba(99, 102, 241, 0.03)"
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={30}
+          size={1}
+          color="rgba(139, 92, 246, 0.15)"
         />
-        
-        {/* HUD Layer */}
-        <HUD projectId={projectId} nodeCount={nodes.length} edgeCount={edges.length} />
+        <Controls
+          position="bottom-right"
+          className="!bg-paper dark:!bg-ink !border-ink/10 dark:!border-paper/10 !rounded-none"
+        />
+        <MiniMap
+          nodeColor={miniMapNodeColor}
+          nodeStrokeWidth={2}
+          zoomable
+          pannable
+          position="bottom-left"
+          className="!bg-paper dark:!bg-ink !border-ink/10 dark:!border-paper/10 !rounded-none"
+          maskColor="rgba(0, 0, 0, 0.7)"
+          style={{
+            marginLeft: showGapPanel
+              ? isGapPanelMinimized ? '64px' : '272px'  // Dynamic offset for GapPanel state
+              : '16px'
+          }}
+        />
 
-        {/* View Controls Panel */}
-        <Panel position="bottom-right" className="flex flex-col gap-3 mr-4 mb-4">
-          <div className="bg-surface-2 flex flex-col gap-2 p-2 rounded border border-border">
-            <button onClick={() => zoomIn()} className="p-2 hover:bg-surface-2 rounded text-text-secondary transition-colors">
-              <ZoomIn className="w-4 h-4" />
+        {/* Layout Controls - VS Design Diverge Style */}
+        <Panel position="top-right" className="flex gap-2">
+          <div className="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-1 flex gap-1">
+            <button
+              onClick={() => handleLayoutChange('cluster')}
+              className={`p-2 transition-colors relative ${
+                layoutType === 'cluster'
+                  ? 'bg-accent-teal text-white'
+                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Cluster layout"
+            >
+              <Circle className="w-4 h-4" />
+              {layoutType === 'cluster' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white" />
+              )}
             </button>
-            <button onClick={() => zoomOut()} className="p-2 hover:bg-surface-2 rounded text-text-secondary transition-colors">
-              <ZoomOut className="w-4 h-4" />
+            <button
+              onClick={() => handleLayoutChange('radial')}
+              className={`p-2 transition-colors relative ${
+                layoutType === 'radial'
+                  ? 'bg-accent-teal text-white'
+                  : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Radial layout (by importance)"
+            >
+              <Target className="w-4 h-4" />
+              {layoutType === 'radial' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white" />
+              )}
             </button>
-            <div className="h-px bg-border mx-1" />
-            <button onClick={() => fitView({ duration: 800 })} className="p-2 hover:bg-surface-2 rounded text-text-secondary transition-colors">
-              <Maximize2 className="w-4 h-4" />
+            <div className="w-px bg-ink/10 dark:bg-paper/10" />
+            <button
+              onClick={handleRecenter}
+              className="p-2 hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper transition-colors"
+              title="Recenter view"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowLegend(!showLegend)}
+              className={`p-2 transition-colors ${
+                showLegend ? 'bg-accent-teal/10 text-accent-teal' : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Toggle legend"
+            >
+              <Info className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowGapPanel(!showGapPanel)}
+              className={`p-2 transition-colors ${
+                showGapPanel ? 'bg-accent-amber/10 text-accent-amber' : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Toggle gap panel"
+            >
+              <Sparkles className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowTemporalSlider(!showTemporalSlider)}
+              className={`p-2 transition-colors ${
+                showTemporalSlider ? 'bg-accent-teal/10 text-accent-teal' : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+              }`}
+              title="Toggle temporal evolution"
+            >
+              <Clock className="w-4 h-4" />
             </button>
           </div>
         </Panel>
-
-        {/* View Mode Switcher Panel */}
-        <Panel position="top-left" className="ml-4 mt-4">
-          <div className="flex flex-col gap-2">
-            {/* View Mode Toggle */}
-            <motion.div
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              className="bg-surface-2 p-1.5 flex gap-1.5 rounded border border-border"
-            >
-              {viewModeOptions.map((option) => (
-                <button
-                  key={option.mode}
-                  onClick={() => setViewMode(option.mode)}
-                  className={clsx(
-                    'px-3 py-2 rounded transition-all duration-300 flex items-center gap-2 group',
-                    viewMode === option.mode
-                      ? 'bg-teal text-text-primary'
-                      : 'hover:bg-surface-2 text-text-tertiary'
-                  )}
-                >
-                  <option.icon className={clsx('w-4 h-4', viewMode === option.mode ? '' : '')} />
-                  <span className="text-[10px] font-medium tracking-tight uppercase">{option.label}</span>
-                </button>
-              ))}
-            </motion.div>
-
-            {/* Layout Switcher */}
-            <motion.div
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.1 }}
-              className="bg-surface-2 p-1.5 flex gap-1.5 rounded border border-border"
-            >
-              {layoutOptions.map((option) => (
-                <button
-                  key={option.type}
-                  onClick={() => setLayoutType(option.type)}
-                  className={clsx(
-                    'px-3 py-2 rounded transition-all duration-300 flex items-center gap-2 group',
-                    layoutType === option.type
-                      ? 'bg-node-concept text-text-primary'
-                      : 'hover:bg-surface-2 text-text-tertiary'
-                  )}
-                >
-                  <option.icon className={clsx('w-4 h-4', layoutType === option.type ? '' : '')} />
-                  <span className="text-[10px] font-medium tracking-tight uppercase">{option.label}</span>
-                </button>
-              ))}
-            </motion.div>
-          </div>
-        </Panel>
-
-        <Panel position="top-right" className="mr-4 mt-4 pointer-events-none">
-           <div className="flex items-center gap-2 bg-surface-2 px-4 py-2 rounded border border-border">
-             <Zap className="w-4 h-4 text-teal animate-pulse" />
-             <span className="text-[10px] font-medium text-text-secondary uppercase tracking-widest">Neural Nexus Engine v1.0</span>
-           </div>
-        </Panel>
-
-        {/* Keyboard Shortcuts Overlay */}
-        {showShortcuts && (
-          <Panel position="bottom-left" className="ml-4 mb-4">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-surface-2 border border-border rounded p-4 w-56"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-copper tracking-[0.15em] uppercase">Shortcuts</span>
-                <button onClick={() => setShowShortcuts(false)} className="text-text-ghost hover:text-text-primary">
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {KEYBOARD_SHORTCUTS.map((s) => (
-                  <div key={s.key} className="flex items-center justify-between text-xs">
-                    <span className="text-text-secondary">{s.description}</span>
-                    <kbd className="px-1.5 py-0.5 bg-surface-0 border border-border rounded font-mono text-text-tertiary">{s.key}</kbd>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          </Panel>
-        )}
       </ReactFlow>
 
-      {/* Cinematic Loading Overlay */}
-      <AnimatePresence>
-        {(isLoading || isLayouting) && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-surface-0 flex flex-col items-center justify-center z-50"
-          >
-            <div className="relative">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                className="w-24 h-24 rounded-full border-b-2 border-node-concept"
-              />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-text-primary animate-ping" />
-              </div>
-            </div>
-            <motion.p
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-8 text-sm font-medium tracking-[0.2em] uppercase text-node-concept animate-pulse"
-            >
-              Constructing Neural Network
-            </motion.p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Loading overlay for layout - VS Design Diverge Style */}
+      {isLayouting && (
+        <div className="absolute inset-0 bg-ink/50 flex items-center justify-center z-20">
+          <div className="bg-paper dark:bg-ink px-5 py-3 border border-ink/10 dark:border-paper/10 flex items-center gap-3">
+            <Hexagon className="w-5 h-5 text-accent-teal animate-pulse" />
+            <span className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper">Arranging concepts...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Gap Panel */}
+      {showGapPanel && (
+        <GapPanel
+          projectId={projectId}
+          gaps={gaps}
+          clusters={clusters}
+          nodes={getFilteredData()?.nodes || []}
+          edges={getFilteredData()?.edges || []}
+          onGapSelect={handleGapSelect}
+          onHighlightNodes={handleGapHighlight}
+          onClearHighlights={handleClearGapHighlights}
+          isLoading={isGapLoading}
+          onRefresh={handleRefreshGaps}
+          isMinimized={isGapPanelMinimized}
+          onToggleMinimize={() => setIsGapPanelMinimized(!isGapPanelMinimized)}
+        />
+      )}
+
+      {/* Legend - VS Design Diverge GraphLegend Component */}
+      {showLegend && (
+        <GraphLegend
+          visibleTypes={Object.keys(nodeCounts) as EntityType[]}
+          nodeCountsByType={nodeCounts as Record<EntityType, number>}
+        />
+      )}
+
+      {/* StatusBar - LLM/Vector/Source Status */}
+      <StatusBar projectId={projectId} />
+
+      {/* Temporal Slider - Graph Evolution Control (Phase 2: InfraNodus Integration) */}
+      {showTemporalSlider && (
+        <TemporalSlider
+          currentYear={temporalGraph.currentYear}
+          yearRange={temporalGraph.yearRange}
+          isAnimating={temporalGraph.isAnimating}
+          animationSpeed={temporalGraph.animationSpeed}
+          onYearChange={temporalGraph.setCurrentYear}
+          onToggleAnimation={temporalGraph.toggleAnimation}
+          onSpeedChange={temporalGraph.setAnimationSpeed}
+          onReset={temporalGraph.resetToStart}
+          onSkipToEnd={temporalGraph.resetToEnd}
+          nodesByYear={temporalGraph.nodesByYear}
+          totalVisibleNodes={temporalGraph.totalVisibleNodes}
+          totalVisibleEdges={temporalGraph.totalVisibleEdges}
+          isMinimized={isTemporalMinimized}
+          onToggleMinimize={() => setIsTemporalMinimized(!isTemporalMinimized)}
+        />
+      )}
+
+      {/* Edge Context Modal - Contextual Edge Exploration (Phase 1) */}
+      <EdgeContextModal
+        isOpen={edgeModalOpen}
+        onClose={handleCloseEdgeModal}
+        relationshipId={selectedEdge?.relationshipId || null}
+        sourceName={selectedEdge?.sourceName}
+        targetName={selectedEdge?.targetName}
+        relationshipType={selectedEdge?.relationshipType}
+        relationshipProperties={selectedEdge?.properties}
+      />
     </div>
   );
 }
 
+// Wrap with ReactFlowProvider
 export function KnowledgeGraph(props: KnowledgeGraphProps) {
   return (
     <ReactFlowProvider>

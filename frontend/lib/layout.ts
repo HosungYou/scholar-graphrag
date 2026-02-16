@@ -1,6 +1,6 @@
 /**
- * Graph layout algorithms for Knowledge Graph visualization
- * Enhanced with relationship-type styling and performance optimizations
+ * Graph layout algorithms for Concept-Centric Knowledge Graph
+ * Enhanced with cluster-aware force simulation and centrality-based sizing
  */
 
 import type { GraphEntity, GraphEdge, EntityType } from '@/types';
@@ -15,11 +15,14 @@ interface LayoutNode {
   fx?: number | null;
   fy?: number | null;
   entityType: EntityType;
+  clusterId?: number;
+  centrality?: number;
 }
 
 interface LayoutLink {
   source: string | LayoutNode;
   target: string | LayoutNode;
+  weight?: number;
 }
 
 interface LayoutOptions {
@@ -28,155 +31,165 @@ interface LayoutOptions {
   centerStrength?: number;
   linkStrength?: number;
   chargeStrength?: number;
+  clusterStrength?: number;
   iterations?: number;
 }
 
-// Entity type grouping for clustered layout
-const entityTypeGroups: Record<EntityType, { angle: number; radius: number }> = {
-  Paper: { angle: 0, radius: 0.4 },
-  Author: { angle: Math.PI * 0.4, radius: 0.7 },
-  Concept: { angle: Math.PI * 0.8, radius: 0.6 },
-  Method: { angle: Math.PI * 1.2, radius: 0.5 },
-  Finding: { angle: Math.PI * 1.6, radius: 0.6 },
+// Cluster colors - visually distinct palette
+const clusterColors = [
+  '#FF6B6B', // Red
+  '#4ECDC4', // Teal
+  '#45B7D1', // Sky Blue
+  '#96CEB4', // Sage Green
+  '#FFEAA7', // Yellow
+  '#DDA0DD', // Plum
+  '#98D8C8', // Mint
+  '#F7DC6F', // Gold
+  '#BB8FCE', // Lavender
+  '#85C1E9', // Light Blue
+  '#F8B500', // Orange
+  '#82E0AA', // Light Green
+];
+
+// Entity type colors (Hybrid Mode - matches FilterPanel/PolygonNode)
+const entityTypeColors: Record<string, string> = {
+  // Hybrid Mode entities
+  Paper: '#6366F1',      // Indigo
+  Author: '#A855F7',     // Purple
+  // Concept-centric entities
+  Concept: '#8B5CF6',    // Violet
+  Method: '#F59E0B',     // Amber
+  Finding: '#10B981',    // Emerald
+  Problem: '#EF4444',    // Red
+  Dataset: '#3B82F6',    // Blue
+  Metric: '#EC4899',     // Pink
+  Innovation: '#14B8A6', // Teal
+  Limitation: '#F97316', // Orange
 };
 
-// Enhanced edge styling by relationship type
-const relationshipStyles: Record<string, {
-  stroke: string;
-  strokeWidth: number;
-  strokeDasharray?: string;
-  animated?: boolean;
-  markerEnd?: boolean;
-}> = {
-  AUTHORED_BY: {
-    stroke: '#10b981', // emerald
-    strokeWidth: 2,
-    markerEnd: true,
-  },
-  CITES: {
-    stroke: '#3b82f6', // blue
-    strokeWidth: 1.5,
-    strokeDasharray: '5 3',
-    animated: true,
-    markerEnd: true,
-  },
-  DISCUSSES_CONCEPT: {
-    stroke: '#8b5cf6', // violet
-    strokeWidth: 1.5,
-    markerEnd: true,
-  },
-  USES_METHOD: {
-    stroke: '#f59e0b', // amber
-    strokeWidth: 2,
-    markerEnd: true,
-  },
-  USES_DATASET: {
-    stroke: '#06b6d4', // cyan
-    strokeWidth: 1.5,
-    markerEnd: true,
-  },
-  SUPPORTS: {
-    stroke: '#22c55e', // green
-    strokeWidth: 2.5,
-    markerEnd: true,
-  },
-  CONTRADICTS: {
-    stroke: '#ef4444', // red
-    strokeWidth: 2.5,
-    strokeDasharray: '8 4',
-    markerEnd: true,
-  },
-  RELATED_TO: {
-    stroke: '#94a3b8', // slate
-    strokeWidth: 1,
-    strokeDasharray: '3 3',
-  },
-  AFFILIATED_WITH: {
-    stroke: '#10b981', // emerald
-    strokeWidth: 1.5,
-    strokeDasharray: '2 2',
-  },
-  COLLABORATION: {
-    stroke: '#14b8a6', // teal
-    strokeWidth: 1.5,
-  },
-};
-
-// Default edge style
-const defaultEdgeStyle = {
-  stroke: '#94a3b8',
-  strokeWidth: 1,
-  markerEnd: false,
+// Edge colors by relationship type (ResearchRabbit style)
+const edgeColors: Record<string, string> = {
+  'DISCUSSES_CONCEPT': '#8B5CF6',  // Violet - Paper discusses concept
+  'USES_METHOD': '#F59E0B',        // Amber - Uses methodology
+  'SUPPORTS': '#10B981',           // Green - Supporting evidence
+  'CONTRADICTS': '#EF4444',        // Red - Contradicting evidence
+  'CITES': '#3B82F6',              // Blue - Citation relationship
+  'CO_OCCURS_WITH': '#EC4899',     // Pink - Co-occurrence
+  'RELATED_TO': '#94A3B8',         // Slate - General relation
+  'BRIDGES_GAP': '#FFD700',        // Gold - Gap bridge (special)
+  'HAS_AUTHOR': '#A855F7',         // Purple - Author relationship
+  'default': '#94A3B8',            // Slate - Default
 };
 
 /**
- * Get styled edge configuration based on relationship type
+ * Get edge color based on relationship type
  */
-function getEdgeStyle(relationshipType: string): Edge['style'] & { animated?: boolean } {
-  const style = relationshipStyles[relationshipType] || defaultEdgeStyle;
-  return {
-    stroke: style.stroke,
-    strokeWidth: style.strokeWidth,
-    ...(style.strokeDasharray && { strokeDasharray: style.strokeDasharray }),
-  };
+function getEdgeColor(relationshipType: string): string {
+  return edgeColors[relationshipType] || edgeColors.default;
 }
 
 /**
- * Simple force-directed layout without D3 dependency
- * Uses custom implementation for better bundle size
+ * Cluster-aware force-directed layout
+ * Groups nodes by cluster with force attraction to cluster centroids
  */
-export function forceDirectedLayout(
+export function clusterForceLayout(
   nodes: GraphEntity[],
   edges: GraphEdge[],
   options: LayoutOptions = {}
 ): { nodes: Node[]; edges: Edge[] } {
-  // Dynamic iterations based on node count for performance
-  const nodeCount = nodes.length;
-  const dynamicIterations = nodeCount > 300 ? 30 : nodeCount > 100 ? 50 : nodeCount > 50 ? 70 : 100;
-
   const {
     width = 1200,
     height = 800,
-    chargeStrength = nodeCount > 200 ? -150 : -300, // Weaker repulsion for large graphs
-    linkStrength = 0.3,
-    iterations = dynamicIterations,
+    chargeStrength = -400,  // Increased repulsion for better node dispersion
+    linkStrength = 0.4,
+    clusterStrength = 0.1,
+    iterations = 200,  // More iterations for stable layout
   } = options;
 
   const centerX = width / 2;
   const centerY = height / 2;
 
-  // Initialize node positions using entity type clustering
+  // Group nodes by cluster for initial positioning
+  const clusterMap = new Map<number, GraphEntity[]>();
+  const unclustered: GraphEntity[] = [];
+
+  for (const node of nodes) {
+    const clusterId = node.properties?.cluster_id;
+    if (clusterId !== undefined && clusterId !== null && typeof clusterId === 'number') {
+      if (!clusterMap.has(clusterId)) {
+        clusterMap.set(clusterId, []);
+      }
+      clusterMap.get(clusterId)!.push(node);
+    } else {
+      unclustered.push(node);
+    }
+  }
+
+  // Calculate cluster centroid positions (arranged in a circle)
+  const clusterCentroids = new Map<number, { x: number; y: number }>();
+  const clusterIds = Array.from(clusterMap.keys());
+  const clusterRadius = Math.min(width, height) * 0.35;
+
+  clusterIds.forEach((clusterId, i) => {
+    const angle = (2 * Math.PI * i) / clusterIds.length - Math.PI / 2;
+    clusterCentroids.set(clusterId, {
+      x: centerX + Math.cos(angle) * clusterRadius,
+      y: centerY + Math.sin(angle) * clusterRadius,
+    });
+  });
+
+  // Initialize node positions near their cluster centroid
   const layoutNodes: LayoutNode[] = nodes.map((node) => {
-    const group = entityTypeGroups[node.entity_type];
-    const jitter = Math.random() * 100 - 50;
-    const radiusOffset = Math.random() * 100;
+    const rawClusterId = node.properties?.cluster_id;
+    const clusterId = typeof rawClusterId === 'number' ? rawClusterId : undefined;
+    const rawCentrality = node.properties?.centrality_pagerank;
+    const centrality = typeof rawCentrality === 'number' ? rawCentrality : 0;
+    let x: number, y: number;
+
+    if (clusterId !== undefined && clusterCentroids.has(clusterId)) {
+      const centroid = clusterCentroids.get(clusterId)!;
+      const jitter = 100 * (1 - centrality); // High centrality = less jitter
+      x = centroid.x + (Math.random() - 0.5) * jitter;
+      y = centroid.y + (Math.random() - 0.5) * jitter;
+    } else {
+      // Unclustered nodes start near center
+      x = centerX + (Math.random() - 0.5) * 200;
+      y = centerY + (Math.random() - 0.5) * 200;
+    }
 
     return {
       id: node.id,
-      x: centerX + Math.cos(group.angle) * (group.radius * width / 2 + radiusOffset) + jitter,
-      y: centerY + Math.sin(group.angle) * (group.radius * height / 2 + radiusOffset) + jitter,
+      x,
+      y,
       vx: 0,
       vy: 0,
       entityType: node.entity_type,
+      clusterId,
+      centrality,
     };
   });
 
   // Create node lookup map
   const nodeMap = new Map(layoutNodes.map(n => [n.id, n]));
 
-  // Create links
+  // Create links with weight based on relationship properties
   const links: LayoutLink[] = edges
     .filter(e => nodeMap.has(e.source) && nodeMap.has(e.target))
-    .map(e => ({
-      source: nodeMap.get(e.source)!,
-      target: nodeMap.get(e.target)!,
-    }));
+    .map(e => {
+      const rawWeight = e.properties?.weight ?? e.properties?.confidence;
+      const weight = typeof rawWeight === 'number' ? rawWeight : 1;
+      return {
+        source: nodeMap.get(e.source)!,
+        target: nodeMap.get(e.target)!,
+        weight,
+      };
+    });
 
   // Run simulation
   for (let i = 0; i < iterations; i++) {
-    const alpha = 1 - i / iterations;
+    const alpha = Math.pow(1 - i / iterations, 2); // Quadratic decay
 
-    // Apply charge force (repulsion between all nodes)
+    // Apply charge force (repulsion between nodes)
     for (let a = 0; a < layoutNodes.length; a++) {
       for (let b = a + 1; b < layoutNodes.length; b++) {
         const nodeA = layoutNodes[a];
@@ -186,8 +199,12 @@ export function forceDirectedLayout(
         const dy = nodeB.y - nodeA.y;
         const distance = Math.sqrt(dx * dx + dy * dy) || 1;
 
-        // Repulsion force inversely proportional to distance
-        const force = (chargeStrength * alpha) / (distance * distance);
+        // Weaker repulsion within same cluster
+        const sameCluster = nodeA.clusterId !== undefined &&
+                           nodeA.clusterId === nodeB.clusterId;
+        const chargeMultiplier = sameCluster ? 0.5 : 1.0;
+
+        const force = (chargeStrength * chargeMultiplier * alpha) / (distance * distance);
         const fx = (dx / distance) * force;
         const fy = (dy / distance) * force;
 
@@ -195,6 +212,18 @@ export function forceDirectedLayout(
         nodeA.vy! -= fy;
         nodeB.vx! += fx;
         nodeB.vy! += fy;
+
+        // Minimum distance constraint - prevent node overlap
+        const minDistance = 60;
+        if (distance < minDistance) {
+          const pushForce = (minDistance - distance) * 0.5 * alpha;
+          const px = (dx / distance) * pushForce;
+          const py = (dy / distance) * pushForce;
+          nodeA.vx! -= px;
+          nodeA.vy! -= py;
+          nodeB.vx! += px;
+          nodeB.vy! += py;
+        }
       }
     }
 
@@ -207,8 +236,8 @@ export function forceDirectedLayout(
       const dy = target.y - source.y;
       const distance = Math.sqrt(dx * dx + dy * dy) || 1;
 
-      // Ideal link distance based on entity types
-      const idealDistance = getIdealDistance(source.entityType, target.entityType);
+      // Ideal distance based on weight
+      const idealDistance = 100 / (link.weight ?? 1);
       const diff = (distance - idealDistance) * linkStrength * alpha;
 
       const fx = (dx / distance) * diff;
@@ -220,74 +249,122 @@ export function forceDirectedLayout(
       target.vy! -= fy;
     }
 
-    // Apply center force
+    // Apply cluster force (attraction to cluster centroid)
+    for (const node of layoutNodes) {
+      if (node.clusterId !== undefined && clusterCentroids.has(node.clusterId)) {
+        const centroid = clusterCentroids.get(node.clusterId)!;
+        const dx = centroid.x - node.x;
+        const dy = centroid.y - node.y;
+
+        node.vx! += dx * clusterStrength * alpha;
+        node.vy! += dy * clusterStrength * alpha;
+      } else {
+        // Unclustered nodes attracted to center (reduced force)
+        const dx = centerX - node.x;
+        const dy = centerY - node.y;
+        node.vx! += dx * 0.002 * alpha;  // Reduced from 0.005
+        node.vy! += dy * 0.002 * alpha;
+      }
+    }
+
+    // Apply center gravity (very weak - allows more dispersion)
     for (const node of layoutNodes) {
       const dx = centerX - node.x;
       const dy = centerY - node.y;
-      node.vx! += dx * 0.01 * alpha;
-      node.vy! += dy * 0.01 * alpha;
+      node.vx! += dx * 0.001 * alpha;  // Reduced from 0.002
+      node.vy! += dy * 0.001 * alpha;
     }
 
-    // Update positions
+    // Update positions with velocity
     for (const node of layoutNodes) {
-      // Apply velocity with damping
-      node.x += node.vx! * 0.9;
-      node.y += node.vy! * 0.9;
+      node.x += node.vx! * 0.8;
+      node.y += node.vy! * 0.8;
 
       // Dampen velocity
-      node.vx! *= 0.9;
-      node.vy! *= 0.9;
+      node.vx! *= 0.85;
+      node.vy! *= 0.85;
 
-      // Keep within bounds
-      node.x = Math.max(50, Math.min(width - 50, node.x));
-      node.y = Math.max(50, Math.min(height - 50, node.y));
+      // Keep within bounds with padding
+      const padding = 80;
+      node.x = Math.max(padding, Math.min(width - padding, node.x));
+      node.y = Math.max(padding, Math.min(height - padding, node.y));
     }
   }
 
-  // Convert to React Flow format with enhanced styling
+  // Convert to React Flow format with circular node type
   const flowNodes: Node[] = nodes.map((node) => {
     const layoutNode = nodeMap.get(node.id)!;
+    const rawClusterId = node.properties?.cluster_id;
+    const clusterId = typeof rawClusterId === 'number' ? rawClusterId : undefined;
+
     return {
       id: node.id,
-      type: node.entity_type.toLowerCase(),
+      type: 'circular', // Use circular node type
       position: { x: layoutNode.x, y: layoutNode.y },
       data: {
         label: node.name,
         entityType: node.entity_type,
         properties: node.properties,
         isHighlighted: false,
-        importance: calculateImportance(node, edges),
-        citationCount: (node.properties as Record<string, unknown>)?.citation_count as number | undefined,
+        // Centrality metrics
+        centralityDegree: node.properties?.centrality_degree,
+        centralityBetweenness: node.properties?.centrality_betweenness,
+        centralityPagerank: node.properties?.centrality_pagerank,
+        // Cluster info
+        clusterId: clusterId,
+        clusterColor: clusterId !== undefined
+          ? clusterColors[clusterId % clusterColors.length]
+          : undefined,
+        // Definition
+        definition: node.properties?.definition,
+        // Paper count
+        paperCount: Array.isArray(node.properties?.source_paper_ids)
+          ? node.properties.source_paper_ids.length
+          : undefined,
+        // Gap bridge
+        isGapBridge: node.properties?.is_gap_bridge,
       },
     };
   });
 
+  // Create edges with arrows and styling (ResearchRabbit style)
   const flowEdges: Edge[] = edges.map((edge) => {
-    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    const isGapBridge = edge.relationship_type === 'BRIDGES_GAP';
+    const edgeColor = getEdgeColor(edge.relationship_type);
+    const rawWeight = edge.properties?.weight ?? edge.properties?.confidence;
+    const weight = typeof rawWeight === 'number' ? rawWeight : 1;
+
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      label: edge.relationship_type.replace(/_/g, ' '),
-      type: 'smoothstep',
-      animated: style.animated || false,
-      style: getEdgeStyle(edge.relationship_type),
+      type: 'default',  // Straight line (Bezier curve) for better visibility
+      animated: isGapBridge,
+      // Arrow marker at target end
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: edgeColor,
+        width: 16,
+        height: 16,
+      },
+      style: {
+        stroke: edgeColor,
+        strokeWidth: isGapBridge ? 2 : Math.max(1, weight * 2),
+        strokeDasharray: isGapBridge ? '5,5' : undefined,
+        opacity: 0.7,
+      },
+      // Optional: show relationship type as label
+      label: edge.relationship_type?.replace(/_/g, ' '),
       labelStyle: {
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono, monospace',
-        fill: '#64748b',
+        fontSize: 9,
+        fill: '#9CA3AF',
+        fontWeight: 500,
       },
       labelBgStyle: {
-        fill: 'rgba(255, 255, 255, 0.8)',
+        fill: '#1a1a2e',
         fillOpacity: 0.8,
       },
-      markerEnd: style.markerEnd ? {
-        type: MarkerType.ArrowClosed,
-        color: style.stroke,
-        width: 15,
-        height: 15,
-      } : undefined,
-      className: `edge-${edge.relationship_type.toLowerCase().replace(/_/g, '-')}`,
+      labelBgPadding: [4, 2] as [number, number],
     };
   });
 
@@ -295,148 +372,19 @@ export function forceDirectedLayout(
 }
 
 /**
- * Calculate node importance based on connections
+ * Simple force-directed layout (legacy, for fallback)
  */
-function calculateImportance(node: GraphEntity, edges: GraphEdge[]): number {
-  const connections = edges.filter(
-    e => e.source === node.id || e.target === node.id
-  ).length;
-  
-  // Normalize to 0-1 scale (assuming max 20 connections)
-  return Math.min(connections / 20, 1);
-}
-
-/**
- * Get ideal distance between two node types
- */
-function getIdealDistance(typeA: EntityType, typeB: EntityType): number {
-  // Paper-Paper: further apart
-  if (typeA === 'Paper' && typeB === 'Paper') return 200;
-
-  // Paper-Author: medium distance
-  if ((typeA === 'Paper' && typeB === 'Author') || (typeA === 'Author' && typeB === 'Paper')) {
-    return 150;
-  }
-
-  // Paper-Concept/Method/Finding: closer
-  if (typeA === 'Paper' || typeB === 'Paper') return 120;
-
-  // Same type clustering
-  if (typeA === typeB) return 180;
-
-  // Default
-  return 150;
-}
-
-/**
- * Hierarchical layout - Papers in center, related entities radiate out
- */
-export function hierarchicalLayout(
+export function forceDirectedLayout(
   nodes: GraphEntity[],
   edges: GraphEdge[],
   options: LayoutOptions = {}
 ): { nodes: Node[]; edges: Edge[] } {
-  const { width = 1200, height = 800 } = options;
-  const centerX = width / 2;
-  const centerY = height / 2;
-
-  // Separate nodes by type
-  const papers = nodes.filter(n => n.entity_type === 'Paper');
-  const others = nodes.filter(n => n.entity_type !== 'Paper');
-
-  // Build adjacency list
-  const adjacency = new Map<string, Set<string>>();
-  for (const edge of edges) {
-    if (!adjacency.has(edge.source)) adjacency.set(edge.source, new Set());
-    if (!adjacency.has(edge.target)) adjacency.set(edge.target, new Set());
-    adjacency.get(edge.source)!.add(edge.target);
-    adjacency.get(edge.target)!.add(edge.source);
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-
-  // Layout papers in a grid in the center
-  const papersPerRow = Math.ceil(Math.sqrt(papers.length));
-  const paperSpacing = 250;
-  const paperStartX = centerX - ((papersPerRow - 1) * paperSpacing) / 2;
-  const paperStartY = centerY - ((Math.ceil(papers.length / papersPerRow) - 1) * paperSpacing) / 2;
-
-  papers.forEach((paper, i) => {
-    const row = Math.floor(i / papersPerRow);
-    const col = i % papersPerRow;
-    positions.set(paper.id, {
-      x: paperStartX + col * paperSpacing,
-      y: paperStartY + row * paperSpacing,
-    });
-  });
-
-  // Layout other nodes around their connected papers
-  others.forEach((node) => {
-    const connectedPapers = papers.filter(p =>
-      adjacency.get(node.id)?.has(p.id) || adjacency.get(p.id)?.has(node.id)
-    );
-
-    if (connectedPapers.length > 0) {
-      // Average position of connected papers
-      const avgX = connectedPapers.reduce((sum, p) => sum + positions.get(p.id)!.x, 0) / connectedPapers.length;
-      const avgY = connectedPapers.reduce((sum, p) => sum + positions.get(p.id)!.y, 0) / connectedPapers.length;
-
-      // Offset based on entity type
-      const group = entityTypeGroups[node.entity_type];
-      const radius = 100 + Math.random() * 50;
-
-      positions.set(node.id, {
-        x: avgX + Math.cos(group.angle + Math.random() * 0.5) * radius,
-        y: avgY + Math.sin(group.angle + Math.random() * 0.5) * radius,
-      });
-    } else {
-      // Orphan nodes go to edges
-      const group = entityTypeGroups[node.entity_type];
-      positions.set(node.id, {
-        x: centerX + Math.cos(group.angle) * (width * 0.4) + Math.random() * 50,
-        y: centerY + Math.sin(group.angle) * (height * 0.4) + Math.random() * 50,
-      });
-    }
-  });
-
-  // Convert to React Flow format
-  const flowNodes: Node[] = nodes.map((node) => ({
-    id: node.id,
-    type: node.entity_type.toLowerCase(),
-    position: positions.get(node.id) || { x: centerX, y: centerY },
-    data: {
-      label: node.name,
-      entityType: node.entity_type,
-      properties: node.properties,
-      isHighlighted: false,
-      importance: calculateImportance(node, edges),
-    },
-  }));
-
-  const flowEdges: Edge[] = edges.map((edge) => {
-    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
-    return {
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      label: edge.relationship_type.replace(/_/g, ' '),
-      type: 'smoothstep',
-      animated: style.animated || false,
-      style: getEdgeStyle(edge.relationship_type),
-      markerEnd: style.markerEnd ? {
-        type: MarkerType.ArrowClosed,
-        color: style.stroke,
-        width: 15,
-        height: 15,
-      } : undefined,
-    };
-  });
-
-  return { nodes: flowNodes, edges: flowEdges };
+  // Use cluster force layout by default
+  return clusterForceLayout(nodes, edges, options);
 }
 
 /**
- * Radial layout - Central node with others arranged in concentric circles
+ * Radial layout - Concepts arranged by importance from center
  */
 export function radialLayout(
   nodes: GraphEntity[],
@@ -447,65 +395,111 @@ export function radialLayout(
   const centerX = width / 2;
   const centerY = height / 2;
 
-  // Group nodes by entity type
-  const nodesByType = new Map<EntityType, GraphEntity[]>();
-  for (const node of nodes) {
-    const group = nodesByType.get(node.entity_type) || [];
-    group.push(node);
-    nodesByType.set(node.entity_type, group);
-  }
+  // Sort by centrality (highest first)
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const aRankRaw = a.properties?.centrality_pagerank;
+    const bRankRaw = b.properties?.centrality_pagerank;
+    const aRank = typeof aRankRaw === 'number' ? aRankRaw : 0;
+    const bRank = typeof bRankRaw === 'number' ? bRankRaw : 0;
+    return bRank - aRank;
+  });
 
+  // Arrange in concentric circles
   const positions = new Map<string, { x: number; y: number }>();
-  const typeOrder: EntityType[] = ['Paper', 'Author', 'Concept', 'Method', 'Finding'];
-  
   let currentRadius = 0;
-  const radiusIncrement = 150;
+  let nodesInRing = 1;
+  let nodeIndex = 0;
+  let ringStart = 0;
 
-  for (const type of typeOrder) {
-    const typeNodes = nodesByType.get(type) || [];
-    if (typeNodes.length === 0) continue;
+  for (let i = 0; i < sortedNodes.length; i++) {
+    if (nodeIndex >= nodesInRing) {
+      // Move to next ring
+      currentRadius += 120;
+      ringStart = i;
+      nodesInRing = Math.min(
+        Math.ceil(2 * Math.PI * currentRadius / 80),
+        sortedNodes.length - i
+      );
+      nodeIndex = 0;
+    }
 
-    currentRadius += radiusIncrement;
-    const angleStep = (2 * Math.PI) / typeNodes.length;
+    const node = sortedNodes[i];
+    const angle = (2 * Math.PI * nodeIndex) / nodesInRing - Math.PI / 2;
 
-    typeNodes.forEach((node, i) => {
-      const angle = i * angleStep - Math.PI / 2; // Start from top
-      positions.set(node.id, {
-        x: centerX + Math.cos(angle) * currentRadius,
-        y: centerY + Math.sin(angle) * currentRadius,
-      });
+    positions.set(node.id, {
+      x: centerX + Math.cos(angle) * currentRadius,
+      y: centerY + Math.sin(angle) * currentRadius,
     });
+
+    nodeIndex++;
   }
 
   // Convert to React Flow format
-  const flowNodes: Node[] = nodes.map((node) => ({
-    id: node.id,
-    type: node.entity_type.toLowerCase(),
-    position: positions.get(node.id) || { x: centerX, y: centerY },
-    data: {
-      label: node.name,
-      entityType: node.entity_type,
-      properties: node.properties,
-      isHighlighted: false,
-      importance: calculateImportance(node, edges),
-    },
-  }));
+  const flowNodes: Node[] = nodes.map((node) => {
+    const pos = positions.get(node.id) || { x: centerX, y: centerY };
+    const rawClusterId = node.properties?.cluster_id;
+    const clusterId = typeof rawClusterId === 'number' ? rawClusterId : undefined;
+
+    return {
+      id: node.id,
+      type: 'circular',
+      position: pos,
+      data: {
+        label: node.name,
+        entityType: node.entity_type,
+        properties: node.properties,
+        isHighlighted: false,
+        centralityDegree: node.properties?.centrality_degree,
+        centralityBetweenness: node.properties?.centrality_betweenness,
+        centralityPagerank: node.properties?.centrality_pagerank,
+        clusterId: clusterId,
+        clusterColor: clusterId !== undefined
+          ? clusterColors[clusterId % clusterColors.length]
+          : undefined,
+        definition: node.properties?.definition,
+        paperCount: Array.isArray(node.properties?.source_paper_ids)
+          ? node.properties.source_paper_ids.length
+          : undefined,
+        isGapBridge: node.properties?.is_gap_bridge,
+      },
+    };
+  });
 
   const flowEdges: Edge[] = edges.map((edge) => {
-    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    const isGapBridge = edge.relationship_type === 'BRIDGES_GAP';
+    const edgeColor = getEdgeColor(edge.relationship_type);
+    const rawWeight = edge.properties?.weight ?? edge.properties?.confidence;
+    const weight = typeof rawWeight === 'number' ? rawWeight : 1;
+
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      type: 'bezier', // Bezier curves work better for radial layout
-      animated: style.animated || false,
-      style: getEdgeStyle(edge.relationship_type),
-      markerEnd: style.markerEnd ? {
+      type: 'default',  // Straight line (Bezier curve) for better visibility
+      animated: isGapBridge,
+      markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: style.stroke,
-        width: 15,
-        height: 15,
-      } : undefined,
+        color: edgeColor,
+        width: 16,
+        height: 16,
+      },
+      style: {
+        stroke: edgeColor,
+        strokeWidth: isGapBridge ? 2 : Math.max(1, weight * 2),
+        strokeDasharray: isGapBridge ? '5,5' : undefined,
+        opacity: 0.6,
+      },
+      label: edge.relationship_type?.replace(/_/g, ' '),
+      labelStyle: {
+        fontSize: 9,
+        fill: '#9CA3AF',
+        fontWeight: 500,
+      },
+      labelBgStyle: {
+        fill: '#1a1a2e',
+        fillOpacity: 0.8,
+      },
+      labelBgPadding: [4, 2] as [number, number],
     };
   });
 
@@ -542,180 +536,27 @@ export function updateEdgeHighlights(
     animated: highlightSet.has(edge.id) || edge.animated,
     style: {
       ...edge.style,
-      stroke: highlightSet.has(edge.id) ? '#facc15' : edge.style?.stroke,
-      strokeWidth: highlightSet.has(edge.id) ? 3 : edge.style?.strokeWidth,
+      stroke: highlightSet.has(edge.id) ? '#F59E0B' : (edge.style?.stroke ?? '#94A3B8'),
+      strokeWidth: highlightSet.has(edge.id) ? 3 : (edge.style?.strokeWidth ?? 1),
+      opacity: highlightSet.has(edge.id) ? 1 : (edge.style?.opacity ?? 0.6),
     },
   }));
 }
 
-export type LayoutType = 'force' | 'hierarchical' | 'radial' | 'conceptCentric';
-
-/**
- * Concept-centric layout - Concepts in center, Papers/Authors radiate out
- * This is the key differentiator for ScholaRAG_Graph
- */
-export function conceptCentricLayout(
-  nodes: GraphEntity[],
-  edges: GraphEdge[],
-  options: LayoutOptions = {}
-): { nodes: Node[]; edges: Edge[] } {
-  const { width = 1200, height = 800 } = options;
-  const centerX = width / 2;
-  const centerY = height / 2;
-
-  // Separate nodes by category
-  const conceptTypes = ['Concept', 'Method', 'Finding'];
-  const conceptNodes = nodes.filter(n => conceptTypes.includes(n.entity_type));
-  const paperNodes = nodes.filter(n => n.entity_type === 'Paper');
-  const authorNodes = nodes.filter(n => n.entity_type === 'Author');
-
-  // Build adjacency for concept connections
-  const conceptConnections = new Map<string, number>();
-  for (const edge of edges) {
-    if (edge.relationship_type === 'DISCUSSES_CONCEPT' ||
-        edge.relationship_type === 'USES_METHOD' ||
-        edge.relationship_type === 'SUPPORTS') {
-      conceptConnections.set(edge.target, (conceptConnections.get(edge.target) || 0) + 1);
-    }
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-
-  // Sort concepts by connection count (most connected in center)
-  const sortedConcepts = [...conceptNodes].sort((a, b) =>
-    (conceptConnections.get(b.id) || 0) - (conceptConnections.get(a.id) || 0)
-  );
-
-  // Layout concepts in center with radial arrangement
-  const conceptCount = sortedConcepts.length;
-  const conceptRadius = Math.min(width, height) * 0.25;
-
-  sortedConcepts.forEach((concept, i) => {
-    if (i === 0 && conceptCount > 1) {
-      // Most connected concept in exact center
-      positions.set(concept.id, { x: centerX, y: centerY });
-    } else {
-      const angle = ((i - 1) / Math.max(conceptCount - 1, 1)) * 2 * Math.PI - Math.PI / 2;
-      const radius = conceptRadius * (1 + (i / conceptCount) * 0.3);
-      positions.set(concept.id, {
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
-      });
-    }
-  });
-
-  // Build concept-paper adjacency
-  const paperToConceptsMap = new Map<string, string[]>();
-  for (const edge of edges) {
-    if (edge.relationship_type === 'DISCUSSES_CONCEPT' ||
-        edge.relationship_type === 'USES_METHOD' ||
-        edge.relationship_type === 'SUPPORTS') {
-      const concepts = paperToConceptsMap.get(edge.source) || [];
-      concepts.push(edge.target);
-      paperToConceptsMap.set(edge.source, concepts);
-    }
-  }
-
-  // Layout papers around their connected concepts
-  const outerRadius = Math.min(width, height) * 0.4;
-  paperNodes.forEach((paper, i) => {
-    const connectedConcepts = paperToConceptsMap.get(paper.id) || [];
-
-    if (connectedConcepts.length > 0) {
-      // Position near the average of connected concepts
-      let avgX = 0, avgY = 0;
-      for (const conceptId of connectedConcepts) {
-        const pos = positions.get(conceptId);
-        if (pos) {
-          avgX += pos.x;
-          avgY += pos.y;
-        }
-      }
-      avgX /= connectedConcepts.length;
-      avgY /= connectedConcepts.length;
-
-      // Push outward from center
-      const dx = avgX - centerX;
-      const dy = avgY - centerY;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const pushFactor = outerRadius / dist;
-
-      positions.set(paper.id, {
-        x: centerX + dx * pushFactor + (Math.random() - 0.5) * 50,
-        y: centerY + dy * pushFactor + (Math.random() - 0.5) * 50,
-      });
-    } else {
-      // Orphan papers go to outer ring
-      const angle = (i / paperNodes.length) * 2 * Math.PI;
-      positions.set(paper.id, {
-        x: centerX + Math.cos(angle) * outerRadius * 1.2,
-        y: centerY + Math.sin(angle) * outerRadius * 1.2,
-      });
-    }
-  });
-
-  // Layout authors at outermost ring
-  const authorRadius = Math.min(width, height) * 0.45;
-  authorNodes.forEach((author, i) => {
-    const angle = (i / authorNodes.length) * 2 * Math.PI + Math.PI / 4;
-    positions.set(author.id, {
-      x: centerX + Math.cos(angle) * authorRadius,
-      y: centerY + Math.sin(angle) * authorRadius,
-    });
-  });
-
-  // Convert to React Flow format
-  const flowNodes: Node[] = nodes.map((node) => ({
-    id: node.id,
-    type: node.entity_type.toLowerCase(),
-    position: positions.get(node.id) || { x: centerX, y: centerY },
-    data: {
-      label: node.name,
-      entityType: node.entity_type,
-      properties: node.properties,
-      isHighlighted: false,
-      importance: calculateImportance(node, edges),
-      // Mark concepts as primary in this layout
-      isPrimary: conceptTypes.includes(node.entity_type),
-    },
-  }));
-
-  const flowEdges: Edge[] = edges.map((edge) => {
-    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
-    return {
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      type: 'smoothstep',
-      animated: style.animated || false,
-      style: getEdgeStyle(edge.relationship_type),
-      markerEnd: style.markerEnd ? {
-        type: MarkerType.ArrowClosed,
-        color: style.stroke,
-        width: 12,
-        height: 12,
-      } : undefined,
-    };
-  });
-
-  return { nodes: flowNodes, edges: flowEdges };
-}
+export type LayoutType = 'force' | 'cluster' | 'radial';
 
 export function applyLayout(
   nodes: GraphEntity[],
   edges: GraphEdge[],
-  layoutType: LayoutType = 'force',
+  layoutType: LayoutType = 'cluster',
   options?: LayoutOptions
 ): { nodes: Node[]; edges: Edge[] } {
   switch (layoutType) {
-    case 'hierarchical':
-      return hierarchicalLayout(nodes, edges, options);
     case 'radial':
       return radialLayout(nodes, edges, options);
-    case 'conceptCentric':
-      return conceptCentricLayout(nodes, edges, options);
+    case 'cluster':
     case 'force':
     default:
-      return forceDirectedLayout(nodes, edges, options);
+      return clusterForceLayout(nodes, edges, options);
   }
 }

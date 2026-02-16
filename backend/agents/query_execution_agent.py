@@ -2,17 +2,15 @@
 Query Execution Agent
 
 Executes sub-tasks by running SQL queries, vector searches, and graph traversals.
-Implements hybrid search (pgvector + keyword), entity retrieval, and gap analysis.
+Supports all task types from TaskPlanningAgent: search, retrieve, analyze, compare, explain, analyze_gaps.
 """
 
-import json
 import logging
-import time
+import json
 from typing import Any, Optional
 from pydantic import BaseModel
 
-from embedding_service import EmbeddingService, get_embedding_service
-from graph.reranker import SemanticReranker
+from graph.hierarchical_retriever import HierarchicalRetriever, RetrievalMode
 
 logger = logging.getLogger(__name__)
 
@@ -21,62 +19,115 @@ class QueryResult(BaseModel):
     task_index: int
     success: bool
     data: Any = None
-    error: str | None = None
-
-
-class TraceStep(BaseModel):
-    step_index: int
-    action: str  # 'vector_search', 'keyword_search', 'graph_traverse', 'gap_analysis', 'aggregate'
-    node_ids: list[str] = []
-    edge_ids: list[str] = []
-    thought: str = ""
-    duration_ms: int = 0
+    error: Optional[str] = None
 
 
 class ExecutionResult(BaseModel):
     results: list[QueryResult]
     nodes_accessed: list[str] = []
     edges_traversed: list[str] = []
-    trace_steps: list[TraceStep] = []
 
 
 class QueryExecutionAgent:
     """
     Executes queries against the database and graph.
-
-    Supports:
-    - Hybrid search (vector similarity + keyword matching)
-    - Entity retrieval with relationship expansion
-    - Research gap analysis
-    - Graph traversal queries
+    Supports task types: search, retrieve, analyze, compare, explain, analyze_gaps.
     """
 
-    def __init__(self, db_connection=None, vector_store=None, graph_store=None,
-                 embedding_service: Optional[EmbeddingService] = None):
+    def __init__(self, db_connection=None, vector_store=None, graph_store=None, llm_provider=None):
         self.db = db_connection
         self.vector_store = vector_store
         self.graph_store = graph_store
-        self._embedding_service = embedding_service
-        self.reranker = SemanticReranker(embedding_service=embedding_service)
+        self.llm = llm_provider
+        self._previous_results: dict[int, Any] = {}  # Store results for dependent tasks
+        
+        # Initialize hierarchical retriever for chunk-based search
+        self.hierarchical_retriever = HierarchicalRetriever(graph_store=graph_store) if graph_store else None
 
-    @property
-    def embedding_service(self) -> Optional[EmbeddingService]:
-        """Lazy-load embedding service."""
-        if self._embedding_service is None:
+    def _extract_confidence(self, item: dict) -> Optional[float]:
+        """
+        Extract normalized confidence score from result items.
+
+        Priority:
+        1. item["confidence"]
+        2. item["properties"]["confidence"]
+        3. item["weight"]
+        4. item["score"] (chunk/vector search)
+        """
+        if not isinstance(item, dict):
+            return None
+
+        candidate = item.get("confidence")
+        if isinstance(candidate, (int, float)):
+            return float(candidate)
+
+        props = item.get("properties")
+        if isinstance(props, str):
             try:
-                self._embedding_service = get_embedding_service()
-            except Exception as e:
-                logger.warning(f"EmbeddingService unavailable: {e}")
-        return self._embedding_service
+                props = json.loads(props)
+            except Exception:
+                props = None
+        if isinstance(props, dict):
+            props_conf = props.get("confidence")
+            if isinstance(props_conf, (int, float)):
+                return float(props_conf)
+
+        for key in ("weight", "score"):
+            value = item.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+
+        return None
+
+    def _apply_low_trust_filter(self, items: list, params: dict) -> list:
+        """
+        Optionally filter out low-trust results.
+
+        Params:
+        - exclude_low_trust: bool (default False)
+        - min_confidence: float (default 0.6 when exclude_low_trust=True)
+        """
+        if not isinstance(items, list):
+            return items
+
+        exclude_low_trust = bool(params.get("exclude_low_trust", False))
+        if not exclude_low_trust:
+            return items
+
+        min_confidence = float(params.get("min_confidence", 0.6))
+        filtered: list = []
+        dropped = 0
+
+        for item in items:
+            confidence = self._extract_confidence(item) if isinstance(item, dict) else None
+            if confidence is not None and confidence < min_confidence:
+                dropped += 1
+                continue
+            filtered.append(item)
+
+        if dropped > 0:
+            logger.info(
+                "Low-trust filter applied: dropped %s/%s items (min_confidence=%.2f)",
+                dropped,
+                len(items),
+                min_confidence,
+            )
+
+        return filtered
 
     async def execute(self, task_plan) -> ExecutionResult:
         """
         Execute all tasks in the plan.
+
+        Routing considers both task_type and search_strategy:
+        - search_strategy="vector": use vector/text search (default)
+        - search_strategy="graph_traversal": use multi-hop graph traversal
+        - search_strategy="hybrid": run both vector search and graph traversal, merge results
         """
         results = []
         nodes_accessed = []
         edges_traversed = []
-        trace_steps = []
+        self._previous_results = {}
 
         for i, task in enumerate(task_plan.tasks):
             # Check dependencies
@@ -95,677 +146,624 @@ class QueryExecutionAgent:
                 continue
 
             try:
-                start_time = time.time()
+                # Get dependent results for context
+                dep_results = [self._previous_results.get(dep) for dep in task.depends_on]
 
-                if task.task_type == "search":
-                    data = await self._execute_search(task.parameters)
-                    action = "vector_search"
+                # Read search_strategy from SubTask (defaults to "vector")
+                search_strategy = getattr(task, "search_strategy", "vector")
+
+                # Route to appropriate handler
+                if task.task_type == "graph_traversal":
+                    data = await self._execute_graph_traversal(task.parameters, dep_results)
+                elif task.task_type == "search":
+                    if search_strategy == "graph_traversal":
+                        data = await self._execute_graph_traversal(task.parameters, dep_results)
+                    elif search_strategy == "hybrid":
+                        data = await self._execute_hybrid(task.parameters, dep_results)
+                    else:
+                        data = await self._execute_search(task.parameters)
+                elif task.task_type == "document_search":
+                    # Chunk-based document search with hierarchical retrieval
+                    params = {**task.parameters, "use_chunks": True}
+                    data = await self._execute_search(params)
                 elif task.task_type == "retrieve":
-                    data = await self._execute_retrieve(task.parameters)
-                    action = "graph_traverse"
+                    if search_strategy == "hybrid":
+                        data = await self._execute_hybrid(task.parameters, dep_results)
+                    else:
+                        data = await self._execute_retrieve(task.parameters)
+                elif task.task_type == "analyze":
+                    data = await self._execute_analyze(task.parameters, dep_results)
+                elif task.task_type == "compare":
+                    data = await self._execute_compare(task.parameters, dep_results)
+                elif task.task_type == "explain":
+                    data = await self._execute_explain(task.parameters, dep_results)
                 elif task.task_type == "analyze_gaps":
                     data = await self._execute_gap_analysis(task.parameters)
-                    action = "gap_analysis"
-                elif task.task_type == "traverse":
-                    data = await self._execute_traversal(task.parameters)
-                    action = "graph_traverse"
-                elif task.task_type == "aggregate":
-                    data = await self._execute_aggregation(task.parameters)
-                    action = "aggregate"
                 else:
-                    data = {"placeholder": True, "task_type": task.task_type}
-                    action = task.task_type
+                    logger.warning(f"Unknown task type: {task.task_type}, returning empty result")
+                    data = {"task_type": task.task_type, "status": "unsupported"}
 
-                duration_ms = int((time.time() - start_time) * 1000)
+                # Store for dependent tasks
+                self._previous_results[i] = data
 
                 # Track accessed nodes
-                step_node_ids = []
                 if isinstance(data, dict) and "nodes" in data:
-                    step_node_ids = [n.get("id") for n in data["nodes"] if n.get("id")]
-                    nodes_accessed.extend(step_node_ids)
+                    nodes_accessed.extend([n.get("id", "") for n in data.get("nodes", [])])
+                if isinstance(data, dict) and "edges" in data:
+                    edges_traversed.extend(
+                        [e.get("id", "") for e in data.get("edges", []) if isinstance(e, dict)]
+                    )
                 if isinstance(data, list):
                     for item in data:
-                        if isinstance(item, dict) and item.get("id"):
-                            step_node_ids.append(item["id"])
+                        if isinstance(item, dict) and "id" in item:
                             nodes_accessed.append(item["id"])
-
-                # Record trace step
-                trace_steps.append(TraceStep(
-                    step_index=i,
-                    action=action,
-                    node_ids=step_node_ids[:20],  # Limit for payload size
-                    thought=f"Executed {task.task_type} task",
-                    duration_ms=duration_ms,
-                ))
 
                 results.append(
                     QueryResult(task_index=i, success=True, data=data)
                 )
 
             except Exception as e:
-                logger.error(f"Task {i} execution failed: {e}")
+                logger.error(f"Task execution failed: {task.task_type} - {e}")
                 results.append(
                     QueryResult(task_index=i, success=False, error=str(e))
                 )
 
         return ExecutionResult(
             results=results,
-            nodes_accessed=list(set(nodes_accessed)),
+            nodes_accessed=list(set(nodes_accessed)),  # Deduplicate
             edges_traversed=list(set(edges_traversed)),
-            trace_steps=trace_steps,
         )
 
-    async def _execute_search(self, params: dict) -> list:
+    async def _execute_graph_traversal(self, params: dict, dep_results: list = None) -> dict:
         """
-        Execute a hybrid search query combining vector similarity and keyword matching.
+        Execute graph traversal query using recursive CTE via GraphStore.
 
-        Params:
-            query: Search query string
-            entity_types: Optional list of entity types to filter
-            project_id: Project ID to search within
-            limit: Maximum number of results
-            use_vector: Whether to use vector similarity (default True)
-            use_keyword: Whether to use keyword matching (default True)
-        """
-        query = params.get("query", "")
-        entity_types = params.get("entity_types", [])
-        project_id = params.get("project_id")
-        limit = params.get("limit", 20)
-        use_vector = params.get("use_vector", True)
-        use_keyword = params.get("use_keyword", True)
-
-        if not query:
-            return []
-
-        results = []
-
-        # Vector search
-        if use_vector and self.vector_store:
-            try:
-                vector_results = await self._vector_search(query, project_id, entity_types, limit)
-                results.extend(vector_results)
-            except Exception as e:
-                logger.warning(f"Vector search failed: {e}")
-
-        # Keyword search
-        if use_keyword and self.db:
-            try:
-                keyword_results = await self._keyword_search(query, project_id, entity_types, limit)
-
-                # Merge results, avoiding duplicates
-                existing_ids = {r["id"] for r in results}
-                for kr in keyword_results:
-                    if kr["id"] not in existing_ids:
-                        results.append(kr)
-                        existing_ids.add(kr["id"])
-
-            except Exception as e:
-                logger.warning(f"Keyword search failed: {e}")
-
-        # Sort by relevance score if available
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-        # Apply semantic reranking if we have enough results
-        if len(results) > 1:
-            try:
-                results = await self.reranker.rerank(
-                    query=query,
-                    results=results,
-                    top_k=limit,
-                )
-            except Exception as e:
-                logger.warning(f"Reranking failed, using original order: {e}")
-
-        return results[:limit]
-
-    async def _vector_search(
-        self,
-        query: str,
-        project_id: Optional[str],
-        entity_types: list[str],
-        limit: int,
-    ) -> list[dict]:
-        """Execute vector similarity search using pgvector."""
-        if not self.db or not self.embedding_service:
-            return []
-
-        try:
-            # Generate embedding for the query text
-            query_embedding = self.embedding_service.embed_text(query)
-
-            # Build parameterized query
-            base_query = """
-                SELECT e.id::text, e.name, e.entity_type, e.properties,
-                       1 - (e.embedding <=> $1::vector) as score
-                FROM entities e
-                WHERE e.embedding IS NOT NULL
-            """
-            params: list[Any] = [str(query_embedding)]
-            param_idx = 2
-
-            if project_id:
-                base_query += f" AND e.project_id = ${param_idx}"
-                params.append(project_id)
-                param_idx += 1
-
-            if entity_types:
-                base_query += f" AND e.entity_type = ANY(${param_idx}::text[])"
-                params.append(entity_types)
-                param_idx += 1
-
-            base_query += f" ORDER BY e.embedding <=> $1::vector LIMIT ${param_idx}"
-            params.append(limit)
-
-            rows = await self.db.fetch(base_query, *params)
-
-            results = []
-            for row in rows:
-                props = row["properties"]
-                if isinstance(props, str):
-                    try:
-                        props = json.loads(props)
-                    except Exception:
-                        props = {}
-
-                results.append({
-                    "id": row["id"],
-                    "name": row["name"],
-                    "entity_type": row["entity_type"],
-                    "properties": props,
-                    "score": float(row["score"]),
-                })
-
-            return results
-
-        except Exception as e:
-            logger.warning(f"Vector search failed: {e}")
-            return []
-
-    async def _keyword_search(
-        self,
-        query: str,
-        project_id: Optional[str],
-        entity_types: list[str],
-        limit: int,
-    ) -> list[dict]:
-        """Execute keyword/text search using ILIKE and trigram similarity."""
-        if not self.db:
-            return []
-
-        # Build search pattern
-        search_pattern = f"%{query}%"
-
-        # Build query
-        sql = """
-            SELECT
-                id::text,
-                name,
-                entity_type,
-                properties,
-                CASE
-                    WHEN LOWER(name) = LOWER($1) THEN 1.0
-                    WHEN LOWER(name) LIKE LOWER($1) || '%' THEN 0.9
-                    WHEN LOWER(name) LIKE '%' || LOWER($1) THEN 0.8
-                    ELSE 0.5
-                END as score
-            FROM entities
-            WHERE name ILIKE $2
-        """
-        params = [query, search_pattern]
-        param_idx = 3
-
-        if project_id:
-            sql += f" AND project_id = ${param_idx}"
-            params.append(project_id)
-            param_idx += 1
-
-        if entity_types:
-            sql += f" AND entity_type = ANY(${param_idx}::text[])"
-            params.append(entity_types)
-            param_idx += 1
-
-        sql += f" ORDER BY score DESC, name LIMIT ${param_idx}"
-        params.append(limit)
-
-        try:
-            rows = await self.db.fetch(sql, *params)
-            results = []
-
-            for row in rows:
-                props = row["properties"]
-                if isinstance(props, str):
-                    try:
-                        props = json.loads(props)
-                    except:
-                        props = {}
-
-                results.append({
-                    "id": row["id"],
-                    "name": row["name"],
-                    "entity_type": row["entity_type"],
-                    "properties": props,
-                    "score": float(row["score"]),
-                })
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Keyword search failed: {e}")
-            return []
-
-    async def _execute_retrieve(self, params: dict) -> dict:
-        """
-        Retrieve entity details with optional relationship expansion.
-
-        Params:
-            entity_id: ID of entity to retrieve
-            include_relationships: Whether to include connected entities (default True)
-            relationship_types: Optional filter for relationship types
-            depth: How many hops to traverse (default 1)
-        """
-        entity_id = params.get("entity_id")
-        include_relationships = params.get("include_relationships", True)
-        relationship_types = params.get("relationship_types", [])
-        depth = params.get("depth", 1)
-
-        if not entity_id or not self.db:
-            return {}
-
-        try:
-            # Get main entity
-            entity_row = await self.db.fetchrow(
-                """
-                SELECT id::text, name, entity_type, properties, description,
-                       confidence, concept_type_id
-                FROM entities
-                WHERE id = $1
-                """,
-                entity_id,
-            )
-
-            if not entity_row:
-                return {}
-
-            props = entity_row["properties"]
-            if isinstance(props, str):
-                try:
-                    props = json.loads(props)
-                except:
-                    props = {}
-
-            result = {
-                "id": entity_row["id"],
-                "name": entity_row["name"],
-                "entity_type": entity_row["entity_type"],
-                "properties": props,
-                "description": entity_row["description"],
-                "confidence": entity_row["confidence"],
-                "relationships": [],
-                "connected_entities": [],
-            }
-
-            # Get relationships
-            if include_relationships:
-                rel_query = """
-                    SELECT
-                        r.id::text as rel_id,
-                        r.relationship_type,
-                        r.properties as rel_properties,
-                        r.weight,
-                        CASE WHEN r.source_id = $1 THEN 'outgoing' ELSE 'incoming' END as direction,
-                        CASE WHEN r.source_id = $1 THEN r.target_id ELSE r.source_id END as connected_id
-                    FROM relationships r
-                    WHERE r.source_id = $1 OR r.target_id = $1
-                """
-                rel_params = [entity_id]
-
-                if relationship_types:
-                    rel_query += " AND r.relationship_type = ANY($2::text[])"
-                    rel_params.append(relationship_types)
-
-                rel_rows = await self.db.fetch(rel_query, *rel_params)
-
-                connected_ids = []
-                for rel_row in rel_rows:
-                    rel_props = rel_row["rel_properties"]
-                    if isinstance(rel_props, str):
-                        try:
-                            rel_props = json.loads(rel_props)
-                        except:
-                            rel_props = {}
-
-                    result["relationships"].append({
-                        "id": rel_row["rel_id"],
-                        "type": rel_row["relationship_type"],
-                        "direction": rel_row["direction"],
-                        "connected_id": str(rel_row["connected_id"]),
-                        "weight": rel_row["weight"],
-                        "properties": rel_props,
-                    })
-                    connected_ids.append(rel_row["connected_id"])
-
-                # Get connected entities
-                if connected_ids:
-                    conn_rows = await self.db.fetch(
-                        """
-                        SELECT id::text, name, entity_type, properties
-                        FROM entities
-                        WHERE id = ANY($1::uuid[])
-                        """,
-                        connected_ids,
-                    )
-
-                    for conn_row in conn_rows:
-                        conn_props = conn_row["properties"]
-                        if isinstance(conn_props, str):
-                            try:
-                                conn_props = json.loads(conn_props)
-                            except:
-                                conn_props = {}
-
-                        result["connected_entities"].append({
-                            "id": conn_row["id"],
-                            "name": conn_row["name"],
-                            "entity_type": conn_row["entity_type"],
-                            "properties": conn_props,
-                        })
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Entity retrieval failed: {e}")
-            return {}
-
-    async def _execute_gap_analysis(self, params: dict) -> list:
-        """
-        Analyze research gaps - concepts with few supporting papers or evidence.
-
-        Params:
-            project_id: Project to analyze
-            min_papers: Minimum papers for a concept to not be a gap (default 3)
-            entity_type: Type to analyze (default "Concept")
-            include_stats: Include detailed statistics (default True)
+        Extracts start entity IDs from params or from dependent search results.
+        Then calls graph_store.multi_hop_traversal() and returns structured results
+        with nodes, edges, and hop distances.
         """
         project_id = params.get("project_id")
-        min_papers = params.get("min_papers", 3)
-        entity_type = params.get("entity_type", "Concept")
-        include_stats = params.get("include_stats", True)
-
-        if not project_id or not self.db:
-            return []
-
-        try:
-            # Find concepts with fewer than min_papers connected papers
-            sql = """
-                SELECT
-                    e.id::text,
-                    e.name,
-                    e.entity_type,
-                    e.properties,
-                    e.description,
-                    COUNT(DISTINCT r.source_id) as paper_count,
-                    COUNT(DISTINCT r2.id) as related_concept_count
-                FROM entities e
-                LEFT JOIN relationships r ON e.id = r.target_id
-                    AND r.relationship_type = 'DISCUSSES_CONCEPT'
-                LEFT JOIN relationships r2 ON e.id = r2.source_id
-                    AND r2.relationship_type = 'RELATED_TO'
-                WHERE e.project_id = $1
-                    AND e.entity_type = $2
-                GROUP BY e.id, e.name, e.entity_type, e.properties, e.description
-                HAVING COUNT(DISTINCT r.source_id) < $3
-                ORDER BY COUNT(DISTINCT r.source_id) ASC, e.name
-            """
-
-            rows = await self.db.fetch(sql, project_id, entity_type, min_papers)
-
-            gaps = []
-            for row in rows:
-                props = row["properties"]
-                if isinstance(props, str):
-                    try:
-                        props = json.loads(props)
-                    except:
-                        props = {}
-
-                gap = {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "entity_type": row["entity_type"],
-                    "properties": props,
-                    "description": row["description"],
-                    "gap_reason": f"Only {row['paper_count']} papers discuss this concept",
-                }
-
-                if include_stats:
-                    gap["stats"] = {
-                        "paper_count": row["paper_count"],
-                        "related_concept_count": row["related_concept_count"],
-                    }
-
-                gaps.append(gap)
-
-            return gaps
-
-        except Exception as e:
-            logger.error(f"Gap analysis failed: {e}")
-            return []
-
-    async def _execute_traversal(self, params: dict) -> dict:
-        """
-        Execute graph traversal from a starting node.
-
-        Params:
-            start_node: Starting entity ID
-            relationship_types: Optional filter for relationship types
-            direction: "outgoing", "incoming", or "both" (default "both")
-            max_depth: Maximum traversal depth (default 2)
-            limit: Maximum nodes to return (default 50)
-        """
-        start_node = params.get("start_node")
-        relationship_types = params.get("relationship_types", [])
-        direction = params.get("direction", "both")
-        max_depth = params.get("max_depth", 2)
+        max_hops = params.get("max_hops", 2)
+        relationship_types = params.get("relationship_types")
         limit = params.get("limit", 50)
 
-        if not start_node or not self.db:
-            return {"nodes": [], "edges": []}
+        # Determine start entities: from params, or from dependent results
+        start_entity_ids = params.get("start_entity_ids", [])
+
+        if not start_entity_ids and dep_results:
+            # Extract entity IDs from dependent search results
+            for result in dep_results:
+                if isinstance(result, list):
+                    for item in result:
+                        if isinstance(item, dict) and "id" in item:
+                            start_entity_ids.append(item["id"])
+                elif isinstance(result, dict):
+                    if "nodes" in result:
+                        for node in result["nodes"]:
+                            if isinstance(node, dict) and "id" in node:
+                                start_entity_ids.append(node["id"])
+                    elif "id" in result:
+                        start_entity_ids.append(result["id"])
+
+        if not start_entity_ids:
+            # Last resort: find entities by query text, then traverse
+            query = params.get("query", "")
+            if query and self.graph_store and project_id:
+                try:
+                    search_results = await self.graph_store.search_entities(
+                        query=query,
+                        project_id=project_id,
+                        limit=5,
+                    )
+                    start_entity_ids = [r["id"] for r in search_results if "id" in r]
+                except Exception as e:
+                    logger.warning(f"Entity search for traversal seeds failed: {e}")
+
+        if not start_entity_ids:
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "no_start_entities",
+                "message": "Could not find entities to start traversal from.",
+            }
+
+        if not self.graph_store:
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "graph_store_unavailable",
+            }
 
         try:
-            visited = {start_node}
-            current_layer = [start_node]
-            all_nodes = []
-            all_edges = []
+            traversal_result = await self.graph_store.multi_hop_traversal(
+                project_id=project_id,
+                start_entity_ids=start_entity_ids,
+                max_hops=max_hops,
+                relationship_types=relationship_types,
+                limit=limit,
+            )
 
-            for depth in range(max_depth):
-                if not current_layer or len(all_nodes) >= limit:
-                    break
-
-                # Build relationship query based on direction
-                if direction == "outgoing":
-                    rel_condition = "r.source_id = ANY($1::uuid[])"
-                    connected_col = "r.target_id"
-                elif direction == "incoming":
-                    rel_condition = "r.target_id = ANY($1::uuid[])"
-                    connected_col = "r.source_id"
-                else:  # both
-                    rel_condition = "(r.source_id = ANY($1::uuid[]) OR r.target_id = ANY($1::uuid[]))"
-                    connected_col = "CASE WHEN r.source_id = ANY($1::uuid[]) THEN r.target_id ELSE r.source_id END"
-
-                rel_query = f"""
-                    SELECT
-                        r.id::text as edge_id,
-                        r.source_id::text,
-                        r.target_id::text,
-                        r.relationship_type,
-                        r.properties as rel_properties,
-                        {connected_col}::text as connected_id
-                    FROM relationships r
-                    WHERE {rel_condition}
-                """
-                rel_params = [current_layer]
-
-                if relationship_types:
-                    rel_query += " AND r.relationship_type = ANY($2::text[])"
-                    rel_params.append(relationship_types)
-
-                rel_rows = await self.db.fetch(rel_query, *rel_params)
-
-                next_layer = []
-                for rel_row in rel_rows:
-                    connected_id = rel_row["connected_id"]
-
-                    if connected_id not in visited:
-                        visited.add(connected_id)
-                        next_layer.append(connected_id)
-
-                    rel_props = rel_row["rel_properties"]
-                    if isinstance(rel_props, str):
-                        try:
-                            rel_props = json.loads(rel_props)
-                        except:
-                            rel_props = {}
-
-                    all_edges.append({
-                        "id": rel_row["edge_id"],
-                        "source": rel_row["source_id"],
-                        "target": rel_row["target_id"],
-                        "type": rel_row["relationship_type"],
-                        "properties": rel_props,
-                    })
-
-                current_layer = next_layer[:limit - len(all_nodes)]
-
-            # Fetch all visited nodes
-            if visited:
-                node_rows = await self.db.fetch(
-                    """
-                    SELECT id::text, name, entity_type, properties
-                    FROM entities
-                    WHERE id = ANY($1::uuid[])
-                    """,
-                    list(visited),
+            # Apply low-trust filter on traversal nodes
+            if traversal_result.get("nodes"):
+                traversal_result["nodes"] = self._apply_low_trust_filter(
+                    traversal_result["nodes"], params
                 )
 
-                for node_row in node_rows:
-                    props = node_row["properties"]
-                    if isinstance(props, str):
-                        try:
-                            props = json.loads(props)
-                        except:
-                            props = {}
-
-                    all_nodes.append({
-                        "id": node_row["id"],
-                        "name": node_row["name"],
-                        "entity_type": node_row["entity_type"],
-                        "properties": props,
-                    })
-
-            return {
-                "nodes": all_nodes[:limit],
-                "edges": all_edges,
-            }
+            traversal_result["status"] = "traversal_complete"
+            traversal_result["start_entities"] = start_entity_ids
+            traversal_result["max_hops"] = max_hops
+            return traversal_result
 
         except Exception as e:
             logger.error(f"Graph traversal failed: {e}")
-            return {"nodes": [], "edges": []}
+            return {
+                "nodes": [],
+                "edges": [],
+                "paths": {},
+                "status": "error",
+                "message": f"Graph traversal failed: {str(e)}",
+            }
 
-    async def _execute_aggregation(self, params: dict) -> dict:
+    async def _execute_hybrid(self, params: dict, dep_results: list = None) -> dict:
         """
-        Execute aggregation queries for statistics and summaries.
+        Execute hybrid search: run both vector search AND graph traversal,
+        then merge the results.
 
-        Params:
-            project_id: Project to aggregate
-            aggregation_type: Type of aggregation (count_by_type, top_concepts, temporal_distribution)
-            entity_type: Optional entity type filter
-            limit: Maximum results for top-N queries
+        Vector search finds semantically similar entities.
+        Graph traversal discovers structurally connected entities.
+        The merged result provides comprehensive coverage.
+        """
+        # Run vector search
+        vector_results = await self._execute_search(params)
+
+        # Run graph traversal using vector results as seeds
+        traversal_result = await self._execute_graph_traversal(
+            params, dep_results=[vector_results] if vector_results else dep_results
+        )
+
+        # Merge: deduplicate nodes by ID, keeping richer data
+        seen_ids = set()
+        merged_nodes = []
+
+        # Vector results first (they have similarity scores)
+        if isinstance(vector_results, list):
+            for item in vector_results:
+                if isinstance(item, dict) and "id" in item:
+                    if item["id"] not in seen_ids:
+                        seen_ids.add(item["id"])
+                        item["source"] = "vector"
+                        merged_nodes.append(item)
+
+        # Then traversal nodes (they have hop distances)
+        for node in traversal_result.get("nodes", []):
+            if isinstance(node, dict) and "id" in node:
+                if node["id"] not in seen_ids:
+                    seen_ids.add(node["id"])
+                    node["source"] = "graph_traversal"
+                    merged_nodes.append(node)
+
+        return {
+            "nodes": merged_nodes,
+            "edges": traversal_result.get("edges", []),
+            "paths": traversal_result.get("paths", {}),
+            "vector_count": len(vector_results) if isinstance(vector_results, list) else 0,
+            "traversal_count": len(traversal_result.get("nodes", [])),
+            "merged_count": len(merged_nodes),
+            "status": "hybrid_complete",
+        }
+
+    async def _execute_search(self, params: dict) -> list:
+        """Execute a search query against the graph store.
+        
+        Supports both entity search and chunk-based document search.
+        Set use_chunks=True to search through semantic chunks with parent context expansion.
+        """
+        query = params.get("query", "")
+        limit = params.get("limit", 20)
+        entity_types = params.get("entity_types")
+        project_id = params.get("project_id")
+        use_chunks = params.get("use_chunks", False)
+        section_filter = params.get("section_filter")  # e.g., ["methodology", "results"]
+
+        # Chunk-based hierarchical search
+        if use_chunks and self.hierarchical_retriever and project_id:
+            try:
+                retrieval_result = await self.hierarchical_retriever.search(
+                    query=query,
+                    project_id=project_id,
+                    mode=RetrievalMode.PARENT_EXPAND,  # Expand to parent for context
+                    section_filter=section_filter,
+                    limit=limit,
+                )
+                # Convert to serializable format
+                chunk_results = [
+                    {
+                        "chunk_id": r.chunk_id,
+                        "text": r.text,
+                        "summary": r.summary,
+                        "section_type": r.section_type,
+                        "score": r.score,
+                        "confidence": r.score,
+                        "paper_id": r.paper_id,
+                        "parent_context": r.parent_context.text if r.parent_context else None,
+                    }
+                    for r in retrieval_result.results
+                ]
+                return self._apply_low_trust_filter(chunk_results, params)
+            except Exception as e:
+                logger.warning(f"Hierarchical retrieval failed: {e}")
+                # Fall through to entity search
+
+        # Entity-based search (default)
+        if self.graph_store and project_id:
+            try:
+                results = await self.graph_store.search_entities(
+                    query=query,
+                    project_id=project_id,
+                    entity_types=entity_types,
+                    limit=limit,
+                )
+                return self._apply_low_trust_filter(results, params)
+            except Exception as e:
+                logger.warning(f"Graph store search failed: {e}")
+
+        # Fallback: return empty but valid result
+        return []
+
+    async def _execute_retrieve(self, params: dict) -> dict:
+        """Retrieve entity details from graph store."""
+        entity_id = params.get("entity_id")
+        query = params.get("query", "")
+        project_id = params.get("project_id")
+
+        if self.graph_store and entity_id:
+            try:
+                entity = await self.graph_store.get_entity(entity_id)
+                if entity:
+                    if bool(params.get("exclude_low_trust", False)):
+                        min_confidence = float(params.get("min_confidence", 0.6))
+                        confidence = self._extract_confidence(entity)
+                        if confidence is not None and confidence < min_confidence:
+                            return {
+                                "status": "filtered_low_trust",
+                                "entity_id": entity_id,
+                                "confidence": confidence,
+                                "min_confidence": min_confidence,
+                            }
+                    return entity
+            except Exception as e:
+                logger.warning(f"Entity retrieval failed: {e}")
+
+        # Fallback: search by query
+        if self.graph_store and query and project_id:
+            fallback_params = {
+                "query": query,
+                "limit": 1,
+                "project_id": project_id,
+                "exclude_low_trust": params.get("exclude_low_trust", False),
+                "min_confidence": params.get("min_confidence", 0.6),
+            }
+            results = await self._execute_search(fallback_params)
+            if results:
+                return results[0]
+
+        return {"status": "not_found", "query": query}
+
+    async def _execute_analyze(self, params: dict, dep_results: list) -> dict:
+        """
+        Analyze search results to extract patterns and insights.
+        Depends on prior search results.
+        """
+        # Collect entities from dependent results
+        entities = []
+        for result in dep_results:
+            if isinstance(result, list):
+                entities.extend(result)
+            elif isinstance(result, dict) and "nodes" in result:
+                entities.extend(result["nodes"])
+
+        # Basic analysis: count by type, extract common attributes
+        type_counts = {}
+        years = []
+        concepts = []
+
+        for entity in entities:
+            if isinstance(entity, dict):
+                etype = entity.get("entity_type", "Unknown")
+                type_counts[etype] = type_counts.get(etype, 0) + 1
+
+                props = entity.get("properties", {})
+                if props.get("year"):
+                    years.append(props["year"])
+
+        analysis = {
+            "total_entities": len(entities),
+            "by_type": type_counts,
+            "year_range": [min(years), max(years)] if years else None,
+            "insights": [],
+        }
+
+        # Generate insights
+        if type_counts.get("Paper", 0) > 10:
+            analysis["insights"].append(f"Found {type_counts['Paper']} relevant papers")
+        if years:
+            analysis["insights"].append(f"Research spans {min(years)} to {max(years)}")
+
+        return analysis
+
+    async def _execute_compare(self, params: dict, dep_results: list) -> dict:
+        """
+        Compare two or more entities based on their properties and relationships.
+        Depends on prior search/retrieve results.
+        """
+        entities_to_compare = []
+        for result in dep_results:
+            if isinstance(result, list) and result:
+                entities_to_compare.append(result[0])
+            elif isinstance(result, dict) and "id" in result:
+                entities_to_compare.append(result)
+
+        if len(entities_to_compare) < 2:
+            return {
+                "status": "insufficient_data",
+                "message": "Need at least 2 entities to compare",
+                "entities_found": len(entities_to_compare),
+            }
+
+        # Extract comparison dimensions
+        comparison = {
+            "entities": [
+                {
+                    "id": e.get("id"),
+                    "name": e.get("name"),
+                    "type": e.get("entity_type"),
+                }
+                for e in entities_to_compare
+            ],
+            "similarities": [],
+            "differences": [],
+        }
+
+        # Compare properties
+        e1, e2 = entities_to_compare[0], entities_to_compare[1]
+        props1 = e1.get("properties", {})
+        props2 = e2.get("properties", {})
+
+        # Find common and different properties
+        all_keys = set(props1.keys()) | set(props2.keys())
+        for key in all_keys:
+            if key in props1 and key in props2:
+                if props1[key] == props2[key]:
+                    comparison["similarities"].append(f"{key}: {props1[key]}")
+                else:
+                    comparison["differences"].append(f"{key}: {props1[key]} vs {props2[key]}")
+
+        return comparison
+
+    async def _execute_explain(self, params: dict, dep_results: list) -> dict:
+        """
+        Generate explanation for an entity using LLM.
+        Depends on prior retrieve results.
+        """
+        # Get entity from dependent results
+        entity = None
+        for result in dep_results:
+            if isinstance(result, dict) and "name" in result:
+                entity = result
+                break
+            elif isinstance(result, list) and result:
+                entity = result[0]
+                break
+
+        if not entity:
+            return {
+                "status": "no_entity",
+                "explanation": "Could not find entity to explain.",
+            }
+
+        name = entity.get("name", "Unknown")
+        entity_type = entity.get("entity_type", "Entity")
+        props = entity.get("properties", {})
+
+        # Build explanation context
+        explanation = {
+            "entity_name": name,
+            "entity_type": entity_type,
+            "summary": f"This is a {entity_type} named '{name}'.",
+            "details": [],
+        }
+
+        # Add property-based details
+        if entity_type == "Paper":
+            if props.get("abstract"):
+                explanation["details"].append(f"Abstract: {props['abstract'][:500]}...")
+            if props.get("year"):
+                explanation["details"].append(f"Published in {props['year']}")
+            if props.get("citation_count"):
+                explanation["details"].append(f"Cited {props['citation_count']} times")
+        elif entity_type == "Concept":
+            if props.get("description"):
+                explanation["details"].append(f"Description: {props['description']}")
+            if props.get("paper_count"):
+                explanation["details"].append(f"Discussed in {props['paper_count']} papers")
+        elif entity_type == "Author":
+            if props.get("affiliation"):
+                explanation["details"].append(f"Affiliated with {props['affiliation']}")
+            if props.get("paper_count"):
+                explanation["details"].append(f"Has {props['paper_count']} papers in this collection")
+
+        # Use LLM for richer explanation if available
+        if self.llm and props.get("abstract"):
+            try:
+                prompt = f"Briefly explain this {entity_type} '{name}' based on: {props.get('abstract', '')[:1000]}"
+                llm_explanation = await self.llm.generate(prompt=prompt, max_tokens=300)
+                explanation["ai_summary"] = llm_explanation
+            except Exception as e:
+                logger.warning(f"LLM explanation failed: {e}")
+
+        return explanation
+
+    async def _execute_gap_analysis(self, params: dict) -> dict:
+        """
+        Find research gaps by analyzing the knowledge graph structure.
+        Queries structural_gaps and entities tables for real gap data.
         """
         project_id = params.get("project_id")
-        aggregation_type = params.get("aggregation_type", "count_by_type")
-        entity_type = params.get("entity_type")
-        limit = params.get("limit", 10)
+        exclude_low_trust = bool(params.get("exclude_low_trust", False))
+        min_confidence = float(params.get("min_confidence", 0.6))
 
-        if not project_id or not self.db:
-            return {}
+        gaps = {
+            "identified_gaps": [],
+            "underexplored_concepts": [],
+            "methodology_gaps": [],
+            "recommendations": [],
+        }
+
+        if not project_id:
+            gaps["status"] = "invalid_request"
+            gaps["message"] = "Project ID is required for gap analysis."
+            return gaps
 
         try:
-            if aggregation_type == "count_by_type":
-                rows = await self.db.fetch(
-                    """
-                    SELECT entity_type, COUNT(*) as count
-                    FROM entities
-                    WHERE project_id = $1
-                    GROUP BY entity_type
-                    ORDER BY count DESC
-                    """,
+            # Prefer GraphStore DB but fall back to direct DB connection.
+            db = None
+            if self.graph_store and getattr(self.graph_store, "db", None):
+                db = self.graph_store.db
+            elif self.db:
+                db = self.db
+
+            if db is None:
+                gaps["status"] = "db_unavailable"
+                gaps["message"] = (
+                    "Database connection is unavailable. "
+                    "Please retry after service health is restored."
+                )
+                return gaps
+
+            if not self.graph_store:
+                logger.warning(
+                    "Gap analysis running without GraphStore for project %s; using direct DB fallback.",
                     project_id,
                 )
-                return {
-                    "aggregation_type": "count_by_type",
-                    "data": [{"entity_type": r["entity_type"], "count": r["count"]} for r in rows],
-                }
 
-            elif aggregation_type == "top_concepts":
-                rows = await self.db.fetch(
-                    """
-                    SELECT e.id::text, e.name, COUNT(r.id) as paper_count
-                    FROM entities e
-                    LEFT JOIN relationships r ON e.id = r.target_id
-                        AND r.relationship_type = 'DISCUSSES_CONCEPT'
-                    WHERE e.project_id = $1 AND e.entity_type = 'Concept'
-                    GROUP BY e.id, e.name
-                    ORDER BY paper_count DESC
-                    LIMIT $2
-                    """,
-                    project_id,
-                    limit,
+            # 1. Query structural_gaps table for detected gaps
+            gap_rows = await db.fetch(
+                """
+                SELECT cluster_a_names, cluster_b_names, gap_strength,
+                       bridge_candidates, research_questions
+                FROM structural_gaps
+                WHERE project_id = $1
+                ORDER BY gap_strength ASC
+                LIMIT 10
+                """,
+                str(project_id),
+            )
+
+            for row in gap_rows:
+                a_names = row.get("cluster_a_names") or []
+                b_names = row.get("cluster_b_names") or []
+                strength = row.get("gap_strength", 0)
+                questions = row.get("research_questions") or []
+
+                gaps["identified_gaps"].append({
+                    "cluster_a": a_names[:3],
+                    "cluster_b": b_names[:3],
+                    "gap_strength": round(strength, 3),
+                    "research_questions": questions[:3],
+                })
+
+            # 2. Query underexplored concepts (low degree entities)
+            underexplored_rows = await db.fetch(
+                """
+                SELECT e.name, e.entity_type::text as entity_type,
+                       COUNT(r.id) as rel_count
+                FROM entities e
+                LEFT JOIN relationships r
+                    ON (r.source_id = e.id OR r.target_id = e.id)
+                    AND ($2::boolean = false OR COALESCE(r.weight, 1.0) >= $3)
+                WHERE e.project_id = $1
+                  AND e.entity_type::text IN ('Concept', 'Method', 'Finding')
+                GROUP BY e.id, e.name, e.entity_type
+                HAVING COUNT(r.id) <= 2
+                ORDER BY COUNT(r.id) ASC
+                LIMIT 10
+                """,
+                str(project_id),
+                exclude_low_trust,
+                min_confidence,
+            )
+
+            for row in underexplored_rows:
+                gaps["underexplored_concepts"].append({
+                    "name": row["name"],
+                    "type": row["entity_type"],
+                    "connection_count": row["rel_count"],
+                })
+
+            # 3. Check for methodology gaps
+            method_rows = await db.fetch(
+                """
+                SELECT e.name, COUNT(r.id) as usage_count
+                FROM entities e
+                LEFT JOIN relationships r
+                    ON (r.source_id = e.id OR r.target_id = e.id)
+                    AND ($2::boolean = false OR COALESCE(r.weight, 1.0) >= $3)
+                WHERE e.project_id = $1
+                  AND e.entity_type::text = 'Method'
+                GROUP BY e.id, e.name
+                ORDER BY COUNT(r.id) ASC
+                LIMIT 5
+                """,
+                str(project_id),
+                exclude_low_trust,
+                min_confidence,
+            )
+
+            for row in method_rows:
+                gaps["methodology_gaps"].append({
+                    "method": row["name"],
+                    "usage_count": row["usage_count"],
+                })
+
+            # 4. Generate contextual recommendations
+            if gaps["identified_gaps"]:
+                for g in gaps["identified_gaps"][:3]:
+                    a = ", ".join(g["cluster_a"][:2])
+                    b = ", ".join(g["cluster_b"][:2])
+                    gaps["recommendations"].append(
+                        f"Explore the connection between {a} and {b} (gap strength: {g['gap_strength']:.1%})"
+                    )
+
+            if gaps["underexplored_concepts"]:
+                names = [c["name"] for c in gaps["underexplored_concepts"][:3]]
+                gaps["recommendations"].append(
+                    f"These concepts need more research coverage: {', '.join(names)}"
                 )
-                return {
-                    "aggregation_type": "top_concepts",
-                    "data": [{"id": r["id"], "name": r["name"], "paper_count": r["paper_count"]} for r in rows],
-                }
 
-            elif aggregation_type == "temporal_distribution":
-                rows = await self.db.fetch(
-                    """
-                    SELECT
-                        (properties->>'year')::int as year,
-                        COUNT(*) as count
-                    FROM entities
-                    WHERE project_id = $1
-                        AND entity_type = 'Paper'
-                        AND properties->>'year' IS NOT NULL
-                    GROUP BY (properties->>'year')::int
-                    ORDER BY year
-                    """,
-                    project_id,
+            if gaps["methodology_gaps"]:
+                methods = [m["method"] for m in gaps["methodology_gaps"][:2]]
+                gaps["recommendations"].append(
+                    f"Consider applying underutilized methods: {', '.join(methods)}"
                 )
-                return {
-                    "aggregation_type": "temporal_distribution",
-                    "data": [{"year": r["year"], "count": r["count"]} for r in rows],
-                }
 
-            elif aggregation_type == "relationship_distribution":
-                rows = await self.db.fetch(
-                    """
-                    SELECT r.relationship_type, COUNT(*) as count
-                    FROM relationships r
-                    JOIN entities e ON r.source_id = e.id
-                    WHERE e.project_id = $1
-                    GROUP BY r.relationship_type
-                    ORDER BY count DESC
-                    """,
-                    project_id,
+            if not gaps["identified_gaps"] and not gaps["underexplored_concepts"]:
+                gaps["recommendations"].append(
+                    "No structural gaps detected. Consider refreshing gap analysis from the graph panel."
                 )
-                return {
-                    "aggregation_type": "relationship_distribution",
-                    "data": [{"relationship_type": r["relationship_type"], "count": r["count"]} for r in rows],
-                }
 
-            else:
-                return {"error": f"Unknown aggregation type: {aggregation_type}"}
+            gaps["status"] = "analysis_complete"
+            gaps["total_gaps"] = len(gaps["identified_gaps"])
+            gaps["total_underexplored"] = len(gaps["underexplored_concepts"])
+            gaps["trust_filter"] = {
+                "exclude_low_trust": exclude_low_trust,
+                "min_confidence": min_confidence,
+            }
 
         except Exception as e:
-            logger.error(f"Aggregation failed: {e}")
-            return {"error": str(e)}
+            logger.error(f"Gap analysis query failed: {e}")
+            gaps["status"] = "error"
+            gaps["message"] = f"Gap analysis encountered an error: {str(e)}"
+
+        return gaps

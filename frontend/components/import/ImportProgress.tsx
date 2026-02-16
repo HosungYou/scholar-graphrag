@@ -2,9 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ArrowRight } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ArrowRight, Hexagon, RefreshCw, AlertTriangle, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { ImportJob } from '@/types';
+import type { ImportJob, ImportResumeInfo, ImportReliabilitySummary } from '@/types';
+
+/* ============================================================
+   ImportProgress - VS Design Diverge Style
+   Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Line-based hierarchy (left accent bars)
+   - No blue/purple gradients
+   - Teal accent for active/complete states
+   - Monospace numbers
+   - Minimal border-radius
+   ============================================================ */
 
 interface ImportProgressProps {
   jobId: string;
@@ -19,79 +31,337 @@ interface StepInfo {
 }
 
 const IMPORT_STEPS: StepInfo[] = [
-  { id: 'validating', label: 'Validation', description: 'Validating project structure' },
-  { id: 'extracting', label: 'Parse Config', description: 'Reading config.yaml' },
-  { id: 'processing', label: 'Import Papers', description: 'Importing papers from CSV' },
-  { id: 'building_graph', label: 'Build Graph', description: 'Creating entities and relationships' },
-  { id: 'completed', label: 'Complete', description: 'Finalizing import' },
+  { id: 'validate', label: 'Validation', description: 'Validating project structure' },
+  { id: 'parse_config', label: 'Parse Config', description: 'Reading config.yaml' },
+  { id: 'import_papers', label: 'Import Papers', description: 'Importing papers from CSV' },
+  { id: 'extract_entities', label: 'Extract Entities', description: 'Extracting concepts, methods, findings' },
+  { id: 'build_relationships', label: 'Build Graph', description: 'Creating relationships between entities' },
+  { id: 'create_embeddings', label: 'Embeddings', description: 'Generating vector embeddings' },
+  { id: 'finalize', label: 'Complete', description: 'Finalizing import' },
 ];
 
-// Map backend status to step index
-function getStepIndexFromStatus(status: string): number {
-  const statusToStepMap: Record<string, number> = {
-    'pending': 0,
-    'validating': 0,
-    'extracting': 1,
-    'processing': 2,
-    'building_graph': 3,
-    'completed': 4,
-    'failed': -1,
-  };
-  return statusToStepMap[status] ?? 0;
+function getStepIndex(stepId: string): number {
+  return IMPORT_STEPS.findIndex(s => s.id === stepId);
+}
+
+function getCompletedProjectId(job: ImportJob | null): string | null {
+  if (!job) return null;
+  return job.result?.project_id || job.project_id || null;
+}
+
+function formatPercent(value: number | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '0.0%';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+/* ============================================================
+   ERDetailSection - Entity Resolution Details (Phase 12A)
+   Collapsible section showing embedding-based ER statistics
+   DEFAULT: Collapsed (show only 3 key metrics in parent)
+   ============================================================ */
+
+interface ERDetailSectionProps {
+  summary: ImportReliabilitySummary;
+}
+
+function ERDetailSection({ summary }: ERDetailSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const hasERData =
+    typeof summary.embedding_candidates_found === 'number' ||
+    typeof summary.string_candidates_found === 'number' ||
+    typeof summary.llm_confirmed_merges === 'number';
+
+  if (!hasERData) return null;
+
+  return (
+    <div className="mt-4 border-l-2 border-accent-teal/20">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-label={isExpanded ? 'Collapse ER details' : 'Expand ER details'}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-surface/10 transition-all duration-200"
+      >
+        {isExpanded ? (
+          <ChevronDown className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        ) : (
+          <ChevronRight className="w-4 h-4 text-accent-teal transition-transform duration-200" />
+        )}
+        <span className="font-mono text-xs uppercase tracking-wider text-accent-teal">
+          ER 상세
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 space-y-2 transition-all duration-200">
+          {typeof summary.embedding_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">Embedding Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.embedding_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.string_candidates_found === 'number' && (
+            <div className="flex items-center justify-between py-2 border-b border-ink/5 dark:border-paper/5">
+              <span className="font-mono text-xs text-muted">String Candidates</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.string_candidates_found}
+              </span>
+            </div>
+          )}
+
+          {typeof summary.llm_confirmed_merges === 'number' && (
+            <div className="flex items-center justify-between py-2">
+              <span className="font-mono text-xs text-muted">LLM Confirmed Merges</span>
+              <span className="font-mono text-sm text-ink dark:text-paper">
+                {summary.llm_confirmed_merges}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ImportProgress({ jobId, onComplete, onError }: ImportProgressProps) {
   const [job, setJob] = useState<ImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isInterrupted, setIsInterrupted] = useState(false);
+  const [pollEpoch, setPollEpoch] = useState(0);
+  const [resumeInfo, setResumeInfo] = useState<ImportResumeInfo | null>(null);
+  const [isResuming, setIsResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Handle resume import
+  const handleResumeImport = async () => {
+    setIsResuming(true);
+    setResumeError(null);
+    try {
+      const resumedJob = await api.resumeImport(jobId);
+      setJob(resumedJob);
+      setIsInterrupted(false);
+      // Restart polling loop after interrupted -> running transition.
+      setPollEpoch(prev => prev + 1);
+    } catch (err: any) {
+      console.error('Failed to resume import:', err);
+      setResumeError(err.message || 'Failed to resume import');
+    } finally {
+      setIsResuming(false);
+    }
+  };
 
   useEffect(() => {
     if (!jobId) return;
 
-    let intervalId: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout | null = null;
+    let stopped = false;
+    let inFlight = false;
 
-    const pollStatus = async () => {
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      timeoutId = setTimeout(runPoll, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (stopped || inFlight) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        scheduleNext(5000);
+        return;
+      }
+
+      inFlight = true;
       try {
         const status = await api.getImportStatus(jobId);
         setJob(status);
 
-        if (status.status === 'completed' && status.project_id) {
-          clearInterval(intervalId);
-          onComplete?.(status.project_id);
+        const completedProjectId = getCompletedProjectId(status);
+
+        if (status.status === 'completed' && completedProjectId) {
+          stopped = true;
+          onComplete?.(completedProjectId);
+          return;
         } else if (status.status === 'failed') {
-          clearInterval(intervalId);
-          setError(status.message || 'Import failed');
-          onError?.(status.message || 'Import failed');
+          stopped = true;
+          setError(status.error || 'Import failed');
+          onError?.(status.error || 'Import failed');
+          return;
+        } else if (status.status === 'interrupted') {
+          // BUG-028: Handle interrupted state (server restart killed the task)
+          stopped = true;
+          setIsInterrupted(true);
+
+          // Fetch resume info
+          try {
+            const info = await api.getResumeInfo(jobId);
+            setResumeInfo(info);
+          } catch (resumeErr) {
+            console.error('Failed to fetch resume info:', resumeErr);
+          }
+
+          onError?.(status.error || 'Import interrupted');
+          return;
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.status === 401 || err?.status === 403) {
+          stopped = true;
+          setError('Session expired. Please refresh and log in again.');
+          onError?.('Session expired');
+          return;
+        }
         console.error('Failed to fetch import status:', err);
+      } finally {
+        inFlight = false;
+        if (!stopped) {
+          scheduleNext(2000);
+        }
       }
     };
 
-    // Initial fetch
-    pollStatus();
+    runPoll();
 
-    // Poll every 2 seconds
-    intervalId = setInterval(pollStatus, 2000);
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [jobId, onComplete, onError, pollEpoch]);
 
-    return () => clearInterval(intervalId);
-  }, [jobId, onComplete, onError]);
+  // BUG-028 Extension: Special UI for interrupted imports with checkpoint info
+  if (isInterrupted) {
+    const checkpoint = resumeInfo?.checkpoint;
+    const progressPct = checkpoint
+      ? Math.round((checkpoint.processed_count / checkpoint.total_papers) * 100)
+      : 0;
+
+    return (
+      <div className="border-l-2 border-accent-amber bg-accent-amber/5 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <AlertTriangle className="w-6 h-6 text-accent-amber" />
+          <div>
+            <h3 className="font-medium text-ink dark:text-paper">Import Interrupted</h3>
+            <p className="text-sm text-muted">
+              Import was interrupted by a server restart.
+            </p>
+          </div>
+        </div>
+
+        {checkpoint && (
+          <div className="mb-4 p-4 bg-surface rounded-sm border border-ink/10 dark:border-paper/10">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-muted">Progress</span>
+              <span className="font-mono text-sm text-accent-amber">{progressPct}%</span>
+            </div>
+            <div className="h-2 bg-ink/10 dark:bg-paper/10 rounded-full overflow-hidden mb-3">
+              <div
+                className="h-full bg-accent-amber rounded-full transition-all"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted">Processed</span>
+                <span className="font-mono text-ink dark:text-paper">
+                  {checkpoint.processed_count} / {checkpoint.total_papers} papers
+                </span>
+              </div>
+              {checkpoint.project_id && (
+                <div className="flex justify-between">
+                  <span className="text-muted">Project ID</span>
+                  <span className="font-mono text-xs text-muted truncate max-w-[200px]">
+                    {checkpoint.project_id}
+                  </span>
+                </div>
+              )}
+              {checkpoint.stage && (
+                <div className="flex justify-between">
+                  <span className="text-muted">Interrupted at</span>
+                  <span className="text-ink dark:text-paper capitalize">{checkpoint.stage}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="p-3 bg-accent-teal/5 border border-accent-teal/20 rounded-sm">
+            <p className="text-sm text-ink dark:text-paper">
+              <strong>How to resume:</strong> Re-upload the same file. The{' '}
+              <span className="font-mono text-accent-teal">{checkpoint?.processed_count || 0}</span>{' '}
+              already processed papers will be skipped automatically.
+            </p>
+          </div>
+
+          {resumeError && (
+            <div className="mb-3 p-3 bg-accent-red/10 border border-accent-red/20 rounded-sm">
+              <p className="text-sm text-accent-red">{resumeError}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            {/* Primary action: Resume Import */}
+            <button
+              onClick={handleResumeImport}
+              disabled={isResuming}
+              aria-label="Resume import"
+              className="flex-1 flex items-center justify-center gap-2 py-3 bg-accent-teal text-white font-medium rounded-sm hover:bg-accent-teal/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isResuming ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Resuming...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  Resume Import
+                </>
+              )}
+            </button>
+
+            {/* Secondary: Re-upload files */}
+            <button
+              onClick={() => router.push('/import')}
+              aria-label="Upload new files"
+              className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Upload New
+            </button>
+
+            {/* View partial results */}
+            {checkpoint?.project_id && (
+              <button
+                onClick={() => router.push(`/projects/${checkpoint.project_id}`)}
+                aria-label="View partial results"
+                className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
+              >
+                <ArrowRight className="w-4 h-4" />
+                Partial Results
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
-      <div className="bg-surface-2 border border-node-finding/30 rounded p-6">
+      <div className="border-l-2 border-accent-red bg-accent-red/5 p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-surface-2 rounded-full">
-            <XCircle className="w-6 h-6 text-node-finding" />
-          </div>
+          <XCircle className="w-6 h-6 text-accent-red" />
           <div>
-            <h3 className="font-medium text-node-finding">Import Failed</h3>
-            <p className="text-sm text-node-finding">{error}</p>
+            <h3 className="font-medium text-ink dark:text-paper">Import Failed</h3>
+            <p className="text-sm text-accent-red">{error}</p>
           </div>
         </div>
         <button
           onClick={() => router.back()}
-          className="px-4 py-2 bg-surface-2 text-node-finding rounded hover:bg-surface-3 transition-colors text-sm font-medium"
+          aria-label="Retry import"
+          className="btn btn--secondary"
         >
           Try Again
         </button>
@@ -101,52 +371,100 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
   if (!job) {
     return (
-      <div className="bg-surface-1 border border-border rounded p-6">
+      <div className="border border-ink/10 dark:border-paper/10 p-6">
         <div className="flex items-center justify-center gap-3">
-          <Loader2 className="w-5 h-5 animate-spin text-teal" />
-          <span className="text-text-secondary">Initializing import...</span>
+          <Loader2 className="w-5 h-5 animate-spin text-accent-teal" />
+          <span className="text-muted">Initializing import...</span>
         </div>
       </div>
     );
   }
 
-  const currentStepIndex = getStepIndexFromStatus(job.status);
+  const currentStepIndex = job.current_step ? getStepIndex(job.current_step) : 0;
   const isComplete = job.status === 'completed';
+  const completedProjectId = getCompletedProjectId(job);
+  const reliabilitySummary = job.reliability_summary || job.result?.reliability_summary;
+  const summaryText = (() => {
+    const nodesCreated = job.result?.nodes_created;
+    const edgesCreated = job.result?.edges_created;
+    if (typeof nodesCreated === 'number' || typeof edgesCreated === 'number') {
+      return `Created ${nodesCreated || 0} nodes and ${edgesCreated || 0} edges`;
+    }
+    if (reliabilitySummary) {
+      return `Resolved ${reliabilitySummary.entities_after_resolution || 0} entities and ${reliabilitySummary.relationships_created || 0} relationships`;
+    }
+    return 'Knowledge graph import completed';
+  })();
+
+  // BUG-027 FIX: Backend sends progress as 0.0-1.0 fraction, convert to 0-100 percent
+  // Without this, Math.round(0.1) = 0 and width: "0.1%" makes the bar invisible
+  const progressPercent = Math.round((job.progress ?? 0) * 100);
 
   return (
-    <div className="bg-surface-1 border border-border rounded overflow-hidden">
-      {/* Header */}
-      <div className="bg-teal px-6 py-4">
-        <div className="flex items-center justify-between">
+    <div className="relative overflow-hidden bg-paper dark:bg-ink rounded-sm shadow-lg border-2 border-accent-teal/30">
+      {/* Decorative corner accent */}
+      <div className="absolute top-0 right-0 w-24 h-24 bg-accent-teal/10 transform rotate-45 translate-x-12 -translate-y-12" />
+
+      {/* Header - Rich dark with subtle texture */}
+      <div className="relative bg-surface px-6 py-6 overflow-hidden">
+        {/* Background pattern - subtle diagonal lines */}
+        <div className="absolute inset-0 opacity-5">
+          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="diagonalLines" patternUnits="userSpaceOnUse" width="10" height="10">
+                <path d="M-1,1 l2,-2 M0,10 l10,-10 M9,11 l2,-2" stroke="white" strokeWidth="1"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#diagonalLines)" />
+          </svg>
+        </div>
+
+        <div className="relative flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-medium text-white">
-              {isComplete ? 'Import Complete!' : 'Importing Project...'}
+            <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center justify-center w-8 h-8 bg-accent-teal/20 rounded-sm">
+                <Hexagon className="w-5 h-5 text-accent-teal" strokeWidth={2} />
+              </div>
+              <span className="font-mono text-xs uppercase tracking-widest text-accent-teal font-semibold">
+                {isComplete ? '✓ Complete' : '◉ Processing'}
+              </span>
+            </div>
+            <h3 className="font-display text-2xl text-white font-medium">
+              {isComplete ? 'Import Complete!' : 'Building Knowledge Graph...'}
             </h3>
-            <p className="text-white/80 text-sm">
+            <p className="text-white/80 text-sm mt-2">
               {isComplete
-                ? `Created ${job.stats?.total_entities || 0} entities and ${job.stats?.total_relationships || 0} relationships`
-                : job.message || `Step ${currentStepIndex + 1} of ${IMPORT_STEPS.length}`}
+                ? summaryText
+                : IMPORT_STEPS[currentStepIndex]?.description || 'Processing...'}
             </p>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-medium text-white">
-              {Math.round(job.progress)}%
+            <div className="font-mono text-5xl text-white font-bold tracking-tight">
+              {progressPercent}
+              <span className="text-2xl text-accent-teal">%</span>
             </div>
           </div>
         </div>
 
-        {/* Progress bar */}
-        <div className="mt-4 h-2 bg-surface-2 rounded-full overflow-hidden">
+        {/* Progress bar - Glowing style */}
+        <div className="mt-5 h-2 bg-white/10 rounded-full overflow-hidden">
           <div
-            className="h-full bg-white transition-all duration-500 ease-out rounded-full"
-            style={{ width: `${job.progress}%` }}
+            className="h-full bg-gradient-to-r from-accent-teal to-accent-teal/80 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(46,196,182,0.5)]"
+            style={{ width: `${progressPercent}%` }}
           />
         </div>
       </div>
 
-      {/* Steps */}
-      <div className="p-6">
-        <div className="space-y-3">
+      {/* Steps - Enhanced editorial design */}
+      <div className="p-6 pt-4">
+        {/* Section header */}
+        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-ink/10 dark:border-paper/10">
+          <span className="font-mono text-xs uppercase tracking-widest text-muted">Progress Steps</span>
+          <div className="flex-1 h-px bg-ink/5 dark:bg-paper/5" />
+          <span className="font-mono text-xs text-accent-teal">{currentStepIndex + 1}/{IMPORT_STEPS.length}</span>
+        </div>
+
+        <div className="space-y-0">
           {IMPORT_STEPS.map((step, index) => {
             const isCurrentStep = index === currentStepIndex && !isComplete;
             const isPastStep = index < currentStepIndex || isComplete;
@@ -155,51 +473,51 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             return (
               <div
                 key={step.id}
-                className={`flex items-center gap-4 p-3 rounded transition-all ${
+                className={`relative flex items-center gap-4 py-3 px-4 transition-all border-l-2 ${
                   isCurrentStep
-                    ? 'bg-teal-dim border border-teal/30'
+                    ? 'bg-accent-amber/5 border-l-accent-amber'
                     : isPastStep
-                    ? 'bg-teal-dim/50'
-                    : 'opacity-50'
+                    ? 'border-l-accent-teal'
+                    : 'border-l-transparent opacity-50'
                 }`}
               >
-                {/* Icon */}
-                <div className="flex-shrink-0">
+                {/* Step number */}
+                <div className={`flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-sm font-mono text-xs font-bold ${
+                  isPastStep
+                    ? 'bg-accent-teal text-white'
+                    : isCurrentStep
+                    ? 'bg-accent-amber text-white'
+                    : 'bg-ink/10 dark:bg-paper/10 text-muted'
+                }`}>
                   {isPastStep ? (
-                    <div className="w-8 h-8 bg-teal-dim rounded-full flex items-center justify-center">
-                      <CheckCircle className="w-5 h-5 text-teal" />
-                    </div>
+                    <CheckCircle className="w-4 h-4" />
                   ) : isCurrentStep ? (
-                    <div className="w-8 h-8 bg-teal-dim rounded-full flex items-center justify-center">
-                      <Loader2 className="w-5 h-5 text-teal animate-spin" />
-                    </div>
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <div className="w-8 h-8 bg-surface-2 rounded-full flex items-center justify-center">
-                      <Circle className="w-5 h-5 text-text-tertiary" />
-                    </div>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
                   )}
                 </div>
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <p
-                    className={`font-medium ${
+                    className={`font-medium text-sm ${
                       isPastStep
-                        ? 'text-teal'
+                        ? 'text-accent-teal'
                         : isCurrentStep
-                        ? 'text-teal'
-                        : 'text-text-tertiary'
+                        ? 'text-ink dark:text-paper'
+                        : 'text-muted'
                     }`}
                   >
                     {step.label}
                   </p>
                   <p
-                    className={`text-sm ${
+                    className={`text-xs mt-0.5 ${
                       isPastStep
-                        ? 'text-teal'
+                        ? 'text-accent-teal/60'
                         : isCurrentStep
-                        ? 'text-teal'
-                        : 'text-text-tertiary'
+                        ? 'text-muted'
+                        : 'text-muted/50'
                     }`}
                   >
                     {step.description}
@@ -209,10 +527,16 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
                 {/* Status indicator */}
                 {isCurrentStep && (
                   <div className="flex-shrink-0">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-teal-dim text-teal text-xs rounded-full">
-                      <span className="w-1.5 h-1.5 bg-teal rounded-full animate-pulse" />
-                      In Progress
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent-amber/10 border border-accent-amber/30 text-accent-amber text-xs font-mono font-semibold rounded-sm">
+                      <span className="w-2 h-2 bg-accent-amber rounded-full animate-pulse" />
+                      ACTIVE
                     </span>
+                  </div>
+                )}
+
+                {isPastStep && (
+                  <div className="flex-shrink-0">
+                    <span className="text-accent-teal text-xs font-mono">Done</span>
                   </div>
                 )}
               </div>
@@ -220,15 +544,70 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
           })}
         </div>
 
+        {isComplete && reliabilitySummary && (
+          <>
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Canonicalization</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.canonicalization_rate)} ({reliabilitySummary.merges_applied} merges)
+                </p>
+              </div>
+              <div className="border border-accent-teal/20 bg-accent-teal/5 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Provenance Coverage</p>
+                <p className="font-mono text-sm text-accent-teal mt-1">
+                  {formatPercent(reliabilitySummary.provenance_coverage)}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Entities</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.raw_entities_extracted} {'->'} {reliabilitySummary.entities_after_resolution}
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Low-Trust Edges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.low_trust_edges} ({formatPercent(reliabilitySummary.low_trust_edge_ratio)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">LLM Merge Reviews</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.llm_pairs_confirmed}/{reliabilitySummary.llm_pairs_reviewed} ({formatPercent(reliabilitySummary.llm_confirmation_accept_rate)})
+                </p>
+              </div>
+              <div className="border border-ink/10 dark:border-paper/10 bg-surface/60 p-3 rounded-sm">
+                <p className="font-mono text-xs uppercase tracking-wider text-muted">Potential False Merges</p>
+                <p className="font-mono text-sm text-ink dark:text-paper mt-1">
+                  {reliabilitySummary.potential_false_merge_count} ({formatPercent(reliabilitySummary.potential_false_merge_ratio)})
+                </p>
+              </div>
+            </div>
+
+            {/* Entity Resolution Details - Collapsible Section */}
+            {(typeof reliabilitySummary.embedding_candidates_found === 'number' ||
+              typeof reliabilitySummary.string_candidates_found === 'number' ||
+              typeof reliabilitySummary.llm_confirmed_merges === 'number') && (
+              <ERDetailSection summary={reliabilitySummary} />
+            )}
+          </>
+        )}
+
         {/* Complete action */}
-        {isComplete && job.project_id && (
-          <div className="mt-6 pt-4 border-t border-border">
+        {isComplete && completedProjectId && (
+          <div className="mt-6 pt-6 border-t-2 border-accent-teal/20">
             <button
-              onClick={() => router.push(`/projects/${job.project_id}`)}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-teal text-white rounded hover:bg-teal/90 transition-all font-medium"
+              onClick={() => router.push(`/projects/${completedProjectId}`)}
+              aria-label="Open project"
+              className="group relative w-full py-4 bg-accent-teal text-white font-medium rounded-sm overflow-hidden transition-all hover:bg-accent-teal/90 hover:shadow-lg hover:shadow-accent-teal/20"
             >
-              Open Project
-              <ArrowRight className="w-5 h-5" />
+              {/* Animated shine effect */}
+              <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+              <span className="relative flex items-center justify-center gap-2">
+                <span className="font-semibold">Open Project</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </span>
             </button>
           </div>
         )}

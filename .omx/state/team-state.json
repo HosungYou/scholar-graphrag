@@ -1,0 +1,16 @@
+{
+  "active": false,
+  "mode": "team",
+  "iteration": 0,
+  "max_iterations": 50,
+  "current_phase": "cancelled",
+  "task_description": "Code review commit 49ba82e against /Users/hosung/.claude/plans/glistening-bubbling-abelson.md. Non-mutating review only. Provide severity-ranked findings with file:line references, test gaps, and release risk.",
+  "started_at": "2026-02-16T16:36:04.019Z",
+  "tmux_pane_id": "%7",
+  "tmux_pane_set_at": "2026-02-16T16:36:04.019Z",
+  "linked_ralph": false,
+  "team_name": "code-review-commit-49ba82e-aga",
+  "agent_count": 3,
+  "agent_types": "code-reviewer",
+  "completed_at": "2026-02-16T16:49:27.132Z"
+}

@@ -3,55 +3,106 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Network,
   MessageSquare,
   Compass,
   Send,
   X,
-  ChevronRight,
-  Loader2,
-  Menu,
   ChevronLeft,
-  Wifi,
-  WifiOff,
-  Zap,
-  LayoutGrid,
-  Search
+  Loader2,
+  Hexagon,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/lib/api';
-import { KnowledgeGraph } from '@/components/graph/KnowledgeGraph';
+import { useAuth } from '@/lib/auth-context';
+import { KnowledgeGraph3D } from '@/components/graph/KnowledgeGraph3D';
 import { NodeDetails } from '@/components/graph/NodeDetails';
 import { FilterPanel } from '@/components/graph/FilterPanel';
 import { SearchBar } from '@/components/graph/SearchBar';
-import { ChatInterface } from '@/components/chat/ChatInterface';
 import { useGraphStore } from '@/hooks/useGraphStore';
-import { useWebSocketChat } from '@/hooks/useWebSocketChat';
-import { Header } from '@/components/layout';
 import {
   ThemeToggle,
   ErrorDisplay,
   ErrorBoundary,
   ChatMessageSkeleton,
-  GraphSkeleton,
+  ResizeHandle,
 } from '@/components/ui';
 import type { GraphEntity, EntityType, SearchResult, Citation } from '@/types';
 
+/* ============================================================
+   ScholaRAG Graph - Project Detail Page
+   VS Design Diverge: Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Line-based view mode toggles
+   - Left accent bar for chat messages
+   - Monospace status indicators
+   - Minimal border radius
+   - No blue colors (use accent-teal)
+   ============================================================ */
+
 type ViewMode = 'chat' | 'explore' | 'split';
 
-const ALL_ENTITY_TYPES: EntityType[] = ['Paper', 'Author', 'Concept', 'Method', 'Finding', 'Result', 'Claim'];
+const ALL_ENTITY_TYPES: EntityType[] = ['Paper', 'Author', 'Concept', 'Method', 'Finding'];
 
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
 
   const [viewMode, setViewMode] = useState<ViewMode>('split');
-  const [isChatOpen, setIsChatOpen] = useState(true);
+  const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
   const [chatInput, setChatInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [traceNodeIds, setTraceNodeIds] = useState<string[]>([]);
+
+  // Chat panel resize and collapse state
+  const [chatPanelWidth, setChatPanelWidth] = useState(480);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const mainContainerRef = useRef<HTMLDivElement>(null);
+
+  // Load saved panel width from localStorage
+  useEffect(() => {
+    const savedWidth = localStorage.getItem('scholarag-chat-panel-width');
+    const savedCollapsed = localStorage.getItem('scholarag-chat-panel-collapsed');
+    if (savedWidth) {
+      setChatPanelWidth(parseInt(savedWidth, 10));
+    }
+    if (savedCollapsed) {
+      setIsChatCollapsed(savedCollapsed === 'true');
+    }
+  }, []);
+
+  // Save panel width to localStorage
+  const handlePanelResize = useCallback((width: number) => {
+    setChatPanelWidth(width);
+    localStorage.setItem('scholarag-chat-panel-width', String(width));
+  }, []);
+
+  // Toggle chat panel collapse
+  const toggleChatPanel = useCallback(() => {
+    setIsChatCollapsed(prev => {
+      const newValue = !prev;
+      localStorage.setItem('scholarag-chat-panel-collapsed', String(newValue));
+      return newValue;
+    });
+  }, []);
+
+  const [messages, setMessages] = useState<Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    citations?: Citation[];
+    isNodeExplanation?: boolean;
+    nodeId?: string;
+    // Phase 11B: Search strategy metadata
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
+  }>>([]);
+
+  // Auto-scroll refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const {
     graphData,
@@ -59,8 +110,10 @@ export default function ProjectDetailPage() {
     highlightedEdges,
     selectedNode,
     filters,
+    pinnedNodes,
     setHighlightedNodes,
     setHighlightedEdges,
+    applyRecommendedViewMode,
     setSelectedNode,
     setFilters,
     resetFilters,
@@ -68,41 +121,126 @@ export default function ProjectDetailPage() {
     expandNode,
   } = useGraphStore();
 
-  const {
-    messages,
-    isConnected,
-    isStreaming,
-    sendMessage,
-    connect,
-    disconnect,
-  } = useWebSocketChat({
-    projectId,
-    conversationId,
-    onStreamEnd: (_messageId, message) => {
-      if (message.highlighted_nodes && message.highlighted_nodes.length > 0) {
-        setHighlightedNodes(message.highlighted_nodes);
-      }
-      // Extract trace node IDs from retrieval_trace if available
-      const trace = (message as any).retrieval_trace;
-      if (trace?.steps) {
-        const nodeIds = trace.steps.flatMap((s: any) => s.node_ids || []);
-        if (nodeIds.length > 0) {
-          setTraceNodeIds(nodeIds);
+  // Fetch project details
+  const { user } = useAuth();
+  const { data: project, isLoading: projectLoading, error: projectError, refetch } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => api.getProject(projectId),
+    enabled: !!user && !!projectId,  // BUG-043: Only fetch when authenticated
+  });
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  // Chat mutation
+  const chatMutation = useMutation({
+    mutationFn: (message: string) =>
+      api.sendChatMessage(
+        projectId,
+        message,
+        conversationId || undefined,
+        {
+          selectedNodeIds: selectedNode ? [selectedNode.id] : [],
+          pinnedNodeIds: pinnedNodes,
         }
+      ),
+    onSuccess: (data) => {
+      setConversationId(data.conversation_id);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', content: chatInput },
+        {
+          role: 'assistant',
+          content: data.answer,
+          citations: data.citations,
+          // Phase 11B: Search strategy metadata
+          searchStrategy: data.meta?.search_strategy,
+          hopCount: data.meta?.hop_count,
+        },
+      ]);
+      setChatInput('');
+
+      if (data.highlighted_nodes?.length > 0) {
+        setHighlightedNodes(data.highlighted_nodes);
       }
+      if (data.highlighted_edges?.length > 0) {
+        setHighlightedEdges(data.highlighted_edges);
+      }
+      applyRecommendedViewMode(data.intent);
     },
   });
 
+  // Calculate node counts by type
+  const nodeCountsByType = useMemo(() => {
+    if (!graphData) return {} as Record<EntityType, number>;
+
+    const counts: Record<EntityType, number> = {
+      Paper: 0,
+      Author: 0,
+      Concept: 0,
+      Method: 0,
+      Finding: 0,
+      Problem: 0,
+      Dataset: 0,
+      Metric: 0,
+      Innovation: 0,
+      Limitation: 0,
+      Invention: 0,
+      Patent: 0,
+      Inventor: 0,
+      Technology: 0,
+      License: 0,
+      Grant: 0,
+      Department: 0,
+    };
+
+    for (const node of graphData.nodes) {
+      if (counts[node.entity_type] !== undefined) {
+        counts[node.entity_type]++;
+      }
+    }
+
+    return counts;
+  }, [graphData]);
+
+  // Dynamic entity types: only show types that have at least 1 node in the graph
+  // This prevents showing Paper/Author (or other types) when they don't exist
+  // Per ADR-001: Paper/Author are metadata-only, not visualized in concept-centric mode
+  const actualEntityTypes = useMemo(() => {
+    // Define the preferred order for entity types
+    const orderedTypes: EntityType[] = ['Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation', 'Paper', 'Author'];
+    // Filter to only types that have at least 1 node
+    return orderedTypes.filter(type => (nodeCountsByType[type] || 0) > 0);
+  }, [nodeCountsByType]);
+
+  // UI-003 FIX: Sync entity types ONLY on initial graph load
+  // Track whether initial sync has been done to allow user freedom after
+  const [hasInitializedFilters, setHasInitializedFilters] = useState(false);
+
   useEffect(() => {
-    connect();
-    return () => disconnect();
-  }, [connect, disconnect]);
+    // Only run on initial graph load, not on every filter change
+    if (actualEntityTypes.length > 0 && !hasInitializedFilters) {
+      // Only select types that actually exist in the graph
+      const validSelectedTypes = filters.entityTypes.filter(
+        type => actualEntityTypes.includes(type)
+      );
+      // If no valid types match, select all available types
+      if (validSelectedTypes.length === 0) {
+        setFilters({ entityTypes: [...actualEntityTypes] });
+      } else if (validSelectedTypes.length !== filters.entityTypes.length) {
+        // Update to only include valid types
+        setFilters({ entityTypes: validSelectedTypes });
+      }
+      // Mark as initialized - user can now freely toggle without auto-reset
+      setHasInitializedFilters(true);
+    }
+  }, [actualEntityTypes, hasInitializedFilters, filters.entityTypes, setFilters]);
 
-  const { data: project, isLoading: projectLoading, error: projectError } = useQuery({
-    queryKey: ['project', projectId],
-    queryFn: () => api.getProject(projectId),
-  });
-
+  // Handle node click in graph
   const handleNodeClick = useCallback(
     (nodeId: string, nodeData: GraphEntity) => {
       setSelectedNode(nodeData);
@@ -111,130 +249,511 @@ export default function ProjectDetailPage() {
     [setSelectedNode, setHighlightedNodes]
   );
 
-  const handleSendMessage = async (message: string) => {
-    sendMessage(message);
-    return { content: "" }; // Handled by WS streaming
+  // Handle search
+  const handleSearch = useCallback(
+    async (query: string): Promise<SearchResult[]> => {
+      try {
+        return await api.searchNodes(query, filters.entityTypes);
+      } catch (error) {
+        console.error('Search failed:', error);
+        return [];
+      }
+    },
+    [filters.entityTypes]
+  );
+
+  // Handle search result selection
+  const handleSelectSearchResult = useCallback(
+    (result: SearchResult) => {
+      setHighlightedNodes([result.id]);
+      const entity = graphData?.nodes.find((n) => n.id === result.id);
+      if (entity) {
+        setSelectedNode(entity);
+      }
+    },
+    [graphData, setHighlightedNodes, setSelectedNode]
+  );
+
+  // Handle asking about a node in chat
+  const handleAskAboutNode = useCallback(
+    (nodeId: string, nodeName: string) => {
+      const question = `Tell me more about "${nodeName}" and its connections in the literature.`;
+      setChatInput(question);
+      setViewMode('split');
+      setMobileView('chat');
+    },
+    []
+  );
+
+  // Handle asking about a gap in chat
+  const handleAskAboutGap = useCallback(
+    (question: string) => {
+      setChatInput(question);
+      setViewMode('split');
+      setMobileView('chat');
+    },
+    []
+  );
+
+  // Handle showing node connections
+  const handleShowConnections = useCallback(
+    (nodeId: string) => {
+      expandNode(nodeId);
+      setHighlightedNodes([nodeId]);
+    },
+    [expandNode, setHighlightedNodes]
+  );
+
+  // Handle chat submit
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || chatMutation.isPending) return;
+    clearHighlights();
+    chatMutation.mutate(chatInput);
   };
 
-  if (projectLoading) return <div className="h-screen bg-surface-0 flex items-center justify-center"><Loader2 className="w-10 h-10 text-teal animate-spin" /></div>;
+  // Handle citation click
+  const handleCitationClick = (citation: Citation) => {
+    const nodeId = citation.paper_id || citation.id;
+    setHighlightedNodes([nodeId]);
+    const entity = graphData?.nodes.find((n) => n.id === nodeId);
+    if (entity) {
+      setSelectedNode(entity);
+    }
+    setMobileView('graph');
+  };
+
+  if (projectLoading) {
+    return (
+      <div className="min-h-screen bg-paper dark:bg-ink flex items-center justify-center">
+        <div className="text-center">
+          <div className="relative inline-block mb-6">
+            <Hexagon className="w-16 h-16 text-accent-teal/30 animate-pulse-slow" strokeWidth={1} />
+            <Loader2 className="w-6 h-6 text-accent-teal absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin" />
+          </div>
+          <p className="font-mono text-sm text-muted">Loading project...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (projectError) {
+    return (
+      <div className="min-h-screen bg-paper dark:bg-ink flex items-center justify-center p-4">
+        <ErrorDisplay
+          error={projectError as Error}
+          title="프로젝트를 불러올 수 없습니다"
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-surface-0 text-text-primary overflow-hidden font-sans">
-      {/* Cinematic Header */}
-      <header className="h-16 border-b border-border flex items-center justify-between px-6 bg-surface-0/95 z-50">
-        <div className="flex items-center gap-6">
-          <Link href="/projects" className="p-2 hover:bg-surface-2 rounded transition-colors">
-            <ChevronLeft className="w-5 h-5 text-text-tertiary" />
-          </Link>
-          <div className="flex flex-col">
-            <h1 className="text-sm font-medium tracking-tight text-text-primary">{project?.name || 'Project'}</h1>
-            <div className="flex items-center gap-2">
-               <span className="text-[10px] font-mono text-copper tracking-[0.15em] uppercase">S·G v1.0</span>
-               <div className={isConnected ? "w-1 h-1 rounded-full bg-teal" : "w-1 h-1 rounded-full bg-node-finding"} />
+    <ErrorBoundary>
+      <div className="h-screen flex flex-col bg-paper dark:bg-ink">
+        {/* Custom Header - Editorial Research Style */}
+        <header className="bg-paper dark:bg-ink border-b border-ink/10 dark:border-paper/10 flex-shrink-0">
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            {/* Left: Back + Project Info */}
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <Link
+                href="/projects"
+                className="p-2 text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                aria-label="프로젝트 목록으로 돌아가기"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </Link>
+
+              <div className="flex items-center gap-3 min-w-0">
+                <Hexagon className="w-6 h-6 text-accent-teal flex-shrink-0" strokeWidth={1.5} />
+                <div className="min-w-0">
+                  <h1 className="font-display text-lg text-ink dark:text-paper truncate">
+                    {project?.name || 'Project'}
+                  </h1>
+                  {project?.research_question && (
+                    <p className="text-xs text-muted truncate hidden sm:block">
+                      {project.research_question}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Center: Search Bar (hidden on mobile) */}
+            <div className="hidden lg:block flex-1 max-w-md mx-4">
+              <SearchBar
+                onSearch={handleSearch}
+                onSelectResult={handleSelectSearchResult}
+                placeholder="Search papers, concepts..."
+              />
+            </div>
+
+            {/* Right: View Mode Toggle + Theme */}
+            <div className="flex items-center gap-3">
+              {/* Desktop View Mode - Line-based */}
+              <div className="hidden md:flex items-center border border-ink/10 dark:border-paper/10">
+                <button
+                  onClick={() => setViewMode('chat')}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors border-r border-ink/10 dark:border-paper/10 ${
+                    viewMode === 'chat'
+                      ? 'bg-accent-teal/10 text-accent-teal'
+                      : 'text-muted hover:text-ink dark:hover:text-paper hover:bg-surface/5'
+                  }`}
+                  aria-pressed={viewMode === 'chat'}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span className="hidden lg:inline font-mono text-xs uppercase tracking-wider">Chat</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('split')}
+                  className={`px-3 py-2 text-sm transition-colors border-r border-ink/10 dark:border-paper/10 ${
+                    viewMode === 'split'
+                      ? 'bg-accent-teal/10 text-accent-teal'
+                      : 'text-muted hover:text-ink dark:hover:text-paper hover:bg-surface/5'
+                  }`}
+                  aria-pressed={viewMode === 'split'}
+                >
+                  <span className="font-mono text-xs uppercase tracking-wider">Split</span>
+                </button>
+                <button
+                  onClick={() => setViewMode('explore')}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                    viewMode === 'explore'
+                      ? 'bg-accent-teal/10 text-accent-teal'
+                      : 'text-muted hover:text-ink dark:hover:text-paper hover:bg-surface/5'
+                  }`}
+                  aria-pressed={viewMode === 'explore'}
+                >
+                  <Compass className="w-4 h-4" />
+                  <span className="hidden lg:inline font-mono text-xs uppercase tracking-wider">Explore</span>
+                </button>
+              </div>
+
+              {/* Mobile View Toggle */}
+              <div className="flex md:hidden items-center border border-ink/10 dark:border-paper/10">
+                <button
+                  onClick={() => setMobileView('chat')}
+                  className={`p-2 transition-colors border-r border-ink/10 dark:border-paper/10 ${
+                    mobileView === 'chat'
+                      ? 'bg-accent-teal/10 text-accent-teal'
+                      : 'text-muted'
+                  }`}
+                  aria-pressed={mobileView === 'chat'}
+                  aria-label="채팅 보기"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setMobileView('graph')}
+                  className={`p-2 transition-colors ${
+                    mobileView === 'graph'
+                      ? 'bg-accent-teal/10 text-accent-teal'
+                      : 'text-muted'
+                  }`}
+                  aria-pressed={mobileView === 'graph'}
+                  aria-label="그래프 보기"
+                >
+                  <Network className="w-5 h-5" />
+                </button>
+              </div>
+
+              <ThemeToggle />
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex bg-surface-2 p-1 rounded border border-border">
-            <button
-              onClick={() => setViewMode('split')}
-              className={`p-2 rounded transition-all ${viewMode === 'split' ? 'bg-teal text-surface-0' : 'text-text-ghost hover:text-text-secondary'}`}
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('explore')}
-              className={`p-2 rounded transition-all ${viewMode === 'explore' ? 'bg-teal text-surface-0' : 'text-text-ghost hover:text-text-secondary'}`}
-            >
-              <Compass className="w-4 h-4" />
-            </button>
+          {/* Mobile Search Bar */}
+          <div className="lg:hidden px-4 pb-3">
+            <SearchBar
+              onSearch={handleSearch}
+              onSelectResult={handleSelectSearchResult}
+              placeholder="Search..."
+            />
           </div>
-          <div className="w-px h-6 bg-border" />
-          <ThemeToggle />
-          {traceNodeIds.length > 0 && (
+        </header>
+
+        {/* Main Content */}
+        <div ref={mainContainerRef} className="flex-1 flex overflow-hidden">
+          {/* Chat Panel Toggle Button (when collapsed) */}
+          {isChatCollapsed && viewMode === 'split' && (
             <button
-              onClick={() => {
-                setHighlightedNodes(traceNodeIds);
-                setTraceNodeIds([]);
-              }}
-              className="ml-2 px-3 py-1.5 bg-amber-500/20 text-amber-400 text-xs font-medium rounded border border-amber-500/30 hover:bg-amber-500/30 transition-colors flex items-center gap-1.5"
+              onClick={toggleChatPanel}
+              className="flex-shrink-0 w-10 flex flex-col items-center justify-center gap-2 bg-paper dark:bg-ink border-r border-ink/10 dark:border-paper/10 hover:bg-accent-teal/10 transition-colors"
+              aria-label="Open chat panel"
             >
-              <Zap className="w-3 h-3" />
-              Show path ({traceNodeIds.length})
+              <PanelLeft className="w-5 h-5 text-muted" />
+              <span className="text-[10px] font-mono text-muted uppercase tracking-wider [writing-mode:vertical-lr] rotate-180">
+                Chat
+              </span>
             </button>
           )}
-        </div>
-      </header>
 
-      <main className="flex-1 flex overflow-hidden relative">
-        {/* Main Graph Area */}
-        <div className="flex-1 relative">
-           <KnowledgeGraph
-             projectId={projectId}
-             onNodeClick={handleNodeClick}
-             highlightedNodes={highlightedNodes}
-             highlightedEdges={highlightedEdges}
-           />
-
-           {/* Floating Filter Overlay */}
-           <div className="absolute bottom-6 left-6 z-10">
-              <div className="bg-surface-2 rounded border border-border p-2">
-                 <button onClick={() => setFilters({ entityTypes: ALL_ENTITY_TYPES })} className="p-3 hover:bg-surface-3 rounded text-text-tertiary hover:text-text-primary transition-colors">
-                   <LayoutGrid className="w-5 h-5" />
-                 </button>
+          {/* Chat Panel - Editorial Research Style */}
+          <div
+            style={viewMode === 'split' && !isChatCollapsed ? { width: `${chatPanelWidth}px` } : undefined}
+            className={`flex flex-col bg-paper dark:bg-ink border-r border-ink/10 dark:border-paper/10 transition-all flex-shrink-0 ${
+              // Desktop visibility
+              viewMode === 'chat' ? 'w-full' :
+              viewMode === 'split' ? (isChatCollapsed ? 'hidden' : '') :
+              'hidden'
+            } ${
+              // Mobile visibility override
+              'max-md:hidden'
+            } ${
+              mobileView === 'chat' ? 'max-md:flex max-md:w-full' : ''
+            }`}
+          >
+            {/* Panel Header with Collapse Button */}
+            {viewMode === 'split' && (
+              <div className="flex items-center justify-between px-4 py-2 border-b border-ink/10 dark:border-paper/10 flex-shrink-0">
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Research Chat
+                </span>
+                <button
+                  onClick={toggleChatPanel}
+                  className="p-1.5 text-muted hover:text-accent-teal hover:bg-accent-teal/10 transition-colors rounded"
+                  aria-label="Collapse chat panel"
+                >
+                  <PanelLeftClose className="w-4 h-4" />
+                </button>
               </div>
-           </div>
-        </div>
-
-        {/* Cinematic Side Panel (Chat/Details) */}
-        <AnimatePresence>
-          {isChatOpen && (
-            <motion.div
-              initial={{ x: 400 }}
-              animate={{ x: 0 }}
-              exit={{ x: 400 }}
-              className="w-[400px] border-l border-border bg-surface-1 z-40"
+            )}
+            {/* Messages */}
+            <div
+              ref={chatContainerRef}
+              className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6"
             >
-              {selectedNode ? (
-                <div className="h-full flex flex-col">
-                  <div className="p-6 border-b border-border flex items-center justify-between">
-                    <h2 className="text-xs font-mono text-copper tracking-[0.15em] uppercase">Entity Details</h2>
-                    <button onClick={() => setSelectedNode(null)} className="p-2 hover:bg-surface-2 rounded transition-colors">
-                      <X className="w-4 h-4 text-text-ghost" />
-                    </button>
+              {messages.length === 0 && (
+                <div className="text-center py-12 md:py-20">
+                  <div className="relative inline-block mb-6">
+                    <Hexagon className="w-16 h-16 text-accent-teal/20" strokeWidth={1} />
+                    <MessageSquare className="w-6 h-6 text-accent-teal absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
                   </div>
-                  <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
-                    <NodeDetails
-                      node={selectedNode}
-                      projectId={projectId}
-                      onClose={() => setSelectedNode(null)}
-                      onAskAbout={(id, name) => sendMessage(`Explain the significance of "${name}" in this research context.`)}
-                      onShowConnections={(id) => expandNode(id)}
-                    />
+                  <h3 className="font-display text-xl text-ink dark:text-paper mb-2">
+                    Research Dialogue
+                  </h3>
+                  <p className="text-muted text-sm max-w-md mx-auto">
+                    Ask questions about your literature collection. The AI will reference specific papers and concepts.
+                  </p>
+
+                  {/* Suggestion Tags */}
+                  <div className="mt-8 flex flex-wrap justify-center gap-2">
+                    {[
+                      'Summarize key findings',
+                      'Compare methodologies',
+                      'Identify research gaps',
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => setChatInput(suggestion)}
+                        className="px-3 py-1.5 border border-ink/10 dark:border-paper/10 text-xs text-muted hover:text-accent-teal hover:border-accent-teal transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ) : (
-                <ChatInterface
-                  projectId={projectId}
-                  onSendMessage={handleSendMessage}
-                  initialMessages={messages}
-                />
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
 
-        {/* Chat Toggle Button */}
-        {!isChatOpen && (
-           <button
-             onClick={() => setIsChatOpen(true)}
-             className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-teal text-surface-0 flex items-center justify-center z-50"
-           >
-             <MessageSquare className="w-6 h-6" />
-           </button>
-        )}
-      </main>
-    </div>
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`relative pl-4 ${
+                    msg.role === 'user' ? 'ml-8 md:ml-16' : 'mr-4 md:mr-8'
+                  }`}
+                >
+                  {/* Left Accent Bar */}
+                  <div
+                    className={`absolute left-0 top-0 bottom-0 w-0.5 ${
+                      msg.role === 'user' ? 'bg-accent-amber' : 'bg-accent-teal'
+                    }`}
+                  />
+
+                  {/* Message Header */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                      {msg.role === 'user' ? 'You' : 'AI'}
+                    </span>
+                    <span className="text-ink/10 dark:text-paper/10">·</span>
+                    <span className="font-mono text-xs text-muted">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                  </div>
+
+                  {/* Message Content */}
+                  <p className="text-sm md:text-base text-ink dark:text-paper leading-relaxed whitespace-pre-wrap">
+                    {msg.content}
+                  </p>
+
+                  {/* Phase 11B: Search Strategy Badge */}
+                  {msg.role === 'assistant' && msg.searchStrategy && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono"
+                        style={{
+                          backgroundColor: 'rgb(var(--color-accent-teal) / 0.1)',
+                          color: 'rgb(var(--color-accent-teal))',
+                          border: '1px solid rgb(var(--color-accent-teal) / 0.3)',
+                        }}
+                        title={`이 답변은 ${
+                          msg.searchStrategy === 'vector'
+                            ? '벡터 검색'
+                            : msg.searchStrategy === 'graph_traversal'
+                            ? '그래프 탐색'
+                            : '하이브리드 검색'
+                        }으로 생성되었습니다`}
+                      >
+                        {msg.searchStrategy === 'vector' && '🔍 Vector Search'}
+                        {msg.searchStrategy === 'graph_traversal' && (
+                          <>
+                            🕸️ Graph Traversal
+                            {msg.hopCount && ` (${msg.hopCount}-hop)`}
+                          </>
+                        )}
+                        {msg.searchStrategy === 'hybrid' && '🔀 Hybrid'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Citations */}
+                  {msg.citations && msg.citations.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-ink/10 dark:border-paper/10">
+                      <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                        References
+                      </span>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {msg.citations.map((citation, citIndex) => (
+                          <button
+                            key={citation.id}
+                            onClick={() => handleCitationClick(citation)}
+                            className="group inline-flex items-center gap-2 px-2 py-1 border border-ink/10 dark:border-paper/10 hover:border-accent-teal transition-colors"
+                          >
+                            <span className="font-mono text-xs text-accent-teal">
+                              [{citIndex + 1}]
+                            </span>
+                            <span className="text-xs text-muted group-hover:text-ink dark:group-hover:text-paper truncate max-w-[150px]">
+                              {citation.title}
+                            </span>
+                            {citation.year && (
+                              <span className="font-mono text-xs text-muted">
+                                {citation.year}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {chatMutation.isPending && (
+                <div className="relative pl-4 mr-4 md:mr-8">
+                  <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-teal animate-pulse" />
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-mono text-xs uppercase tracking-wider text-muted">AI</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-accent-teal animate-spin" />
+                    <span className="text-sm text-muted">Analyzing literature...</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Auto-scroll anchor */}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input - Line-based Style */}
+            <form
+              onSubmit={handleChatSubmit}
+              className="p-4 border-t border-ink/10 dark:border-paper/10"
+            >
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask about your research..."
+                  className="flex-1 px-4 py-3 bg-transparent border-b-2 border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-ink dark:text-paper placeholder-muted text-sm transition-colors"
+                  aria-label="질문 입력"
+                />
+                <button
+                  type="submit"
+                  disabled={!chatInput.trim() || chatMutation.isPending}
+                  className="px-4 py-3 bg-accent-teal text-ink hover:bg-accent-teal/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="질문 보내기"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Resize Handle (only in split mode, when chat is visible) */}
+          {viewMode === 'split' && !isChatCollapsed && (
+            <ResizeHandle
+              onResize={handlePanelResize}
+              currentWidth={chatPanelWidth}
+              minWidth={320}
+              maxWidth={800}
+              containerRef={mainContainerRef}
+            />
+          )}
+
+          {/* Graph Panel */}
+          <div
+            className={`relative transition-all flex-1 ${
+              // Desktop visibility
+              viewMode === 'explore' ? 'w-full' :
+              viewMode === 'split' ? '' :
+              'hidden'
+            } ${
+              // Mobile visibility override
+              'max-md:hidden'
+            } ${
+              mobileView === 'graph' ? 'max-md:flex max-md:w-full' : ''
+            }`}
+          >
+            <KnowledgeGraph3D
+              projectId={projectId}
+              onNodeClick={handleNodeClick}
+              onAskQuestion={handleAskAboutGap}
+            />
+
+            {/* Filter Panel */}
+            <FilterPanel
+              entityTypes={actualEntityTypes}
+              selectedTypes={filters.entityTypes}
+              onTypeChange={(types) => setFilters({ entityTypes: types })}
+              onReset={resetFilters}
+              nodeCountsByType={nodeCountsByType}
+            />
+
+            {/* Node Details Panel */}
+            {selectedNode && (
+              <NodeDetails
+                node={selectedNode}
+                projectId={projectId}
+                onClose={() => setSelectedNode(null)}
+                onAskAbout={handleAskAboutNode}
+                onShowConnections={handleShowConnections}
+              />
+            )}
+
+            {/* Clear highlights button - Editorial Style */}
+            {(highlightedNodes.length > 0 || highlightedEdges.length > 0) && !selectedNode && (
+              <button
+                onClick={clearHighlights}
+                className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-2 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 text-sm text-muted hover:text-accent-red hover:border-accent-red transition-colors z-10"
+              >
+                <X className="w-4 h-4" />
+                <span className="hidden sm:inline font-mono text-xs uppercase tracking-wider">Clear</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </ErrorBoundary>
   );
 }

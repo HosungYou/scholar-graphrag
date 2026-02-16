@@ -1,158 +1,1080 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
+> **Last Updated**: 2026-02-13
+> **Version**: 4.1.0 (v0.18.0 Production Stabilization + 3D Root Fix + Researcher UX)
+
 ## Project Overview
 
-ScholaRAG_Graph는 AGENTiGraph 스타일의 커스텀 GraphRAG 플랫폼입니다. ScholaRAG에서 생성된 문헌 리뷰 데이터를 Knowledge Graph로 시각화하고, LLM과 대화하며 탐색할 수 있습니다.
+ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** platform. It visualizes systematic literature review data as a Knowledge Graph with Multi-Agent conversational exploration.
+
+### Key Features
+- **Concept-Centric Graph**: Papers/Authors as metadata only; Concepts/Methods/Findings visualized
+- **Multi-Agent RAG**: 6-Agent pipeline for query processing
+- **Zotero Integration**: Hybrid Import (Local API + Web API)
+- **Team Collaboration**: Project sharing and collaboration
+- **PRISMA 2020**: Automatic systematic review diagram generation
+
+---
 
 ## Architecture
 
-### Backend (FastAPI + Python)
-- **agents/**: AGENTiGraph 스타일 6-Agent 파이프라인
-  - `intent_agent.py`: 사용자 의도 분류 (search, explore, explain, compare, create)
-  - `concept_extraction_agent.py`: NER/RE로 엔티티 추출
-  - `task_planning_agent.py`: 복잡한 쿼리를 서브태스크로 분해
-  - `query_execution_agent.py`: SQL + Vector 검색 실행
-  - `reasoning_agent.py`: Chain-of-Thought 추론
-  - `response_agent.py`: 응답 생성 + 그래프 하이라이트
-
-- **graph/**: 그래프 핵심 모듈
-  - `entity_extractor.py`: LLM 기반 엔티티 추출
-  - `relationship_builder.py`: 관계 추론
-  - `graph_store.py`: PostgreSQL 그래프 저장
-  - `vector_store.py`: pgvector 벡터 저장
-
-- **importers/**: 데이터 Import
-  - `scholarag_importer.py`: ScholaRAG 폴더 Import (핵심 기능)
-  - `pdf_importer.py`: 개별 PDF Import
-  - `csv_importer.py`: CSV 데이터 Import
-
-- **llm/**: Multi-Provider LLM
-  - `base.py`: 추상 LLM 인터페이스
-  - `claude_provider.py`: Anthropic Claude
-  - `openai_provider.py`: OpenAI GPT-4
-  - `gemini_provider.py`: Google Gemini
+### Backend (FastAPI + Python 3.11+)
+```
+backend/
+├── agents/           # 6-Agent pipeline
+├── graph/            # Knowledge Graph processing
+├── importers/        # Data importers
+├── integrations/     # External APIs (Zotero, Semantic Scholar, OpenAlex)
+├── auth/             # Supabase authentication
+├── jobs/             # Background tasks
+├── llm/              # Multi-Provider LLM
+└── routers/          # API endpoints
+```
 
 ### Frontend (Next.js 14 + React Flow)
-- **app/**: Next.js App Router
-  - `projects/[id]/chat/`: Chatbot Mode
-  - `projects/[id]/explore/`: Exploration Mode (React Flow)
-  - `import/`: ScholaRAG 폴더 Import UI
+```
+frontend/
+├── app/              # Pages (projects, import, auth)
+├── components/       # UI components (graph, chat, auth, teams)
+└── lib/              # API client, auth context
+```
 
-- **components/graph/**: 그래프 시각화
-  - `KnowledgeGraph.tsx`: React Flow 메인 컴포넌트
-  - `CustomNode.tsx`: 커스텀 노드 (Paper, Concept, Author, Method, Finding)
-  - `NodeDetails.tsx`: 노드 상세 정보 패널
+### Database (PostgreSQL + pgvector + Supabase)
+Key Tables: `projects`, `paper_metadata`, `entities`, `relationships`, `zotero_sync_state`, `teams`
 
-- **components/chat/**: 채팅 UI
-  - `ChatInterface.tsx`: 채팅 인터페이스
-  - `CitationCard.tsx`: 인용 카드 (클릭 시 그래프 노드로 이동)
+---
 
-### Database (PostgreSQL + pgvector)
-- **entities**: 모든 노드 타입 통합 (Paper, Author, Concept, Method, Finding)
-- **relationships**: 엣지/관계 저장
-- **projects**: 프로젝트 메타데이터
+## Documentation Structure
+
+```
+DOCS/
+├── .meta/                    # Agent tracking system
+│   ├── sessions/             # Session logs
+│   ├── decisions/            # ADRs
+│   ├── templates/            # Templates
+│   └── agent-registry.json   # Statistics
+├── features/                 # Feature docs
+├── architecture/             # System design
+├── development/              # Developer specs
+└── project-management/       # Roadmap, action items
+```
+
+---
 
 ## Development Commands
 
 ### Backend
 ```bash
-cd backend
-source venv/bin/activate
+cd backend && python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
-
-# Run tests
-pytest tests/
-
-# Type checking
-mypy .
+pytest tests/ -v
 ```
 
 ### Frontend
 ```bash
-cd frontend
-npm run dev          # Development server
-npm run build        # Production build
-npm run lint         # Linting
-npm run type-check   # TypeScript check
+cd frontend && npm install
+npm run dev
 ```
 
-### Database
-```bash
-# Run migrations
-psql scholarag_graph < database/migrations/001_init.sql
+### Database Migrations
+Run in order: `001_init.sql` → `002_pgvector.sql` → `003_graph_tables.sql` → `004_concept_centric.sql` → `005_zotero_hybrid_import.sql` → `006_teams.sql`
 
-# Reset database
-dropdb scholarag_graph && createdb scholarag_graph
-```
+---
 
-## Key Patterns
+## Key Architectural Decisions
 
-### 1. ScholaRAG Folder Import
-ScholaRAG 프로젝트 폴더를 Import할 때:
-1. `config.yaml` 파싱 → Project 생성
-2. `data/02_screening/relevant_papers.csv` → Paper + Author 엔티티
-3. `data/04_rag/chroma_db/` → 기존 임베딩 재사용 (가능한 경우)
-4. LLM으로 Concept, Method, Finding 추출
-5. 관계 자동 생성 (AUTHORED_BY, DISCUSSES_CONCEPT 등)
+| ADR | Decision | Location |
+|-----|----------|----------|
+| ADR-001 | Papers/Authors as metadata only, not visualized | `DOCS/.meta/decisions/001-concept-centric-graph.md` |
+| ADR-002 | Local API first, Web API fallback for Zotero | `DOCS/.meta/decisions/002-zotero-hybrid-import.md` |
 
-### 2. Dual-Mode Interface
-- **Chatbot Mode**: 질문 → 6-Agent 파이프라인 → 응답 + `highlighted_nodes` 반환
-- **Exploration Mode**: 노드 클릭 → 상세 정보 + AI 설명 생성
+---
 
-### 3. Graph-Grounded Conversation
-LLM 응답에는 항상 `highlighted_nodes`와 `highlighted_edges`가 포함됨:
-```json
-{
-  "answer": "...",
-  "citations": ["paper_1", "paper_2"],
-  "highlighted_nodes": ["uuid-1", "uuid-2"],
-  "highlighted_edges": ["edge-uuid-1"]
-}
-```
+## Entity & Relationship Types
 
-## Entity Types
+| Entity | Visualized | Description |
+|--------|------------|-------------|
+| Paper | ❌ Metadata | Academic paper |
+| Author | ❌ Metadata | Author |
+| **Concept** | ✅ Node | Key concept/keyword |
+| **Method** | ✅ Node | Research methodology |
+| **Finding** | ✅ Node | Research finding |
 
-| Type | Description | Properties |
-|------|-------------|------------|
-| Paper | 학술 논문 | title, abstract, year, doi, authors, citation_count |
-| Author | 저자 | name, affiliation, orcid |
-| Concept | 개념/키워드 | name, description, domain |
-| Method | 연구 방법론 | name, type (quantitative/qualitative/mixed) |
-| Finding | 연구 결과 | statement, effect_size, significance |
+| Relationship | Source → Target |
+|--------------|-----------------|
+| DISCUSSES_CONCEPT | Paper → Concept |
+| USES_METHOD | Paper → Method |
+| SUPPORTS/CONTRADICTS | Paper → Finding |
+| RELATED_TO | Concept ↔ Concept |
 
-## Relationship Types
-
-| Type | Source → Target | Description |
-|------|-----------------|-------------|
-| AUTHORED_BY | Paper → Author | 저자 관계 |
-| CITES | Paper → Paper | 인용 관계 |
-| DISCUSSES_CONCEPT | Paper → Concept | 개념 논의 |
-| USES_METHOD | Paper → Method | 방법론 사용 |
-| SUPPORTS | Paper → Finding | 결과 지지 |
-| CONTRADICTS | Paper → Finding | 결과 반박 |
-| RELATED_TO | Concept → Concept | 개념 간 관련성 |
+---
 
 ## Environment Variables
+
+### Backend (Render Docker: scholarag-graph-docker)
 
 ```env
 # Required
 DATABASE_URL=postgresql://...
-ANTHROPIC_API_KEY=sk-ant-...
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
 
-# Optional
-OPENAI_API_KEY=sk-...
-GOOGLE_API_KEY=...
-DEFAULT_LLM_PROVIDER=anthropic
-DEFAULT_LLM_MODEL=claude-3-5-haiku-20241022
+# LLM Provider (Groq - Default Configuration)
+GROQ_API_KEY=gsk_...
+DEFAULT_LLM_PROVIDER=groq
+DEFAULT_LLM_MODEL=llama-3.3-70b-versatile
+
+# Embedding Provider (OpenAI)
+OPENAI_API_KEY=sk-...  # Used for embeddings only
+
+# Optional LLM Providers
+ANTHROPIC_API_KEY=sk-ant-...  # Optional: Claude models
+
+# CORS (CRITICAL - must include actual frontend URL)
+CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.app,http://localhost:3000
+
+# Environment
+ENVIRONMENT=production
 ```
+
+### Frontend (Vercel: schola-rag-graph)
+
+```env
+NEXT_PUBLIC_API_URL=https://scholarag-graph-docker.onrender.com
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+```
+
+### Common Issues
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| CORS error | Frontend URL not in CORS_ORIGINS | Add URL to Render env vars |
+| 503 error | DB connection pool exhaustion | Reduce pool size, enable retries |
+| Auth failure | Missing Supabase keys | Check both backend & frontend env vars |
+
+---
 
 ## Deployment
 
-- **Frontend**: Vercel (자동 배포 from `main` branch)
-- **Backend**: Render (자동 배포 from `main` branch)
-- **Database**: Render PostgreSQL (pgvector 확장 포함)
+> ⚠️ **INFRA-004 (2026-01-20)**: Backend migrated from Python service to Docker service.
+> ⚠️ **INFRA-006 (2026-01-21)**: Auto-Deploy disabled to prevent import interruption (BUG-028).
 
-## Related Files
+| Service | Platform | Type | URL |
+|---------|----------|------|-----|
+| Frontend | Vercel | Next.js | `https://schola-rag-graph.vercel.app` |
+| Backend | Render | **Docker** | `https://scholarag-graph-docker.onrender.com` |
+| Database | Supabase | PostgreSQL+pgvector | - |
 
-- ScholaRAG 원본: `/Volumes/External SSD/Projects/Research/GenAI_Effectiveness/ScholaRAG/`
-- 계획 문서: `/Users/hosung/.claude/plans/squishy-knitting-tide.md`
+### ⚠️ Git Remote Configuration (CRITICAL)
+
+> **INFRA-013 (2026-02-13)**: Both Vercel AND Render deploy from `render` remote.
+
+```
+origin  → https://github.com/HosungYou/ScholaRAG_Graph.git   # Development repo (backup)
+render  → https://github.com/HosungYou/scholar-graphrag.git   # Deployment repo (Vercel + Render)
+```
+
+**Both frontend (Vercel) and backend (Render) are connected to the `scholar-graphrag` repo.**
+
+| Remote | Purpose | Connected Services |
+|--------|---------|-------------------|
+| `origin` (ScholaRAG_Graph) | Development, code backup | None |
+| `render` (scholar-graphrag) | **Production deployment** | **Vercel + Render** |
+
+**To deploy ANY change (frontend or backend):**
+```bash
+git push render main    # Triggers Vercel (frontend) + Render (backend)
+git push origin main    # Optional: sync development repo
+```
+
+> ⚠️ **Common mistake**: Pushing only to `origin` does NOT deploy anything. Always push to `render` for deployment.
+
+### ⚠️ Deprecated Services
+| Service | Status | Notes |
+|---------|--------|-------|
+| `scholarag-graph-api` | ❌ Deleted | Replaced by `scholarag-graph-docker` |
+
+### CORS Configuration (Critical!)
+
+Backend must include frontend URL in `CORS_ORIGINS` environment variable:
+```
+CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.app,http://localhost:3000
+```
+
+**Render Dashboard Path**: `scholarag-graph-docker` → Settings → Environment Variables
+
+### Auto-Deploy Configuration (INFRA-006 → Updated 2026-02-13)
+
+> ✅ **Auto-Deploy is ON for both Vercel and Render** as of 2026-02-13.
+
+**History**: INFRA-006 (2026-01-21) disabled auto-deploy to prevent import interruption (BUG-028). Re-enabled 2026-02-13 after stabilization.
+
+**To Deploy**:
+1. Push to `render` remote: `git push render main`
+2. Frontend (Vercel): Auto-deploys from push
+3. Backend (Render): Auto-deploys from push
+4. ⚠️ Still avoid deploying during active import operations if possible
+
+---
+
+## Quick Links
+
+| Document | Location |
+|----------|----------|
+| Action Items | `DOCS/project-management/action-items.md` |
+| Session Logs | `DOCS/.meta/sessions/` |
+| ADRs | `DOCS/.meta/decisions/` |
+| Session Template | `DOCS/.meta/templates/session-template.md` |
+| Agent Registry | `DOCS/.meta/agent-registry.json` |
+
+---
+
+## 📝 Session Documentation Protocol
+
+> **IMPORTANT**: Claude Code MUST automatically generate session documents following this protocol.
+
+### Auto-Documentation Triggers
+
+| Trigger | Generated Document | Location |
+|---------|-------------------|----------|
+| `/code-reviewer` or code review request | Session log + Action Items | `DOCS/.meta/sessions/` |
+| New feature implementation | Session log | `DOCS/.meta/sessions/` |
+| Architecture decision | ADR | `DOCS/.meta/decisions/` |
+| Bug fix | Action Items update | `DOCS/project-management/action-items.md` |
+
+### Session Log Format
+
+**Filename**: `YYYY-MM-DD_[type]-[description].md`
+
+**Required sections**:
+- Session ID, Date, Agent, Type, Duration
+- Context (User Request, Related Decisions)
+- Summary
+- Action Items (if applicable)
+- Session Statistics
+
+### Action Item Tracking
+
+All discovered Action Items MUST be:
+1. Added to `DOCS/project-management/action-items.md`
+2. Labeled by priority (🔴 High / 🟡 Medium / 🟢 Low)
+3. Checked off with date when completed
+4. Moved to Archive section when done
+
+**ID Prefixes**: `SEC-` (security), `BUG-` (bug), `FUNC-` (feature), `PERF-` (performance), `DOC-` (docs), `TEST-` (test)
+
+### Code Review Rules
+
+On `/code-reviewer`, MUST generate:
+1. Session log with Overall Assessment, Security Analysis, Recommendations
+2. Action Items update
+3. Registry update (`agent-registry.json`)
+
+### Exceptions
+
+Skip documentation for:
+- Simple Q&A (no code changes)
+- File exploration only
+- User explicitly says "don't document"
+
+---
+
+## 🏗️ Infrastructure Change Documentation Protocol
+
+> **CRITICAL**: All infrastructure changes MUST be documented IMMEDIATELY after deployment.
+
+### Mandatory Documentation for Infrastructure Changes
+
+| Change Type | Required Updates | Example |
+|-------------|------------------|---------|
+| Service migration | CLAUDE.md Deployment section, Release Notes | Python → Docker |
+| URL change | CLAUDE.md, Frontend config, CORS settings | New Render URL |
+| Database change | CLAUDE.md, Migration scripts | Supabase → RDS |
+| Provider change | CLAUDE.md, Environment Variables section | Render → Railway |
+
+### Infrastructure Change Checklist
+
+When making infrastructure changes:
+```
+□ Update CLAUDE.md Deployment section with new service info
+□ Update CORS_ORIGINS in both:
+  - backend/config.py (default values)
+  - Render/Platform environment variables
+□ Update frontend API URL configuration
+□ Create Release Notes (RELEASE_NOTES_vX.X.X.md)
+□ Mark deprecated services clearly
+□ Test health endpoint: curl <new-url>/health
+□ Test CORS: browser console should show no CORS errors
+```
+
+### INFRA- Prefix for Infrastructure Issues
+
+Use `INFRA-XXX` prefix for infrastructure-related action items:
+- `INFRA-001`: Initial deployment setup
+- `INFRA-002`: CI/CD configuration
+- `INFRA-003`: Environment variables setup
+- `INFRA-004`: Service migration (e.g., Python → Docker)
+- `INFRA-006`: Auto-Deploy disabled (BUG-028 prevention)
+
+---
+
+## 📚 Continuous Architecture Documentation Protocol (v0.7.0)
+
+> **Purpose**: Keep architecture documentation in sync with code changes through automated triggers and clear ownership.
+
+### Documentation Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Level 1: Quick Reference (CLAUDE.md)                          │
+│    - Commands, environment vars, deployment                     │
+│    - Updated: Every session with relevant changes              │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 2: Architecture Deep Dive (DOCS/architecture/SDD.md)    │
+│    - System design, component specs, data flow                  │
+│    - Updated: On architectural changes                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 3: Release History (RELEASE_NOTES_vX.X.X.md)           │
+│    - Features, fixes, migration guides                          │
+│    - Created: On each release                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Level 4: Decision Records (DOCS/.meta/decisions/ADR-XXX.md)   │
+│    - Why decisions were made, alternatives considered          │
+│    - Created: On significant architectural decisions           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Auto-Update Triggers
+
+| Change Type | Update Required | Files to Modify |
+|-------------|-----------------|-----------------|
+| **New Feature** | ✅ | RELEASE_NOTES, SDD.md (if architectural) |
+| **Bug Fix** | ⚠️ Conditional | RELEASE_NOTES (if user-facing) |
+| **Dependency Change** | ✅ | SDD.md §3.2.3, RELEASE_NOTES |
+| **API Endpoint** | ✅ | SDD.md §3.1, DOCS/api/* |
+| **Database Schema** | ✅ | SDD.md §3.3, migration scripts |
+| **Environment Variable** | ✅ | CLAUDE.md, SDD.md |
+| **Deployment Change** | ✅ | CLAUDE.md, INFRA-XXX |
+
+### SDD Update Checklist
+
+When making architectural changes:
+
+```
+□ Update SDD.md version number (top of file)
+□ Update relevant component section (§3.x)
+□ Add to Change Log (bottom of file)
+□ Update Mermaid diagrams if flow changes
+□ Create ADR if decision was significant
+□ Link to release notes
+```
+
+### Version Number Convention
+
+| Format | When to Use | Example |
+|--------|-------------|---------|
+| `MAJOR.MINOR.PATCH` | Standard releases | `0.7.0` |
+| `MAJOR.MINOR.PATCH-rc.N` | Release candidates | `0.8.0-rc.1` |
+
+**Increment Rules**:
+- **PATCH**: Bug fixes, documentation updates
+- **MINOR**: New features, non-breaking changes
+- **MAJOR**: Breaking changes, major refactoring
+
+### Dependency Documentation Requirements (v0.7.0)
+
+When modifying dependencies:
+
+1. **Document in SDD.md §3.2.3** (Frontend Dependency Management)
+2. **Include rationale** for version pinning
+3. **Add webpack config** if build system changes needed
+4. **Test build locally** before committing
+
+Example:
+```markdown
+| Package | Version | Reason for Pin |
+|---------|---------|----------------|
+| `three` | `0.152.2` | ESM compatibility with webpack |
+```
+
+### Diagram Update Requirements
+
+Keep Mermaid diagrams in sync with code:
+
+| Diagram | Location | Update When |
+|---------|----------|-------------|
+| System Context | `DOCS/architecture/diagrams/system-context.mmd` | External integrations change |
+| Agent Pipeline | `DOCS/architecture/diagrams/agent-pipeline.mmd` | Agent flow changes |
+| Data Flow | `DOCS/architecture/diagrams/data-flow.mmd` | Import/query flow changes |
+| Container | `DOCS/architecture/diagrams/container-diagram.mmd` | Component architecture changes |
+
+---
+
+## ❓ User Confirmation Protocol (AskUserQuestion)
+
+> **CRITICAL**: Claude Code NEVER guesses in uncertain situations.
+> MUST call `AskUserQuestion` tool in the following cases.
+
+### Mandatory Confirmation Scenarios
+
+#### 1. Option Selection Required
+
+**Triggers**:
+- 2+ implementation approaches exist
+- Library/framework choice needed
+- Architecture pattern decision
+- Performance vs readability trade-off
+
+#### 2. Additional Information Needed
+
+**Triggers**:
+- Requirements unclear or ambiguous
+- Business logic decision needed
+- External service integration info missing
+- Environment/deployment info insufficient
+
+#### 3. Conflict with Existing Code/Knowledge
+
+**Triggers**:
+- New implementation differs from existing patterns
+- Conflicts with existing ADR
+- Conflicts with previous session decisions
+- Inconsistent with documented architecture
+
+### Question Priority
+
+| Priority | Situation | Ask Immediately? |
+|----------|-----------|------------------|
+| 🔴 Critical | Conflicts with ADR/decision | ✅ Yes |
+| 🔴 Critical | Security-related decision | ✅ Yes |
+| 🟡 High | Architecture pattern choice | ✅ Yes |
+| 🟡 High | Irreversible change (DB schema) | ✅ Yes |
+| 🟢 Medium | Library selection | ⚠️ Context-dependent |
+| 🟢 Medium | Implementation details | ⚠️ Context-dependent |
+| ⚪ Low | Coding style/format | ❌ Follow existing patterns |
+
+### Conflict Detection Checklist
+
+Before starting work, check:
+```
+□ Conflicts with ADRs in DOCS/.meta/decisions/?
+□ Conflicts with previous sessions in DOCS/.meta/sessions/?
+□ Related to items in DOCS/project-management/action-items.md?
+□ Different approach from existing code patterns?
+□ Contradicts decisions in agent-registry.json?
+```
+
+**On conflict detection**:
+1. Clearly explain the conflict
+2. Present context of existing decision
+3. Offer options (minimum 2)
+4. Proceed only after user confirmation
+
+### Exceptions (Proceed Without Asking)
+
+- Repetitive work following existing patterns
+- Explicitly decided conventions (linting, formatting)
+- User explicitly says "use your judgment"
+- Simple bug fix (no logic change)
+
+### Decision Recording
+
+After user confirmation, record decisions:
+1. **ADR-level**: Create `DOCS/.meta/decisions/NNN-title.md`
+2. **Session-level**: Record in current session log
+3. **Simple choice**: Add code comment
+
+```python
+# User Decision (2026-01-15): Use Zotero Local API first
+# Ref: Session 2026-01-15_zotero-implementation
+async def connect_zotero():
+    ...
+```
+
+---
+
+## 🔄 Decision Flow Summary
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                 Claude Code Decision Flow                     │
+├──────────────────────────────────────────────────────────────┤
+│  1. Start Task                                                │
+│       ↓                                                       │
+│  2. Conflict Check (ADR, Sessions, Code Patterns)            │
+│       ↓                                                       │
+│  3. Conflict? ──────────────────────┐                        │
+│       │ No                          │ Yes                    │
+│       ↓                             ↓                        │
+│  4. Options needed? ────┐   → AskUserQuestion                │
+│       │ No              │ Yes       │                        │
+│       ↓                 ↓           │                        │
+│  5. Info missing? ──┐  AskUserQuestion                       │
+│       │ No          │ Yes   ↓       │                        │
+│       ↓             ↓       ↓       │                        │
+│   Proceed     AskUserQuestion ←─────┘                        │
+│       │              ↓                                        │
+│       │        Wait for response                             │
+│       │              ↓                                        │
+│       └──────→ Record decision & proceed                     │
+│                      ↓                                        │
+│               Log in session                                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## API Endpoints (Quick Reference)
+
+**Base URL**: `https://scholarag-graph-docker.onrender.com`
+
+```
+GET  /health                   # Health check (DB + LLM status)
+POST /api/import/scholarag     # ScholaRAG folder import
+POST /api/import/pdf           # PDF import
+POST /api/import/zotero/validate  # Zotero file validation
+GET  /api/projects             # Project list
+POST /api/chat/query           # Chat (6-Agent RAG query)
+GET  /api/graph/{project_id}   # Graph data
+GET  /api/graph/visualization/{project_id}  # Graph visualization (InfraNodus style)
+GET  /api/integrations/zotero/collections  # Zotero collections
+
+# InfraNodus Integration (v0.4.0)
+GET  /api/graph/relationships/{id}/evidence         # Relationship evidence
+GET  /api/graph/temporal/{project_id}               # Temporal graph stats
+POST /api/graph/temporal/{project_id}/migrate       # Trigger temporal migration
+POST /api/graph/gaps/{project_id}/refresh           # Refresh gap analysis
+GET  /api/graph/gaps/{project_id}/analysis          # Get gap analysis data
+POST /api/graph/gaps/{id}/generate-bridge           # AI bridge hypotheses
+GET  /api/graph/gaps/{project_id}/recommendations   # Gap-based paper recommendations (v0.12.1)
+GET  /api/graph/gaps/{project_id}/export            # Export gap report as Markdown (v0.12.1)
+GET  /api/graph/diversity/{project_id}              # Diversity metrics
+GET  /api/graph/compare/{a}/{b}                     # Project comparison
+
+# Reliability Track Extension (v0.15.0)
+GET  /api/evaluation/report                         # Gap detection evaluation report
+GET  /api/system/query-metrics                      # Query performance + GraphDB recommendation
+POST /api/graph/{project_id}/cross-paper-links      # Cross-paper entity linking
+GET  /api/graph/gaps/{project_id}/repro/{gap_id}    # Gap reproduction report
+```
+
+> **Full API Documentation**: See `DOCS/api/infranodus-api.md` for detailed schemas.
+
+### Health Check
+
+```bash
+curl https://scholarag-graph-docker.onrender.com/health
+# Expected: {"status":"healthy","database":"connected","llm_provider":"groq"}
+```
+
+---
+
+## View Modes (InfraNodus Style)
+
+ScholaRAG_Graph provides three interactive visualization modes inspired by InfraNodus:
+
+| Mode | Component | Technology | Icon | Purpose |
+|------|-----------|------------|------|---------|
+| **3D** | `Graph3D.tsx` | Three.js + Force Graph | Box (Teal) | Full knowledge graph exploration with physics simulation |
+| **Topic** | `TopicViewMode.tsx` | D3.js force layout | Grid2X2 (Purple) | Topic clustering and community detection |
+| **Gaps** | `GapsViewMode.tsx` | Three.js + Ghost Edges | AlertTriangle (Amber) | Research gap identification with bridge hypotheses |
+
+### View Mode Details
+
+#### 3D View
+- **Physics**: Customizable force simulation (charge, link distance, gravity)
+- **Interactions**: Click nodes to highlight connections, drag to reposition
+- **Highlighting**: Yellow glow for selected nodes, connected nodes in green
+- **Controls**: Orbit controls for 360° rotation and zoom
+
+#### Topic View
+- **Communities**: Louvain algorithm for topic clustering
+- **Layout**: D3.js force-directed graph with custom forces
+- **Zoom**: Semantic zoom levels (0.5-3x)
+- **Clusters**: Visual grouping by research theme
+
+#### Gaps View
+- **Ghost Edges**: Semi-transparent yellow edges showing potential connections
+- **AI Hypotheses**: LLM-generated bridge concepts for unexplored areas
+- **High-Impact**: Prioritized gaps based on PageRank and betweenness centrality
+- **Interactive**: Click gaps to generate research suggestions
+
+### View Mode Switching
+
+All modes share:
+- Same graph data source
+- Consistent node/edge filtering
+- Search functionality
+- Export capabilities
+
+Switch between modes using toolbar icons in the graph interface.
+
+---
+
+## 🏛️ Architecture Review Protocol
+
+> **CRITICAL**: All architectural changes MUST follow this review protocol before implementation.
+
+### Mandatory Review Triggers
+
+| Change Type | Review Required | SDD Section | Documentation |
+|-------------|-----------------|-------------|---------------|
+| New Agent added | ✅ | 4.1.1 | Update SDD + agent-pipeline.mmd |
+| New API Endpoint | ✅ | 6 | Update SDD + API docs |
+| Database schema change | ✅ | 4.3 | Update SDD + migrations |
+| LLM Provider change | ✅ | 4.1.4 | Update SDD + LLM_CONFIGURATION.md |
+| New Import method | ✅ | 4.1.3 | Update SDD + data-flow.mmd |
+| New View Mode | ✅ | 4.2.2 | Update SDD + container-diagram.mmd |
+| Core algorithm change | ✅ | Varies | Update SDD + relevant docs |
+
+### Architecture Review Checklist
+
+Before committing architectural changes:
+```
+□ Documented in SDD.md?
+□ Mermaid diagrams updated? (DOCS/architecture/diagrams/)
+□ Conflicts with existing ADRs? (DOCS/.meta/decisions/)
+□ API contract changes documented?
+□ Database migration required?
+□ Backward compatibility maintained?
+□ Performance impact assessed?
+```
+
+### Commit Message Conventions (Architecture)
+
+Use these prefixes for architecture-related commits:
+
+| Prefix | Description | Example |
+|--------|-------------|---------|
+| `arch:` | General architecture change | `arch: add caching layer` |
+| `arch(agent):` | Agent system change | `arch(agent): add validation agent` |
+| `arch(api):` | API contract change | `arch(api): add /graph/export endpoint` |
+| `arch(schema):` | Database schema change | `arch(schema): add temporal_data column` |
+| `arch(llm):` | LLM provider/config change | `arch(llm): add Gemini provider` |
+| `arch(viz):` | Visualization architecture | `arch(viz): add heatmap view mode` |
+
+### Architecture Decision Records (ADRs)
+
+For significant decisions, create ADR at `DOCS/.meta/decisions/NNN-title.md`:
+
+```markdown
+# ADR-NNN: [Title]
+
+## Status
+[Proposed | Accepted | Deprecated | Superseded by ADR-XXX]
+
+## Context
+[Why is this decision needed?]
+
+## Decision
+[What was decided?]
+
+## Consequences
+[What are the implications?]
+
+## Alternatives Considered
+[What other options were evaluated?]
+```
+
+### SDD Update Workflow
+
+When making architectural changes:
+
+1. **Before Implementation**:
+   - Check SDD.md for current architecture
+   - Identify affected sections
+   - Draft changes to SDD
+
+2. **During Implementation**:
+   - Keep SDD changes in sync with code
+   - Update Mermaid diagrams if flow changes
+
+3. **After Implementation**:
+   - Finalize SDD updates
+   - Update Change Log section
+   - Create ADR if decision was significant
+
+### Key Architecture Documents
+
+| Document | Location | Purpose |
+|----------|----------|---------|
+| SDD | `DOCS/architecture/SDD.md` | Master design document |
+| System Context | `DOCS/architecture/diagrams/system-context.mmd` | External interactions |
+| Agent Pipeline | `DOCS/architecture/diagrams/agent-pipeline.mmd` | 6-Agent flow |
+| Data Flow | `DOCS/architecture/diagrams/data-flow.mmd` | Import/query flows |
+| Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
+| Overview | `DOCS/architecture/overview.md` | Detailed architecture |
+| ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.18.0 Release Notes
+
+> **Version**: 0.18.0 | **Date**: 2026-02-13
+> **Full Notes**: See `RELEASE_NOTES_v0.18.0.md`
+
+### Production Backend Hotfixes
+- **P1**: `fetch_one()` → `fetchrow()` in integrations.py (WARNING eliminated)
+- **P2**: Missing `project_id` in `search_entities()` call (concept_extraction_agent.py)
+- **P3**: Temporal endpoint `first_seen_year` column error → try-except with empty response fallback
+- **P5**: Conversation FK violation → defensive `user_id` check before INSERT
+
+### 3D "Central Burst" Root Fix
+- **F1**: Removed `centralityPercentileMap` from `nodeThreeObject` deps → ref pattern + scene.traverse
+- **F2**: Position preservation on node recreation from `nodePositionsRef`
+- **F3**: Removed `onLinkClick` handler (replaced by ConceptExplorer)
+- **Q3**: Eigenvector centrality fallback: `degree.copy()` instead of all-zeros
+
+### Researcher-Centric UX
+- **U1**: New `ConceptExplorer.tsx` — relationship exploration panel grouped by type with evidence navigation
+- **U2**: KnowledgeGraph3D integration — ConceptExplorer replaces direct edge clicking
+- **U3**: 3-tier neighbor highlight (selected=gold 1.2x, connected=1.0, non-connected=0.15)
+- **U4**: Relationship type edge colors (CO_OCCURS=teal, RELATED_TO=purple, SUPPORTS=green, CONTRADICTS=red)
+
+### Backend Quality
+- **Q1**: Cluster label async/sync mismatch documented (LLM labeling needs async refactor)
+- **Q2**: Concept name >60 chars reclassified as Finding
+- Relationship type normalization in entity_dao.py
+
+### Technical
+- 15 files changed, +486/-74 lines (1 new component)
+- No database migrations, no new env vars, no new endpoints
+- Build: zero TypeScript errors, zero Python compile errors
+- Breaking: Edge click removed (replaced by ConceptExplorer panel)
+
+---
+
+## 📊 v0.16.3 Release Notes
+
+> **Version**: 0.16.3 | **Date**: 2026-02-13
+> **Full Notes**: See `RELEASE_NOTES_v0.16.3.md`
+
+### Bug Fixes
+- **BUG-044**: Invalid API key 401 errors on all auth requests — Render's `SUPABASE_ANON_KEY` environment variable was mismatched with the actual Supabase project key, causing all authentication requests to return 401 "Invalid API key"
+  - Fixed by updating Render env var to match correct Supabase project anon key
+  - Added diagnostic code in `backend/auth/supabase_client.py`:
+    - Pre-validation of anon key at initialization time (lines 51-65)
+    - "Invalid API key" specific CRITICAL log branch in verify_jwt() (lines 113-121)
+
+### Infrastructure
+- **INFRA-014**: Render SUPABASE_ANON_KEY corrected — Updated environment variable to match Supabase project key
+
+### Technical
+- 1 file changed, +47/-21 lines
+- No database migrations, no new env vars, no breaking changes
+- Build: zero TypeScript errors
+
+---
+
+## 📊 v0.16.2 Release Notes
+
+> **Version**: 0.16.2 | **Date**: 2026-02-12
+> **Full Notes**: See `RELEASE_NOTES_v0.16.2.md`
+
+### Bug Fixes
+- **BUG-043-EXT**: Comprehensive 6-layer 401 auth error defense
+  - Layer 1: ImportProgress polling stops on 401/403 (was looping every 2s)
+  - Layer 2: Global QueryClient retry defaults skip auth errors for all queries
+  - Layer 3: Token auto-refresh via `supabase.auth.refreshSession()` on 401
+  - Layer 4: `authenticatedFetch()` helper guards all 6 direct `fetch()` calls
+  - Layer 5: Backend per-IP auth failure rate limiting (20/min → 429)
+  - Layer 6: Auto-signout on dead session — clears cached auth state so `enabled:!!user` stops all refetchInterval loops
+  - Cleanup: Removed redundant per-query retry overrides (now global)
+
+### Security
+- **SEC-004**: Backend AuthMiddleware rate-limits repeated auth failures per IP
+
+### Technical
+- 7 files changed, +94/-30 lines
+- No database migrations, no new env vars, no breaking changes
+- Build: zero TypeScript errors
+
+---
+
+## 📊 v0.16.1 Release Notes
+
+> **Version**: 0.16.1 | **Date**: 2026-02-13
+> **Full Notes**: See `RELEASE_NOTES_v0.16.1.md`
+
+### Bug Fixes
+- **BUG-043**: 401 Unauthorized polling loop — `InterruptedImportsSection` continued polling with expired auth tokens, flooding logs. Fixed with `enabled: !!user` guard, custom retry that skips 401/403, and API client 401 early-exit.
+- **E2-v2**: OpenAI embedding token limit — replaced `MAX_CHARS=30000` (character-based) with **tiktoken-based truncation** (8000 tokens). Previous fix failed for academic/multilingual text where char-to-token ratio is ~2 (30000 chars = ~15000 tokens).
+
+### Technical
+- 3 files changed, +55/-5 lines
+- No database migrations, no new env vars, no breaking changes
+- tiktoken already in requirements.txt (used for `cl100k_base` encoding)
+
+---
+
+## 📊 v0.15.1 Release Notes
+
+> **Version**: 0.15.1 | **Date**: 2026-02-09
+> **Full Notes**: See `RELEASE_NOTES_v0.15.1.md`
+
+### Infrastructure Maintenance
+- **INFRA-008**: Supabase Free Plan 용량 초과 해결 — 1월 테스트 프로젝트 26개 삭제 (~104만 행)
+- **INFRA-009**: VACUUM FULL 공간 회수 — **671 MB → 181 MB** (490 MB 회수, 73% 감소)
+- **INFRA-010**: Migration 021_cross_paper_links.sql 적용 — `SAME_AS` enum + 2 indexes
+- **INFRA-011**: Render DATABASE_URL — Transaction Pooler (6543) → **Session Pooler (5432)**
+- **INFRA-012**: 프로젝트 루트 Supabase MCP `.mcp.json` 설정
+
+### Technical
+- No code changes, infrastructure-only release
+- No breaking changes, no new env vars
+- 4 February projects preserved (2/4, 2/6 x2, 2/7)
+
+---
+
+## 📊 v0.15.0 Release Notes
+
+> **Version**: 0.15.0 | **Date**: 2026-02-08
+> **Full Notes**: See `RELEASE_NOTES_v0.15.0.md`
+
+### Backend (Phases 7-10)
+- **Provenance Chain**: 3-tier evidence cascade (relationship_evidence → source_chunk_ids → text_search) + AI explanation fallback
+- **Search Strategy Routing**: Automatic vector/graph_traversal/hybrid classification in chat responses
+- **Embedding-based ER**: Cosine similarity candidate detection + few-shot Groq extraction
+- **Table→Graph Pipeline**: TableSourceMetadata for table-sourced entities
+- **Gap Evaluation**: Ground truth dataset (AI Education) + Recall/Precision/F1 metrics
+- **Query Instrumentation**: QueryMetricsCollector with hop-level latency + GraphDB 500ms threshold
+- **Cross-Paper Linking**: SAME_AS relationship type for cross-paper entity identity
+
+### Frontend (Phase 11A-11F)
+- **Provenance UI**: 4-tier badges with Korean labels in EdgeContextModal
+- **Strategy Badges**: Icon-based search strategy indicators in ChatInterface
+- **ER Dashboard**: Embedding/string candidate stats in ImportProgress
+- **Table Viz**: Amber ring indicator + EVALUATED_ON metric badges
+- **Evaluation Page**: New `/evaluation` route with gap detection metrics grid
+- **Query Metrics**: Hop-by-hop latency bars + GraphDB recommendation in Settings
+- **SAME_AS Viz**: Dashed purple edges with camera-based LOD + toggle control
+
+### UX Polish (Phase 12A-12D)
+- Progressive disclosure (EdgeContextModal, ImportProgress, ChatInterface)
+- Responsive layout + ARIA accessibility labels (Korean)
+- QA fixture scenarios (provenance-chain, strategy-badge, same-as-edges)
+- Codex documentation updated (SDD, TDD, Execution Procedure/Log)
+
+### Technical
+- 18 sub-phases, 0 TypeScript errors, 38 tests + 9 snapshots passing
+- New endpoints: `/api/evaluation/report`, `/api/system/query-metrics`, `/api/graph/{id}/cross-paper-links`
+- New page: `/evaluation`
+- Migration: `021_cross_paper_links.sql`
+- No breaking changes, no new env vars
+
+---
+
+## 📊 v0.14.1 Release Notes
+
+> **Version**: 0.14.1 | **Date**: 2026-02-07
+> **Full Notes**: See `RELEASE_NOTES_v0.14.1.md`
+
+### UX Enhancements
+- **DraggablePanel**: Double-click reset, `CollapsibleContent` animation, touch device support, `useDraggablePanelReset()` hook
+- **GapPanel**: Arrow key navigation, color chip clusters, gradient progress bar, S2 429 auto-retry with 60s countdown
+- **GapsViewMode Minimap**: 160x120 canvas with circular cluster layout, dashed gap lines, selected gap highlighting
+- **Settings Page**: Full Editorial Research theme redesign (monospace labels, accent-teal selections)
+- **Interrupted Imports**: Clear All button with confirmation, editorial layout, progress display
+
+### New Feature
+- **Gap-to-Chat Integration**: MessageSquare button on research questions pre-fills chat input + switches to split view. Threaded via `onAskQuestion` callback through KnowledgeGraph3D → GapPanel
+
+### Technical
+- 9 files changed, +607/-159 lines (frontend only)
+- `deleteInterruptedJobs()` API client method
+- No database migrations, no new env vars
+
+---
+
+## 📊 v0.14.0 Release Notes
+
+> **Version**: 0.14.0 | **Date**: 2026-02-07
+> **Full Notes**: See `RELEASE_NOTES_v0.14.0.md`
+
+### Critical Fixes
+- **WebGL Crash (A1)**: Three.js resource disposal on unmount + texture/node caching
+- **Hover Jitter (A2)**: Decoupled highlight from nodeThreeObject deps, highlight-only material updates
+- **Broken Labels (A3)**: Filter empty concept names in backend + frontend (6 files)
+- **Panel Overlap (A4)**: Global z-index counter + bring-to-front on click
+- **S2 API Key (A5)**: `get_effective_api_key()` for per-user key with server fallback
+
+### UX Improvements
+- **Auto-Load Papers**: Recommendations auto-fetch on gap expansion
+- **Toast Notifications**: New `Toast.tsx` component with `useToast()` hook
+- **Find Papers Promoted**: Accessible in ≤2 clicks from gap list header
+- **Topic Labels**: 16px sans-serif, concept preview on hover, scale effect
+- **Gaps View**: Wider sidebar (w-72 → w-80), bold badges, gap count, empty state
+
+### Technical
+- `frontend/components/ui/Toast.tsx`: New toast notification system
+- `backend/routers/integrations.py`: `get_effective_api_key()` helper across 8 S2 endpoints
+- `backend/graph/gap_detector.py`: Empty keyword filtering in label generation
+- WebGL cleanup: -200MB memory on 3D view remount
+
+---
+
+## 📊 v0.12.1 Release Notes
+
+> **Version**: 0.12.1 | **Date**: 2026-02-07
+> **Full Notes**: See `RELEASE_NOTES_v0.12.1.md`
+
+### Added
+- **LLM-Summarized Cluster Labels**: `POST /api/graph/gaps/{project_id}/label-clusters` generates human-readable labels from top concepts (Phase 1)
+- **Gap-Based Paper Recommendations**: `GET /api/graph/gaps/{project_id}/recommendations` suggests papers bridging structural gaps (Phase 2)
+- **Gap Analysis Report Export**: `GET /api/graph/gaps/{project_id}/export` exports Markdown reports with clusters, gaps, and bridge candidates (Phase 3)
+
+### Technical
+- `backend/routers/graph.py`: 3 new endpoints with LLM-powered labeling and paper ranking
+- `backend/graph/gap_detector.py`: Gap-aware paper scoring using PageRank and embeddings
+- Export format: Markdown with cluster tables, gap sections, and research questions
+
+---
+
+## 📊 v0.11.0 Release Notes
+
+> **Version**: 0.11.0 | **Date**: 2026-02-06
+> **Full Notes**: See `RELEASE_NOTES_v0.11.0.md`
+
+### Critical
+- **Visualization API**: `max_nodes` default 200→1000 (max 5000), ORDER BY prioritizes academic entities
+- **Zotero Gap Detection**: Full parity with ScholaRAG importer (clustering + gap analysis + centrality)
+
+### High
+- **AI Evidence Explanation**: LLM-generated relationship explanation when no text chunks exist
+- **Gap Panel Resize**: Drag-to-resize (256-500px), default 320px
+- **Dynamic Chat Questions**: Graph data-based suggested questions (replaces hardcoded)
+- **Bridge Ideas UX**: Categorized error messages (LLM/network/not-found) + UUID label detection
+- **Cluster Labels**: UUID regex detection with keyword-based fallback names
+
+### Medium
+- **Hover Debounce**: 50ms debounce eliminates node jitter (~90% fewer state updates)
+- **View Tab UI**: Tab-bar style view mode toggle (3D/Topics/Gaps)
+- **Panel Layout**: Flex-based stacking prevents overlap
+
+### Low
+- **Korean Tooltips**: All toolbar buttons translated to Korean
+
+### Technical
+- `backend/routers/graph.py`: max_nodes, ORDER BY, ai_explanation field
+- `backend/importers/zotero_rdf_importer.py`: Phase 6 gap detection
+- `frontend/components/graph/*`: GapPanel, Graph3D, KnowledgeGraph3D, EdgeContextModal, GapQueryPanel
+- `frontend/components/chat/ChatInterface.tsx`: graphStats prop, useMemo questions
+- `frontend/types/graph.ts`: ai_explanation field
+
+---
+
+## 📊 v0.10.1 Release Notes
+
+> **Version**: 0.10.1 | **Date**: 2026-02-06
+> **Full Notes**: See `RELEASE_NOTES_v0.10.1.md`
+
+### Fixed
+- **Repeated Project Reopen Instability**: Removed duplicate graph fetch on project page re-entry path
+- **Health Check DB Churn**: Added cached health snapshot (TTL 15s) and single-query DB/pgvector probe
+- **Connection Pressure Reduction**: `/health` now uses cached snapshot instead of repeated DB checks
+
+### Technical
+- `backend/database.py`: `get_health_snapshot()` + `asyncio.Lock` + TTL cache
+- `backend/main.py`: `/health` now reads snapshot once
+- `frontend/app/projects/[id]/page.tsx`: removed redundant `fetchGraphData(projectId)` effect
+
+---
+
+## 📊 v0.10.0 Release Notes
+
+> **Version**: 0.10.0 | **Date**: 2026-02-05
+> **Full Notes**: See `RELEASE_NOTES_v0.10.0.md`
+
+### Added
+- **Entity Type V2**: Type-specific confidence thresholds (0.6-0.7), enhanced DATASETS/METRICS extraction prompts, metrics parsing pipeline
+- **Entity Shape Visualization**: 8 distinct Three.js geometries per entity type (Sphere, Box, Octahedron, Cone, Dodecahedron, Tetrahedron, Cylinder, Torus)
+- **EntityTypeLegend Component**: Collapsible legend with SVG shape icons and Korean labels
+- **Convex Hull Boundaries**: D3.js `polygonHull` cluster boundaries in Topic View
+- **Test Infrastructure**: 3 backend test files (test_chat_router, test_graph_router, test_importer) + 3 frontend test files (Graph3D, useGraphStore, api)
+- **Active Mode Indicator**: Pulsing dot animation on view mode badges (teal=3D, purple=Topic)
+
+### Improved
+- **Camera Polling**: Bucket-based zoom updates (`Math.round(distance/50)*50`) via `useRef` - ~90% fewer state updates
+- **Cluster Labels**: 14px color-matched text with text shadow (was 12px white)
+- **Topic Legend**: Shows cluster color swatches with names and counts
+- **SDD Document**: Updated from v0.7.0 to v0.9.0 with full architectural alignment
+
+### Technical
+- `ENTITY_TYPE_CONFIDENCE_THRESHOLDS` constant in `entity_extractor.py`
+- `ENTITY_TYPE_SHAPES` constant in `Graph3D.tsx` with geometry switch in `nodeThreeObject`
+- `currentZoomRef` for jitter-free camera polling
+- `hullGroup` with `d3.polygonHull` in `TopicViewMode.tsx`
+
+---
+
+## 📊 v0.9.0 Release Notes
+
+> **Version**: 0.9.0 | **Date**: 2026-02-04
+> **Full Notes**: See `RELEASE_NOTES_v0.9.0.md`
+
+### Added
+- **InfraNodus-Style Labeling**: Centrality-based visibility (top 20% always visible), dynamic font sizing (10-28px), opacity gradient (0.3-1.0)
+- **Improved Tooltips**: All 14 toolbar buttons have descriptive Korean tooltips
+
+### Fixed
+- **Graph Shrinkage**: Reduced velocity decay 0.9→0.4, increased cooldown 200→1000
+- **Node Drag Release**: Nodes now float back naturally after dragging
+- **AI Explain UUID**: Uses concept names instead of raw UUIDs
+- **No Gaps Detected**: Auto-refresh + stronger min_gaps enforcement
+- **Evidence 500 Errors**: SQL escaping + classified error handling
+
+### Removed
+- **Particle Effects**: Lightning toggle and particle rendering completely removed
+
+### Planned (v0.10.0) → ✅ Released
+- ✅ Entity Extraction V2 (all 8 entity types) → v0.10.0
+- AI Chat data-based fallback → moved to v0.11.0
+- Semantic diversity metrics → moved to v0.11.0
+- Next.js 14.2+ security upgrade → moved to v0.11.0
+
+---
+
+## 📊 v0.8.0 Release Notes
+
+> **Version**: 0.8.0 | **Date**: 2026-02-04
+> **Full Notes**: See `RELEASE_NOTES_v0.8.0.md`
+
+### Added
+- **Label Visibility Toggle**: Toolbar button cycles none/important/all modes
+- **Node Removal Preview**: Visual preview before applying slicing
+- **InsightHUD Repositioning**: Moved to right-side (InfraNodus-style)
+
+### Fixed
+- **EdgeContextModal Accessibility**: ESC key, focus trap, ARIA attributes
+- **Evidence API Stability**: Table existence check prevents 500 errors
+- **Cluster Color Stability**: Hash-based assignment for consistent colors
+
+### Technical
+- `hashClusterId()` function for deterministic color mapping
+- `LabelVisibility` type with `cycleLabelVisibility()` store action
+- Dynamic panel stacking for InsightHUD positioning
+
+---
+
+## 📊 v0.7.0 Release Notes
+
+> **Version**: 0.7.0 | **Date**: 2026-02-04
+> **Full Notes**: See `RELEASE_NOTES_v0.7.0.md`
+
+### Added
+- **Node Pinning**: Click to pin, Shift+click for multi-select
+- **Adaptive Labeling**: Zoom-responsive label visibility
+- **Graph-to-Prompt**: Export graph context for AI tools
+- **Continuous Documentation Protocol**: Auto-update triggers and guidelines
+- **SDD §3.2.3**: Frontend Dependency Management section
+
+### Fixed
+- `'focused'` diversity rating type error (BUG-041)
+- Three.js ESM module resolution for Vercel builds (BUG-042)
+
+### Technical
+- Pinned Three.js ecosystem to stable versions
+- webpack NormalModuleReplacementPlugin for ESM paths
+- npm overrides for transitive dependencies

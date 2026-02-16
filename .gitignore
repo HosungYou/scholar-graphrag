@@ -47,3 +47,24 @@ temp/
 
 # Uploads (if storing locally)
 uploads/
+
+# MkDocs
+site/
+
+# Backup files
+*.bak
+*~
+
+# pip installation artifacts
+=*
+.serena/
+.vercel
+
+# oh-my-claudecode state
+.omc/
+
+# MCP local config
+.mcp.json
+
+# Supabase MCP temp
+supabase/.temp/

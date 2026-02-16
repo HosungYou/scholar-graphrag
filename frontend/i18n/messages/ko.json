@@ -1,0 +1,67 @@
+{
+  "common": {
+    "loading": "로딩 중...",
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "edit": "편집",
+    "close": "닫기",
+    "back": "뒤로",
+    "next": "다음",
+    "submit": "제출"
+  },
+  "error": {
+    "title": "오류가 발생했습니다",
+    "retry": "다시 시도",
+    "home": "홈으로",
+    "network": "네트워크 연결을 확인해주세요",
+    "server": "서버에 문제가 발생했습니다",
+    "notFound": "페이지를 찾을 수 없습니다",
+    "generic": "예기치 않은 오류가 발생했습니다"
+  },
+  "graph": {
+    "loading": "그래프 로딩 중...",
+    "empty": "표시할 데이터가 없습니다",
+    "zoomIn": "확대",
+    "zoomOut": "축소",
+    "fitView": "화면에 맞추기",
+    "search": "검색...",
+    "filters": "필터"
+  },
+  "import": {
+    "title": "데이터 가져오기",
+    "selectMethod": "가져오기 방식 선택",
+    "pdf": {
+      "title": "PDF 파일 가져오기",
+      "description": "PDF 파일을 업로드하여 논문을 가져옵니다",
+      "dropzone": "PDF 파일을 드래그하거나 클릭하여 선택"
+    },
+    "zotero": {
+      "title": "Zotero 연동",
+      "description": "Zotero 라이브러리에서 논문을 동기화합니다",
+      "connect": "Zotero 연결"
+    },
+    "scholarag": {
+      "title": "ScholaRAG 프로젝트",
+      "description": "기존 ScholaRAG 프로젝트 폴더를 가져옵니다",
+      "selectFolder": "폴더 선택"
+    },
+    "progress": {
+      "analyzing": "분석 중...",
+      "extracting": "데이터 추출 중...",
+      "building": "지식 그래프 구축 중...",
+      "complete": "가져오기 완료!"
+    }
+  },
+  "chat": {
+    "placeholder": "질문을 입력하세요...",
+    "send": "전송",
+    "thinking": "생각 중...",
+    "newMessage": "새 메시지"
+  },
+  "project": {
+    "create": "새 프로젝트",
+    "name": "프로젝트 이름",
+    "description": "설명"
+  }
+}

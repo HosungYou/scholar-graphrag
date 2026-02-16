@@ -1,0 +1,67 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "submit": "Submit"
+  },
+  "error": {
+    "title": "An error occurred",
+    "retry": "Retry",
+    "home": "Go Home",
+    "network": "Please check your network connection",
+    "server": "Server error occurred",
+    "notFound": "Page not found",
+    "generic": "An unexpected error occurred"
+  },
+  "graph": {
+    "loading": "Loading graph...",
+    "empty": "No data to display",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out",
+    "fitView": "Fit to View",
+    "search": "Search...",
+    "filters": "Filters"
+  },
+  "import": {
+    "title": "Import Data",
+    "selectMethod": "Select import method",
+    "pdf": {
+      "title": "Import PDF Files",
+      "description": "Upload PDF files to import papers",
+      "dropzone": "Drag and drop PDF files or click to select"
+    },
+    "zotero": {
+      "title": "Zotero Integration",
+      "description": "Sync papers from your Zotero library",
+      "connect": "Connect Zotero"
+    },
+    "scholarag": {
+      "title": "ScholaRAG Project",
+      "description": "Import existing ScholaRAG project folder",
+      "selectFolder": "Select Folder"
+    },
+    "progress": {
+      "analyzing": "Analyzing...",
+      "extracting": "Extracting data...",
+      "building": "Building knowledge graph...",
+      "complete": "Import complete!"
+    }
+  },
+  "chat": {
+    "placeholder": "Type your question...",
+    "send": "Send",
+    "thinking": "Thinking...",
+    "newMessage": "New message"
+  },
+  "project": {
+    "create": "New Project",
+    "name": "Project Name",
+    "description": "Description"
+  }
+}

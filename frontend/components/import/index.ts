@@ -1,4 +1,6 @@
+export { ImportMethodSelector } from './ImportMethodSelector';
+export { PDFImportSection } from './PDFImportSection';
+export { ZoteroImportSection } from './ZoteroImportSection';
+export { ScholarAGImportSection } from './ScholarAGImportSection';
 export { ImportProgress } from './ImportProgress';
-export { FolderBrowser } from './FolderBrowser';
-export { ImportDashboard } from './ImportDashboard';
-export { PDFUploader } from './PDFUploader';
+export { ImportProgressSimple } from './ImportProgressSimple';

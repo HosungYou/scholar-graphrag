@@ -1,3 +1,17 @@
-from . import chat, graph, import_, metrics, projects
+"""API Routers for ScholaRAG_Graph."""
 
-__all__ = ["chat", "graph", "import_", "metrics", "projects"]
+from . import auth, chat, graph, import_, integrations, prisma, projects, quota, settings, system, teams
+
+__all__ = [
+    "auth",
+    "chat",
+    "graph",
+    "import_",
+    "integrations",
+    "prisma",
+    "projects",
+    "quota",
+    "settings",
+    "system",
+    "teams",
+]

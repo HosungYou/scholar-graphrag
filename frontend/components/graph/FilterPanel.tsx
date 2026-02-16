@@ -1,10 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Filter, ChevronDown, ChevronUp, X, RotateCcw, Check, Sliders } from 'lucide-react';
-import clsx from 'clsx';
+import { Filter, ChevronDown, ChevronUp, X, RotateCcw, Hexagon, Diamond, Square, Pentagon, Octagon } from 'lucide-react';
 import type { EntityType } from '@/types';
+
+/* ============================================================
+   FilterPanel - VS Design Diverge Style
+   Direction B (T-Score 0.4) "Editorial Research"
+
+   Design Principles:
+   - Line-based layout (no rounded corners)
+   - Monospace labels
+   - Left accent bar for active states
+   - Polygon icons for entity types
+   ============================================================ */
 
 interface FilterPanelProps {
   entityTypes: EntityType[];
@@ -16,82 +25,91 @@ interface FilterPanelProps {
   maxYear?: number;
   onReset?: () => void;
   nodeCountsByType?: Record<EntityType, number>;
+  // Data source information
+  dataSource?: 'zotero' | 'pdf' | 'scholarag' | null;
 }
 
-const entityTypeConfig: Record<EntityType, {
-  color: string;
-  bg: string;
-  gradient: string;
-}> = {
+// VS Design Diverge palette - matching PolygonNode colors exactly
+const entityTypeConfig: Record<string, { color: string; icon: React.ReactNode }> = {
+  // Primary entities (Hybrid Mode: visualized)
   Paper: {
-    color: '#14b8a6',
-    bg: 'bg-teal-dim',
-    gradient: 'from-teal to-teal-dim'
+    color: '#6366F1', // Indigo - Paper node
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
   },
   Author: {
-    color: '#10b981',
-    bg: 'bg-surface-3',
-    gradient: 'from-node-author to-node-author'
+    color: '#A855F7', // Purple - Author node
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
   },
+  // Concept-centric entities (always visualized)
   Concept: {
-    color: '#8b5cf6',
-    bg: 'bg-surface-3',
-    gradient: 'from-node-concept to-node-concept'
+    color: '#8B5CF6', // Violet - matches PolygonNode
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
   },
   Method: {
-    color: '#d97706',
-    bg: 'bg-surface-3',
-    gradient: 'from-copper to-copper'
+    color: '#F59E0B', // Amber - matches PolygonNode
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
   },
   Finding: {
-    color: '#ef4444',
-    bg: 'bg-surface-3',
-    gradient: 'from-node-finding to-node-finding'
+    color: '#10B981', // Emerald - matches PolygonNode
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
   },
-  Result: {
-    color: '#ef4444',
-    bg: 'bg-surface-3',
-    gradient: 'from-red-500 to-red-600'
+  // Secondary entities
+  Problem: {
+    color: '#EF4444', // Red
+    icon: <Octagon className="w-3 h-3" strokeWidth={2} />
   },
-  Claim: {
-    color: '#ec4899',
-    bg: 'bg-surface-3',
-    gradient: 'from-pink-500 to-pink-600'
+  Dataset: {
+    color: '#3B82F6', // Blue
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Metric: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Innovation: {
+    color: '#14B8A6', // Teal
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Limitation: {
+    color: '#F97316', // Orange
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  // TTO entities
+  Invention: {
+    color: '#F59E0B',
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Patent: {
+    color: '#6366F1',
+    icon: <Square className="w-3 h-3" strokeWidth={2} />
+  },
+  Inventor: {
+    color: '#8B5CF6',
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Technology: {
+    color: '#06B6D4',
+    icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
+  },
+  License: {
+    color: '#10B981',
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
+  Grant: {
+    color: '#F97316',
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Department: {
+    color: '#A855F7',
+    icon: <Octagon className="w-3 h-3" strokeWidth={2} />
   },
 };
 
-const panelVariants = {
-  collapsed: { height: 'auto' },
-  expanded: { height: 'auto' }
-};
-
-const contentVariants = {
-  hidden: { opacity: 0, height: 0 },
-  visible: { 
-    opacity: 1, 
-    height: 'auto',
-    transition: {
-      height: { duration: 0.3 },
-      opacity: { duration: 0.2, delay: 0.1 }
-    }
-  },
-  exit: { 
-    opacity: 0, 
-    height: 0,
-    transition: {
-      height: { duration: 0.2 },
-      opacity: { duration: 0.1 }
-    }
-  }
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, x: 10 },
-  visible: (i: number) => ({
-    opacity: 1,
-    x: 0,
-    transition: { delay: i * 0.05 }
-  })
+// Data source badge styles
+const dataSourceStyles: Record<string, { bg: string; text: string; label: string }> = {
+  zotero: { bg: 'bg-purple-500/10', text: 'text-purple-400', label: 'ZOTERO' },
+  pdf: { bg: 'bg-blue-500/10', text: 'text-blue-400', label: 'PDF' },
+  scholarag: { bg: 'bg-accent-teal/10', text: 'text-accent-teal', label: 'SCHOLARAG' },
 };
 
 export function FilterPanel({
@@ -104,6 +122,7 @@ export function FilterPanel({
   maxYear = 2025,
   onReset,
   nodeCountsByType,
+  dataSource,
 }: FilterPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -124,293 +143,164 @@ export function FilterPanel({
   };
 
   const hasActiveFilters = selectedTypes.length < entityTypes.length || yearRange !== null;
-  const totalNodes = nodeCountsByType 
-    ? Object.values(nodeCountsByType).reduce((a, b) => a + b, 0)
-    : 0;
-  const filteredNodes = nodeCountsByType
-    ? selectedTypes.reduce((sum, type) => sum + (nodeCountsByType[type] || 0), 0)
-    : 0;
 
   return (
-    <motion.div
-      variants={panelVariants}
-      animate={isExpanded ? 'expanded' : 'collapsed'}
-      className={clsx(
-        "absolute top-4 right-4 w-80 z-10",
-        "bg-surface-1 rounded overflow-hidden",
-        "border border-border"
-      )}
-    >
-      <motion.button
-        whileHover={{ backgroundColor: 'rgba(0,0,0,0.02)' }}
+    <div className="absolute top-16 right-4 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 w-64 z-10">
+      {/* Header */}
+      <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className={clsx(
-          "w-full flex items-center justify-between p-4",
-          "transition-colors"
-        )}
+        className="w-full flex items-center justify-between p-3 hover:bg-surface/5 transition-colors border-b border-ink/10 dark:border-paper/10"
       >
-        <div className="flex items-center gap-3">
-          <div className={clsx(
-            "p-2 rounded",
-            hasActiveFilters
-              ? "bg-teal-dim"
-              : "bg-surface-2"
-          )}>
-            <Sliders className={clsx(
-              "w-4 h-4",
-              hasActiveFilters
-                ? "text-teal"
-                : "text-text-tertiary"
-            )} />
-          </div>
-          <div className="text-left">
-            <span className="font-medium text-text-primary block">
-              Filters
-            </span>
-            <span className="text-xs text-text-secondary">
-              {filteredNodes.toLocaleString()} / {totalNodes.toLocaleString()} nodes
-            </span>
-          </div>
-        </div>
         <div className="flex items-center gap-2">
-          {hasActiveFilters && (
-            <motion.span
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className="px-2 py-0.5 bg-teal text-text-primary text-xs font-medium rounded-full"
-            >
-              Active
-            </motion.span>
+          <Filter className={`w-4 h-4 ${hasActiveFilters ? 'text-accent-teal' : 'text-muted'}`} />
+          <span className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper">
+            Filters
+          </span>
+          {/* Data Source Badge */}
+          {dataSource && dataSourceStyles[dataSource] && (
+            <span className={`px-1.5 py-0.5 ${dataSourceStyles[dataSource].bg} ${dataSourceStyles[dataSource].text} text-xs font-mono`}>
+              {dataSourceStyles[dataSource].label}
+            </span>
           )}
-          <motion.div
-            animate={{ rotate: isExpanded ? 180 : 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <ChevronDown className="w-5 h-5 text-text-tertiary" />
-          </motion.div>
+          {hasActiveFilters && !dataSource && (
+            <span className="px-1.5 py-0.5 bg-accent-teal/10 text-accent-teal text-xs font-mono">
+              ON
+            </span>
+          )}
         </div>
-      </motion.button>
-
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            variants={contentVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            className="overflow-hidden"
-          >
-            <div className="p-4 pt-0 space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-text-primary">
-                    Node Types
-                  </span>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={selectAll}
-                      className="text-xs font-medium text-teal hover:text-teal transition-colors"
-                    >
-                      Select all
-                    </button>
-                    <button
-                      onClick={clearAll}
-                      className="text-xs font-medium text-text-ghost hover:text-text-secondary transition-colors"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                {/* Quick Filter Presets */}
-                <div className="flex gap-1.5 mb-3">
-                  <button
-                    onClick={() => onTypeChange(['Concept', 'Method', 'Finding', 'Result', 'Claim'] as EntityType[])}
-                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
-                  >
-                    Concepts
-                  </button>
-                  <button
-                    onClick={() => onTypeChange(['Paper', 'Author'] as EntityType[])}
-                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
-                  >
-                    Papers
-                  </button>
-                  <button
-                    onClick={selectAll}
-                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
-                  >
-                    All
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {entityTypes.map((type, index) => {
-                    const config = entityTypeConfig[type];
-                    const isSelected = selectedTypes.includes(type);
-                    const count = nodeCountsByType?.[type] || 0;
-
-                    return (
-                      <motion.button
-                        key={type}
-                        custom={index}
-                        variants={itemVariants}
-                        initial="hidden"
-                        animate="visible"
-                        whileHover={{ scale: 1.01 }}
-                        whileTap={{ scale: 0.99 }}
-                        onClick={() => toggleType(type)}
-                        className={clsx(
-                          "w-full flex items-center justify-between px-3 py-2.5 rounded text-sm transition-all",
-                          isSelected
-                            ? `${config.bg} border-2`
-                            : "bg-surface-2 border-2 border-transparent hover:bg-surface-3"
-                        )}
-                        style={{
-                          borderColor: isSelected ? config.color : 'transparent'
-                        }}
-                      >
-                        <div className="flex items-center gap-3">
-                          <motion.div
-                            animate={{
-                              scale: isSelected ? 1 : 0.8,
-                              opacity: isSelected ? 1 : 0.5
-                            }}
-                            className={clsx(
-                              "w-3 h-3 rounded-full",
-                              "bg-gradient-to-br",
-                              config.gradient
-                            )}
-                          />
-                          <span className={clsx(
-                            "font-medium",
-                            isSelected
-                              ? "text-text-primary"
-                              : "text-text-ghost"
-                          )}>
-                            {type}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={clsx(
-                            "text-xs font-mono",
-                            isSelected
-                              ? "text-text-secondary"
-                              : "text-text-ghost"
-                          )}>
-                            {count.toLocaleString()}
-                          </span>
-                          <motion.div
-                            initial={false}
-                            animate={{
-                              scale: isSelected ? 1 : 0,
-                              opacity: isSelected ? 1 : 0
-                            }}
-                            className={clsx(
-                              "w-5 h-5 rounded-full flex items-center justify-center",
-                              "bg-gradient-to-br",
-                              config.gradient
-                            )}
-                          >
-                            <Check className="w-3 h-3 text-text-primary" />
-                          </motion.div>
-                        </div>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {onYearRangeChange && yearRange && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  <span className="text-sm font-medium text-text-primary block mb-3">
-                    Year Range
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        min={minYear}
-                        max={yearRange[1]}
-                        value={yearRange[0]}
-                        onChange={(e) =>
-                          onYearRangeChange([parseInt(e.target.value), yearRange[1]])
-                        }
-                        className={clsx(
-                          "w-full px-3 py-2 rounded text-sm font-mono",
-                          "bg-surface-2",
-                          "border border-border",
-                          "focus:ring-2 focus:ring-teal focus:border-transparent",
-                          "text-text-primary",
-                          "transition-all"
-                        )}
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-tertiary">
-                        from
-                      </span>
-                    </div>
-                    <div className="text-text-tertiary">—</div>
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        min={yearRange[0]}
-                        max={maxYear}
-                        value={yearRange[1]}
-                        onChange={(e) =>
-                          onYearRangeChange([yearRange[0], parseInt(e.target.value)])
-                        }
-                        className={clsx(
-                          "w-full px-3 py-2 rounded text-sm font-mono",
-                          "bg-surface-2",
-                          "border border-border",
-                          "focus:ring-2 focus:ring-teal focus:border-transparent",
-                          "text-text-primary",
-                          "transition-all"
-                        )}
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-tertiary">
-                        to
-                      </span>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-
-              {hasActiveFilters && onReset && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="pt-3 border-t border-border"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-text-secondary">
-                      {selectedTypes.length} of {entityTypes.length} types selected
-                    </p>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={onReset}
-                      className={clsx(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded",
-                        "text-xs font-medium",
-                        "bg-surface-2",
-                        "text-text-tertiary",
-                        "hover:bg-surface-3",
-                        "transition-colors"
-                      )}
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      Reset filters
-                    </motion.button>
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
+        {isExpanded ? (
+          <ChevronUp className="w-4 h-4 text-muted" />
+        ) : (
+          <ChevronDown className="w-4 h-4 text-muted" />
         )}
-      </AnimatePresence>
-    </motion.div>
+      </button>
+
+      {/* Content */}
+      {isExpanded && (
+        <div className="p-3 space-y-4">
+          {/* Entity Types */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                Node Types
+              </span>
+              <div className="flex gap-3">
+                <button
+                  onClick={selectAll}
+                  className="font-mono text-xs text-accent-teal hover:text-accent-teal/80 transition-colors"
+                >
+                  All
+                </button>
+                <button
+                  onClick={clearAll}
+                  className="font-mono text-xs text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                >
+                  None
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              {entityTypes.map((type) => {
+                const config = entityTypeConfig[type] || {
+                  color: '#64748B',
+                  icon: <Square className="w-3 h-3" />,
+                };
+                const isSelected = selectedTypes.includes(type);
+                const count = nodeCountsByType?.[type] || 0;
+
+                return (
+                  <button
+                    key={type}
+                    onClick={() => toggleType(type)}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-all relative ${
+                      isSelected
+                        ? 'bg-surface/5'
+                        : 'hover:bg-surface/5'
+                    }`}
+                  >
+                    {/* Left accent bar for selected */}
+                    {isSelected && (
+                      <div
+                        className="absolute left-0 top-0 bottom-0 w-0.5"
+                        style={{ backgroundColor: config.color }}
+                      />
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: isSelected ? config.color : 'var(--color-muted)' }}>
+                        {config.icon}
+                      </span>
+                      <span className={`${isSelected ? 'text-ink dark:text-paper' : 'text-muted'}`}>
+                        {type}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-muted">{count}</span>
+                      {isSelected && (
+                        <X className="w-3 h-3 text-muted hover:text-accent-red transition-colors" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Year Range */}
+          {onYearRangeChange && yearRange && (
+            <div className="pt-3 border-t border-ink/10 dark:border-paper/10">
+              <span className="font-mono text-xs uppercase tracking-wider text-muted block mb-3">
+                Year Range
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={minYear}
+                  max={yearRange[1]}
+                  value={yearRange[0]}
+                  onChange={(e) =>
+                    onYearRangeChange([parseInt(e.target.value), yearRange[1]])
+                  }
+                  className="w-20 px-2 py-1.5 bg-transparent border-b border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-sm font-mono text-ink dark:text-paper"
+                />
+                <span className="text-muted">—</span>
+                <input
+                  type="number"
+                  min={yearRange[0]}
+                  max={maxYear}
+                  value={yearRange[1]}
+                  onChange={(e) =>
+                    onYearRangeChange([yearRange[0], parseInt(e.target.value)])
+                  }
+                  className="w-20 px-2 py-1.5 bg-transparent border-b border-ink/20 dark:border-paper/20 focus:border-accent-teal focus:outline-none text-sm font-mono text-ink dark:text-paper"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Active Filters Summary */}
+          {hasActiveFilters && (
+            <div className="pt-3 border-t border-ink/10 dark:border-paper/10">
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-xs text-muted">
+                  {selectedTypes.length}/{entityTypes.length} types
+                </p>
+                {onReset && (
+                  <button
+                    onClick={onReset}
+                    className="flex items-center gap-1 font-mono text-xs text-accent-red hover:text-accent-red/80 transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

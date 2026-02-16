@@ -1,0 +1,697 @@
+{
+  "version": "1.11.0",
+  "last_updated": "2026-02-09T19:15:00Z",
+  "project": "ScholaRAG_Graph",
+  "repository": "https://github.com/HosungYou/ScholaRAG_Graph",
+
+  "sessions": [
+    {
+      "id": "2026-02-09_db-maintenance-migration-021",
+      "date": "2026-02-09T19:00:00Z",
+      "agents": ["Opus 4.6"],
+      "type": "infrastructure-maintenance",
+      "feature": "db-maintenance-migration-021",
+      "duration_minutes": 25,
+      "skills_used": ["render-mcp", "psql-direct"],
+      "files_read": 5,
+      "files_created": 3,
+      "files_modified": 2,
+      "lines_added": 180,
+      "lines_removed": 6,
+      "artifacts": [
+        ".mcp.json",
+        "RELEASE_NOTES_v0.15.1.md",
+        "DOCS/.meta/sessions/2026-02-09_db-maintenance-migration-021.md",
+        "DOCS/project-management/action-items.md",
+        "DOCS/.meta/agent-registry.json"
+      ],
+      "decisions": [
+        "Use Session Pooler (port 5432) instead of Transaction Pooler (port 6543)",
+        "Install psql via brew for direct DB access when Supabase MCP unavailable",
+        "VACUUM FULL on 3 largest tables instead of whole database"
+      ],
+      "outcome": "completed",
+      "follow_up_required": false,
+      "infrastructure_changes": [
+        "INFRA-008: January test data cleanup (26 projects, ~1M rows)",
+        "INFRA-009: VACUUM FULL space recovery (671 MB → 181 MB)",
+        "INFRA-010: Migration 021 applied (SAME_AS + indexes)",
+        "INFRA-011: Render DATABASE_URL → Session Pooler",
+        "INFRA-012: Supabase MCP config for project root"
+      ],
+      "supabase_migration_executed": true,
+      "db_rows_deleted": 1043953,
+      "disk_space_recovered_mb": 490,
+      "methodology": "render-mcp-and-psql-direct"
+    },
+    {
+      "id": "2026-01-21_perf-009-memory-optimization",
+      "date": "2026-01-21T09:00:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "performance-bugfix",
+      "feature": "memory-optimization",
+      "duration_minutes": 45,
+      "skills_used": ["superpowers:systematic-debugging"],
+      "files_read": 8,
+      "files_created": 1,
+      "files_modified": 6,
+      "lines_added": 60,
+      "lines_removed": 11,
+      "artifacts": [
+        "frontend/components/import/ImportProgress.tsx",
+        "backend/llm/cohere_embeddings.py",
+        "backend/llm/openai_embeddings.py",
+        "backend/graph/embedding/embedding_pipeline.py",
+        "backend/graph/graph_store.py",
+        "backend/config.py",
+        "DOCS/.meta/sessions/2026-01-21_perf-009-memory-optimization.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [
+        "Reduce batch_size instead of instance upgrade (free solution first)",
+        "Add Resume button to frontend for interrupted imports"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Verify import completes without memory crash",
+        "Monitor memory usage after optimization"
+      ],
+      "bugs_fixed": [
+        "PERF-009: Memory exceeded on Render 512MB",
+        "UI-001: Missing Resume button for interrupted imports"
+      ],
+      "commits": ["8aa40e5", "e26b7a3"],
+      "methodology": "systematic-debugging",
+      "memory_savings_estimated_mb": 200
+    },
+    {
+      "id": "2026-01-21_bug-033-semantic-chunks-groq-upgrade",
+      "date": "2026-01-21T08:30:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "bugfix-infrastructure",
+      "feature": "semantic-chunks-groq-upgrade",
+      "duration_minutes": 30,
+      "skills_used": ["superpowers:systematic-debugging"],
+      "files_read": 4,
+      "files_created": 1,
+      "files_modified": 2,
+      "lines_added": 120,
+      "lines_removed": 4,
+      "artifacts": [
+        "DOCS/.meta/sessions/2026-01-21_bug-033-semantic-chunks-groq-upgrade.md",
+        "DOCS/project-management/action-items.md",
+        "DOCS/.meta/agent-registry.json"
+      ],
+      "decisions": [
+        "Groq Dev Tier upgrade instead of LLM fallback implementation",
+        "Manual Supabase migration execution"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Verify import works after changes"
+      ],
+      "bugs_fixed": [
+        "BUG-033: semantic_chunks table missing + Groq rate limit"
+      ],
+      "infrastructure_changes": [
+        "INFRA-007: Groq Dev Tier upgrade (500K → 7M tokens/day)"
+      ],
+      "supabase_migration_executed": true,
+      "methodology": "systematic-debugging"
+    },
+    {
+      "id": "2026-01-21_bug-029-migration-execution",
+      "date": "2026-01-21T07:30:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "implementation",
+      "feature": "bug-029-migration",
+      "duration_minutes": 45,
+      "skills_used": ["superpowers:systematic-debugging", "browser-automation"],
+      "files_read": 5,
+      "files_created": 1,
+      "files_modified": 4,
+      "lines_added": 52,
+      "lines_removed": 0,
+      "artifacts": [
+        "database/migrations/011_add_import_tracking_to_projects.sql",
+        "backend/llm/groq_provider.py",
+        "backend/graph/entity_extractor.py",
+        "DOCS/project-management/action-items.md",
+        "DOCS/.meta/sessions/2026-01-21_bug-029-migration-execution.md"
+      ],
+      "decisions": [
+        "Git rebase conflict: use interval-based rate limiter",
+        "Git rebase conflict: merge both section-aware and JSON fallback extraction",
+        "Use JavaScript Monaco API to set SQL in Supabase editor"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Render manual deployment"
+      ],
+      "bugs_fixed": [
+        "BUG-029: system.py DB query - missing columns",
+        "BUG-031: entity_extractor.py JSON parsing (git conflict resolved)",
+        "BUG-032: Groq API rate limiting (git conflict resolved)"
+      ],
+      "commits": ["ca8a8c0"],
+      "browser_automation_actions": 15,
+      "methodology": "git-rebase-and-browser-automation",
+      "supabase_migration_executed": true
+    },
+    {
+      "id": "2026-01-21_codex-review-proxy-headers-fix",
+      "date": "2026-01-21T05:30:00Z",
+      "agents": ["Opus 4.5", "Codex gpt-5.2-codex"],
+      "type": "root-cause-analysis",
+      "feature": "proxy-headers-fix",
+      "duration_minutes": 45,
+      "skills_used": ["/review (code-reviewer)", "superpowers:systematic-debugging"],
+      "files_read": 15,
+      "files_created": 1,
+      "files_modified": 4,
+      "lines_added": 81,
+      "lines_removed": 8,
+      "artifacts": [
+        "Dockerfile",
+        "frontend/lib/api.ts",
+        "frontend/components/graph/StatusBar.tsx",
+        "DOCS/project-management/action-items.md",
+        "DOCS/.meta/sessions/2026-01-21_codex-review-proxy-headers-fix.md"
+      ],
+      "decisions": [
+        "Use Codex CLI for comprehensive codebase analysis",
+        "Add --proxy-headers to Uvicorn for TLS termination awareness",
+        "Trailing slash in API endpoints to avoid redirects",
+        "Centralize API_URL export to prevent enforceHttps bypass"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Render Docker service manual redeploy",
+        "Verify Mixed Content error resolved"
+      ],
+      "bugs_fixed": [
+        "BUG-019: Uvicorn proxy headers not enabled (TRUE root cause)"
+      ],
+      "commits": ["169dfb8", "e09c7d6"],
+      "codex_tokens_used": 76167,
+      "methodology": "codex-review-based",
+      "root_cause_discovery": "Uvicorn not trusting X-Forwarded-Proto from Render load balancer",
+      "related_issues": ["BUG-015", "BUG-016", "BUG-017", "BUG-018"],
+      "key_insight": "Frontend fixes cannot solve backend redirect scheme issues"
+    },
+    {
+      "id": "2026-01-21_brainstorming-vercel-url-fix",
+      "date": "2026-01-21T03:30:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "debugging",
+      "feature": "vercel-url-fix",
+      "duration_minutes": 30,
+      "skills_used": ["superpowers:brainstorming", "superpowers:dispatching-parallel-agents", "superpowers:systematic-debugging"],
+      "files_read": 12,
+      "files_created": 1,
+      "files_modified": 3,
+      "lines_added": 52,
+      "lines_removed": 3,
+      "artifacts": [
+        "frontend/vercel.json",
+        "frontend/.env.local.example",
+        "DOCS/.meta/sessions/2026-01-21_brainstorming-vercel-url-fix.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [
+        "Use brainstorming skill for systematic problem exploration",
+        "Browser automation for direct verification of Vercel env vars",
+        "Parallel agent dispatching for independent problem investigation"
+      ],
+      "outcome": "completed",
+      "follow_up_required": false,
+      "bugs_fixed": [
+        "BUG-018: vercel.json deprecated Render service URL"
+      ],
+      "deployment_verified": true,
+      "commits": ["3523eb4", "659eb28"],
+      "parallel_agents_dispatched": 3,
+      "browser_automation_actions": 8,
+      "methodology": "superpower-skills-based",
+      "root_cause_discovery": "vercel.json rewrite pointing to deleted service",
+      "related_issues": ["INFRA-004"]
+    },
+    {
+      "id": "2026-01-21_parallel-agent-debugging-deployment-fix",
+      "date": "2026-01-21T02:00:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "debugging",
+      "feature": "deployment-fix",
+      "duration_minutes": 45,
+      "skills_used": ["superpowers:dispatching-parallel-agents", "superpowers:systematic-debugging"],
+      "files_read": 8,
+      "files_created": 1,
+      "files_modified": 3,
+      "lines_added": 25,
+      "lines_removed": 18,
+      "artifacts": [
+        "backend/routers/system.py",
+        "backend/middleware/quota_middleware.py",
+        "frontend/lib/api.ts",
+        "DOCS/.meta/sessions/2026-01-21_parallel-agent-debugging-deployment-fix.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [
+        "Parallel agent dispatching for independent problem investigation",
+        "Domain-based HTTPS enforcement for SSR compatibility",
+        "Correct function naming convention for auth dependencies"
+      ],
+      "outcome": "completed",
+      "follow_up_required": false,
+      "bugs_fixed": [
+        "BUG-015: system.py get_connection() AttributeError",
+        "BUG-016: SSR enforceHttps not working",
+        "BUG-017: quota_middleware.py ImportError"
+      ],
+      "deployment_verified": true,
+      "commits": ["b95c051", "4611214", "feaa756"],
+      "parallel_agents_dispatched": 3,
+      "deployment_attempts": 4,
+      "final_deployment_status": "live",
+      "health_check_verified": true
+    },
+    {
+      "id": "2026-01-20_action-items-implementation",
+      "date": "2026-01-20T10:00:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "implementation",
+      "feature": "action-items-completion",
+      "duration_minutes": 120,
+      "files_read": 25,
+      "files_created": 18,
+      "files_modified": 8,
+      "lines_added": 4936,
+      "lines_removed": 1411,
+      "artifacts": [
+        "backend/graph/persistence/entity_dao.py",
+        "backend/graph/persistence/chunk_dao.py",
+        "backend/graph/embedding/embedding_pipeline.py",
+        "backend/graph/analytics/graph_analytics.py",
+        "backend/middleware/quota_service.py",
+        "backend/middleware/quota_middleware.py",
+        "backend/middleware/error_tracking.py",
+        "backend/routers/quota.py",
+        "database/migrations/014_api_quota.sql",
+        "frontend/jest.config.js",
+        "frontend/jest.setup.js",
+        "frontend/__tests__/components/ui/ErrorDisplay.test.tsx",
+        "frontend/__tests__/components/ui/Skeleton.test.tsx",
+        "frontend/__tests__/components/auth/LoginForm.test.tsx",
+        "DOCS/operations/503-error-monitoring.md",
+        "DOCS/.meta/sessions/2026-01-20_action-items-implementation.md"
+      ],
+      "decisions": [
+        "GraphStore Facade pattern with 4 specialized modules",
+        "Jest + React Testing Library for frontend tests",
+        "4-tier quota plan system (free, basic, premium, enterprise)",
+        "In-memory error tracking with 100 event rolling window"
+      ],
+      "outcome": "completed",
+      "follow_up_required": false,
+      "action_items_completed": [
+        "ARCH-002: GraphStore God Object Refactoring",
+        "TEST-004: Frontend Test Infrastructure",
+        "FUNC-005: Per-Project/User API Quota System",
+        "PERF-004: 503 Error Monitoring"
+      ],
+      "commits": ["f3a1d54"],
+      "scores": {
+        "code_quality": 8,
+        "architecture": 8,
+        "security": 8,
+        "performance": 8,
+        "maintainability": 8
+      }
+    },
+    {
+      "id": "2026-01-20_mixed-content-cors-fix",
+      "date": "2026-01-20T23:30:00Z",
+      "agents": ["Opus 4.5", "Codex gpt-5.2-codex"],
+      "type": "bugfix-security-performance",
+      "feature": "production-stability",
+      "duration_minutes": 60,
+      "files_read": 15,
+      "files_created": 1,
+      "files_modified": 6,
+      "lines_added": 150,
+      "lines_removed": 30,
+      "artifacts": [
+        "frontend/lib/api.ts",
+        "backend/config.py",
+        "backend/middleware/rate_limiter.py",
+        "backend/database.py",
+        "backend/main.py",
+        "backend/graph/graph_store.py",
+        "DOCS/.meta/sessions/2026-01-20_mixed-content-cors-fix.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [
+        "Force HTTPS in API client when page is served over HTTPS",
+        "Trusted proxy mode for rate limiter (auto/always/never)",
+        "Fail-fast pattern for DB and auth configuration in production",
+        "Batch updates with executemany for embedding operations"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "ARCH-002: GraphStore God Object Refactoring (large task)",
+        "TEST-004: Frontend tests (large task)",
+        "FUNC-005: Per-Project/User API quota (large task)"
+      ],
+      "bugs_fixed": [
+        "BUG-004: Mixed Content Error",
+        "BUG-005: CORS Error for Vercel Preview"
+      ],
+      "security_fixes": [
+        "SEC-011: Rate Limiter X-Forwarded-For Spoofing",
+        "SEC-012: Auth Configuration Mismatch Handling"
+      ],
+      "architecture_fixes": [
+        "ARCH-001: DB Connection Failure Handling"
+      ],
+      "performance_fixes": [
+        "PERF-008: Entity Embedding Batch Updates",
+        "PERF-006: Chunk Embedding Batch Updates"
+      ],
+      "scores": {
+        "code_quality": 7,
+        "architecture": 7,
+        "security": 7,
+        "performance": 7,
+        "maintainability": 7
+      },
+      "new_action_items": 7,
+      "action_items_completed": 6,
+      "deployment_verified": true,
+      "commits": ["22217b5", "3b0b563", "3dddd7f", "4f10976"]
+    },
+    {
+      "id": "2026-01-20_infranodus-integration",
+      "date": "2026-01-20T15:00:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "implementation",
+      "feature": "infranodus-integration",
+      "duration_minutes": 90,
+      "files_read": 12,
+      "files_created": 10,
+      "files_modified": 8,
+      "lines_added": 3800,
+      "artifacts": [
+        "database/migrations/012_relationship_evidence.sql",
+        "database/migrations/013_entity_temporal.sql",
+        "backend/graph/diversity_analyzer.py",
+        "frontend/components/graph/EdgeContextModal.tsx",
+        "frontend/components/graph/TemporalSlider.tsx",
+        "frontend/components/graph/BridgeHypothesisCard.tsx",
+        "frontend/components/graph/GraphComparison.tsx",
+        "frontend/hooks/useTemporalGraph.ts",
+        "frontend/app/projects/compare/page.tsx",
+        "DOCS/.meta/sessions/2026-01-20_infranodus-integration.md"
+      ],
+      "decisions": [
+        "Use separate table for relationship evidence",
+        "Add temporal columns to existing entities table",
+        "Standalone diversity analyzer module"
+      ],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Run database migrations on Supabase",
+        "Run backend unit tests for new endpoints",
+        "Manual E2E testing of all 5 features",
+        "Integrate TemporalSlider into KnowledgeGraph.tsx",
+        "Update API documentation with new endpoints"
+      ],
+      "features_implemented": [
+        "Contextual Edge Exploration (Phase 1)",
+        "Temporal Graph Evolution (Phase 2)",
+        "AI Bridge Generation (Phase 3)",
+        "Diversity Index (Phase 4)",
+        "Graph Comparison Mode (Phase 5)"
+      ],
+      "api_endpoints_added": 6,
+      "react_components_added": 5
+    },
+    {
+      "id": "2026-01-19_infranodus-visualization",
+      "date": "2026-01-19T12:00:00Z",
+      "agents": ["Opus 4.5"],
+      "type": "implementation",
+      "feature": "infranodus-visualization",
+      "duration_minutes": 120,
+      "files_read": 15,
+      "files_created": 4,
+      "files_modified": 8,
+      "lines_added": 765,
+      "artifacts": [
+        "RELEASE_NOTES_v0.2.0.md",
+        "frontend/components/graph/InsightHUD.tsx",
+        "frontend/components/graph/MainTopicsPanel.tsx",
+        "database/migrations/009_potential_edges.sql",
+        "DOCS/features/infranodus-visualization.md",
+        "DOCS/.meta/sessions/2026-01-19_infranodus-visualization.md"
+      ],
+      "decisions": [],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Phase 5: Topic View Mode implementation",
+        "Phase 6: Bloom Effect Enhancement",
+        "Run tests to verify implementation"
+      ]
+    },
+    {
+      "id": "2025-01-15_zotero-documentation-restructure",
+      "date": "2025-01-15T12:30:00Z",
+      "agents": ["Opus 4.5", "Sonnet 4.5", "Haiku"],
+      "type": "planning",
+      "feature": "documentation-restructure",
+      "duration_minutes": 90,
+      "files_read": 25,
+      "files_created": 6,
+      "files_moved": 17,
+      "files_deleted": 3,
+      "artifacts": [
+        "DOCS/.meta/templates/session-template.md",
+        "DOCS/.meta/templates/adr-template.md",
+        "DOCS/.meta/decisions/001-concept-centric-graph.md",
+        "DOCS/.meta/decisions/002-zotero-hybrid-import.md",
+        "DOCS/.meta/sessions/2025-01-15_zotero-documentation-restructure.md"
+      ],
+      "decisions": ["001-concept-centric-graph", "002-zotero-hybrid-import"],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Push to GitHub",
+        "Update internal links",
+        "Update mkdocs.yml navigation",
+        "Implement Zotero hybrid import"
+      ]
+    },
+    {
+      "id": "2026-01-15_code-review-security",
+      "date": "2026-01-15T15:00:00Z",
+      "agents": ["Opus 4.5", "Codex gpt-5.2-codex"],
+      "type": "review",
+      "feature": "security-audit",
+      "duration_minutes": 30,
+      "files_analyzed": 50,
+      "security_issues_found": 8,
+      "action_items_created": 9,
+      "artifacts": [
+        "DOCS/.meta/sessions/2026-01-15_code-review-security.md",
+        "DOCS/project-management/action-items.md"
+      ],
+      "decisions": [],
+      "outcome": "completed",
+      "follow_up_required": true,
+      "follow_up_tasks": [
+        "Fix SEC-001: Graph/Chat endpoint authentication",
+        "Fix SEC-002: AuthMiddleware centralization",
+        "Fix SEC-003: Supabase RLS policies",
+        "Fix FUNC-001: Orchestrator DB connection",
+        "Fix BUG-001: datetime import",
+        "Fix FUNC-002: Frontend Authorization header"
+      ],
+      "scores": {
+        "code_quality": 7,
+        "architecture": 6,
+        "security": 5,
+        "performance": 6,
+        "maintainability": 6
+      }
+    }
+  ],
+
+  "decisions": [
+    {
+      "id": "001-concept-centric-graph",
+      "title": "Concept-Centric Knowledge Graph Architecture",
+      "status": "accepted",
+      "date": "2025-01-07",
+      "session": null,
+      "impact": "high",
+      "description": "Papers and authors stored as metadata, not graph nodes. Only concepts, methods, findings visualized."
+    },
+    {
+      "id": "002-zotero-hybrid-import",
+      "title": "Zotero Hybrid Import Strategy",
+      "status": "accepted",
+      "date": "2025-01-15",
+      "session": "2025-01-15_zotero-documentation-restructure",
+      "impact": "medium",
+      "description": "Try local Zotero connector first, fallback to web API. Three import modes with four-tier source tracking."
+    }
+  ],
+
+  "action_items": {
+    "total": 58,
+    "by_priority": {
+      "high": 26,
+      "medium": 23,
+      "low": 9
+    },
+    "by_status": {
+      "pending": 2,
+      "in_progress": 0,
+      "completed": 56
+    },
+    "recently_completed": [
+      "INFRA-008: Supabase Free Plan quota cleanup (671→181 MB)",
+      "INFRA-009: VACUUM FULL space recovery (490 MB)",
+      "INFRA-010: Migration 021 cross-paper links",
+      "INFRA-011: Render DATABASE_URL Session Pooler",
+      "INFRA-012: Supabase MCP project root config"
+    ],
+    "pending_large_tasks": [
+      "INFRA-005: Infrastructure as Code",
+      "DOC-003: Error Debugging Guide"
+    ],
+    "tracking_file": "DOCS/project-management/action-items.md"
+  },
+
+  "agent_stats": {
+    "Opus 4.6": {
+      "total_sessions": 1,
+      "total_hours": 0.4,
+      "decisions_made": 3,
+      "primary_role": "Infrastructure Maintenance",
+      "features_designed": ["db-maintenance-migration-021"],
+      "infrastructure_changes": 5,
+      "db_rows_deleted": 1043953,
+      "disk_space_recovered_mb": 490,
+      "migrations_applied": 1
+    },
+    "Opus 4.5": {
+      "total_sessions": 12,
+      "total_hours": 13.0,
+      "decisions_made": 29,
+      "primary_role": "Architecture & Complex Design",
+      "features_designed": ["documentation-restructure", "zotero-hybrid-import", "infranodus-visualization", "infranodus-integration", "production-stability", "action-items-completion", "deployment-fix", "vercel-url-fix", "proxy-headers-fix", "bug-029-migration", "semantic-chunks-groq-upgrade", "memory-optimization"],
+      "reviews_conducted": 3,
+      "bugs_fixed": 14,
+      "security_fixes": 2,
+      "performance_fixes": 4,
+      "architecture_fixes": 2,
+      "test_infrastructure": 1,
+      "quota_systems": 1,
+      "parallel_debugging_sessions": 2,
+      "codex_collaborations": 2
+    },
+    "Sonnet 4.5": {
+      "total_sessions": 1,
+      "total_hours": 1.5,
+      "decisions_made": 0,
+      "primary_role": "Feature Implementation Analysis",
+      "features_analyzed": ["backend-api", "frontend-ui", "database-schema", "graph-integration", "test-design"]
+    },
+    "Haiku": {
+      "total_sessions": 1,
+      "total_hours": 0.5,
+      "decisions_made": 0,
+      "primary_role": "Exploration & Discovery",
+      "areas_explored": ["github-structure", "local-filesystem"]
+    },
+    "Codex gpt-5.2-codex": {
+      "total_sessions": 3,
+      "total_hours": 1.75,
+      "decisions_made": 0,
+      "primary_role": "Code Analysis & Review",
+      "reviews_conducted": 3,
+      "action_items_generated": 17,
+      "root_cause_discoveries": 1
+    }
+  },
+
+  "documentation_structure": {
+    "features": {
+      "infranodus-visualization": {
+        "files": 1,
+        "status": "documented",
+        "implementation_status": "completed"
+      },
+      "infranodus-integration": {
+        "files": 1,
+        "status": "documented",
+        "implementation_status": "completed",
+        "phases": [
+          "Contextual Edge Exploration",
+          "Temporal Graph Evolution",
+          "AI Bridge Generation",
+          "Diversity Index",
+          "Graph Comparison Mode"
+        ]
+      },
+      "zotero-integration": {
+        "files": 8,
+        "status": "documented",
+        "implementation_status": "planned"
+      }
+    },
+    "architecture": {
+      "files": 4,
+      "status": "complete"
+    },
+    "development": {
+      "files": 2,
+      "status": "complete"
+    },
+    "project-management": {
+      "files": 4,
+      "status": "complete"
+    }
+  },
+
+  "next_session_id": "2026-02-09_[feature-name]",
+
+  "templates": {
+    "session": "DOCS/.meta/templates/session-template.md",
+    "adr": "DOCS/.meta/templates/adr-template.md"
+  },
+
+  "documentation_protocol": {
+    "version": "1.0.0",
+    "added_date": "2026-01-15",
+    "triggers": [
+      "/code-reviewer",
+      "new feature implementation",
+      "architecture decision",
+      "bug fix"
+    ],
+    "required_artifacts": {
+      "code_review": ["session_log", "action_items", "registry_update"],
+      "feature": ["session_log", "registry_update"],
+      "adr": ["decision_record", "registry_update"],
+      "bugfix": ["action_items_update"]
+    }
+  }
+}

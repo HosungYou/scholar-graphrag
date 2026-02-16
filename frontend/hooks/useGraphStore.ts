@@ -1,10 +1,16 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
-import type { GraphData, GraphEntity, EntityType } from '@/types';
-
-// View modes for different graph perspectives
-export type ViewMode = 'concepts' | 'papers' | 'full';
+import type {
+  GraphData,
+  GraphEntity,
+  EntityType,
+  StructuralGap,
+  ConceptCluster,
+  CentralityMetrics,
+  GapAnalysisResult,
+  PotentialEdge,
+  ViewMode,
+} from '@/types';
 
 interface FilterState {
   entityTypes: EntityType[];
@@ -21,10 +27,34 @@ interface GraphStore {
   isLoading: boolean;
   error: string | null;
   filters: FilterState;
+
+  // Gap Detection State
+  gaps: StructuralGap[];
+  clusters: ConceptCluster[];
+  centralityMetrics: CentralityMetrics[];
+  isGapLoading: boolean;
+  selectedGap: StructuralGap | null;
+
+  // Ghost Edge State (InfraNodus-style)
+  showGhostEdges: boolean;
+  potentialEdges: PotentialEdge[];
+
+  // View Mode State (3D vs Topic View)
   viewMode: ViewMode;
 
+  // Pinned Nodes State (Graph-to-Prompt)
+  pinnedNodes: string[];
+
+  // Phase 11F: SAME_AS Edge Filter
+  showSameAsEdges: boolean;
+
   // Actions
-  fetchGraphData: (projectId: string) => Promise<void>;
+  fetchGraphData: (
+    projectId: string,
+    options?: {
+      viewContext?: 'hybrid' | 'concept' | 'all';
+    }
+  ) => Promise<void>;
   setSelectedNode: (node: GraphEntity | null) => void;
   setHighlightedNodes: (nodeIds: string[]) => void;
   setHighlightedEdges: (edgeIds: string[]) => void;
@@ -33,19 +63,60 @@ interface GraphStore {
   setFilters: (filters: Partial<FilterState>) => void;
   resetFilters: () => void;
   getFilteredData: () => GraphData | null;
+
+  // Gap Detection Actions
+  fetchGapAnalysis: (projectId: string) => Promise<void>;
+  setSelectedGap: (gap: StructuralGap | null) => void;
+  highlightGapConcepts: (gap: StructuralGap) => void;
+
+  // Ghost Edge Actions
+  toggleGhostEdges: () => void;
+  setShowGhostEdges: (show: boolean) => void;
+  getPotentialEdgesForGap: (gap: StructuralGap) => PotentialEdge[];
+
+  // View Mode Actions
   setViewMode: (mode: ViewMode) => void;
-  getConceptCentricData: () => GraphData | null;
+  getRecommendedViewMode: (intent?: string | null) => ViewMode;
+  applyRecommendedViewMode: (intent?: string | null) => void;
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds: string[]) => void;
+  addPinnedNode: (nodeId: string) => void;
+  removePinnedNode: (nodeId: string) => void;
+  clearPinnedNodes: () => void;
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => void;
 }
 
+// Default filters (Hybrid Mode: Paper/Author + Concept-Centric)
 const defaultFilters: FilterState = {
-  entityTypes: ['Paper', 'Author', 'Concept', 'Method', 'Finding'],
+  entityTypes: [
+    'Paper', 'Author',  // Hybrid Mode entities
+    'Concept', 'Method', 'Finding',  // Primary concept-centric
+    'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation'  // Secondary
+  ] as EntityType[],
   yearRange: null,
   searchQuery: '',
 };
 
-export const useGraphStore = create<GraphStore>()(
-  persist(
-    (set, get) => ({
+// Prevent repeated heavy gap re-analysis calls on every project reopen.
+const gapAutoRefreshAttempted = new Set<string>();
+
+function inferViewModeFromIntent(intent?: string | null): ViewMode {
+  if (!intent) return '3d';
+
+  const normalized = intent.toLowerCase();
+
+  // Gap intent takes priority because it needs dedicated bridge context.
+  if (normalized.includes('gap')) return 'gaps';
+  if (normalized.includes('timeline') || normalized.includes('temporal')) return 'temporal';
+  if (normalized.includes('cluster') || normalized.includes('topic')) return 'topic';
+
+  return '3d';
+}
+
+export const useGraphStore = create<GraphStore>((set, get) => ({
   // Initial state
   graphData: null,
   selectedNode: null,
@@ -54,13 +125,32 @@ export const useGraphStore = create<GraphStore>()(
   isLoading: false,
   error: null,
   filters: { ...defaultFilters },
-  viewMode: 'concepts' as ViewMode, // Default to concept-centric view
+
+  // Gap Detection State
+  gaps: [],
+  clusters: [],
+  centralityMetrics: [],
+  isGapLoading: false,
+  selectedGap: null,
+
+  // Ghost Edge State
+  showGhostEdges: false,
+  potentialEdges: [],
+
+  // View Mode State
+  viewMode: '3d' as ViewMode,
+
+  // Pinned Nodes State
+  pinnedNodes: [],
+
+  // Phase 11F: SAME_AS Edge Filter State
+  showSameAsEdges: true,
 
   // Actions
-  fetchGraphData: async (projectId: string) => {
+  fetchGraphData: async (projectId: string, options?: { viewContext?: 'hybrid' | 'concept' | 'all' }) => {
     set({ isLoading: true, error: null });
     try {
-      const data = await api.getVisualizationData(projectId);
+      const data = await api.getVisualizationData(projectId, options);
       set({ graphData: data, isLoading: false });
     } catch (error) {
       set({
@@ -166,96 +256,99 @@ export const useGraphStore = create<GraphStore>()(
     return { nodes: filteredNodes, edges: filteredEdges };
   },
 
-  setViewMode: (mode: ViewMode) => {
+  // Gap Detection Actions
+  fetchGapAnalysis: async (projectId: string) => {
+    set({ isGapLoading: true });
+    try {
+      let analysis = await api.getGapAnalysis(projectId);
+
+      // v0.9.0: Auto-refresh when no gaps but clusters exist
+      // This handles the case where gap analysis wasn't computed yet
+      if (
+        analysis.gaps.length === 0 &&
+        analysis.clusters.length > 1 &&
+        !gapAutoRefreshAttempted.has(projectId)
+      ) {
+        gapAutoRefreshAttempted.add(projectId);
+        console.log('[GapAnalysis] No gaps found with multiple clusters, triggering refresh...');
+        try {
+          analysis = await api.refreshGapAnalysis(projectId);
+        } catch (refreshError) {
+          console.warn('[GapAnalysis] Refresh failed:', refreshError);
+          // Continue with original analysis
+        }
+      }
+
+      set({
+        gaps: analysis.gaps,
+        clusters: analysis.clusters,
+        centralityMetrics: analysis.centrality_metrics,
+        isGapLoading: false,
+      });
+    } catch (error) {
+      console.error('Failed to fetch gap analysis:', error);
+      set({ isGapLoading: false });
+    }
+  },
+
+  setSelectedGap: (gap) => {
+    set({ selectedGap: gap });
+  },
+
+  highlightGapConcepts: (gap) => {
+    // Highlight all concepts in the gap
+    const allConceptIds = [
+      ...gap.cluster_a_concepts,
+      ...gap.cluster_b_concepts,
+      ...gap.bridge_candidates,
+    ];
+    set({
+      highlightedNodes: allConceptIds,
+      selectedGap: gap,
+      // Also set potential edges for the selected gap
+      potentialEdges: gap.potential_edges || [],
+    });
+  },
+
+  // Ghost Edge Actions
+  toggleGhostEdges: () => {
+    set((state) => ({ showGhostEdges: !state.showGhostEdges }));
+  },
+
+  setShowGhostEdges: (show) => {
+    set({ showGhostEdges: show });
+  },
+
+  getPotentialEdgesForGap: (gap) => {
+    return gap.potential_edges || [];
+  },
+
+  // View Mode Actions
+  setViewMode: (mode) => {
     set({ viewMode: mode });
   },
 
-  // Get concept-centric view of the graph
-  // In this view, Concepts are primary nodes, and Papers/Authors are shown as metadata
-  getConceptCentricData: () => {
-    const { graphData, filters, viewMode } = get();
-    if (!graphData) return null;
+  getRecommendedViewMode: (intent) => inferViewModeFromIntent(intent),
 
-    if (viewMode === 'full') {
-      // Full view - show all entity types
-      return get().getFilteredData();
-    }
-
-    if (viewMode === 'papers') {
-      // Paper-centric view - show Papers as primary, with connected Authors
-      const paperNodes = graphData.nodes.filter(
-        (n) => n.entity_type === 'Paper' || n.entity_type === 'Author'
-      );
-      const paperNodeIds = new Set(paperNodes.map((n) => n.id));
-      const paperEdges = graphData.edges.filter(
-        (e) => paperNodeIds.has(e.source) && paperNodeIds.has(e.target)
-      );
-      return { nodes: paperNodes, edges: paperEdges };
-    }
-
-    // Concept-centric view (default)
-    // Primary nodes: Concept, Method, Finding
-    // Secondary nodes: Papers that discuss these concepts
-    const conceptTypes = ['Concept', 'Method', 'Finding'];
-    const conceptNodes = graphData.nodes.filter((n) =>
-      conceptTypes.includes(n.entity_type)
-    );
-    const conceptNodeIds = new Set(conceptNodes.map((n) => n.id));
-
-    // Find Papers connected to concepts via DISCUSSES_CONCEPT, USES_METHOD, SUPPORTS
-    const relevantRelTypes = ['DISCUSSES_CONCEPT', 'USES_METHOD', 'SUPPORTS', 'CONTRADICTS'];
-    const connectedPaperIds = new Set<string>();
-
-    graphData.edges.forEach((edge) => {
-      if (relevantRelTypes.includes(edge.relationship_type)) {
-        // If target is a concept, source is likely a paper
-        if (conceptNodeIds.has(edge.target)) {
-          connectedPaperIds.add(edge.source);
-        }
-        // If source is a concept, target might be a paper
-        if (conceptNodeIds.has(edge.source)) {
-          connectedPaperIds.add(edge.target);
-        }
-      }
-    });
-
-    // Add connected Papers to the view
-    const paperNodes = graphData.nodes.filter(
-      (n) => n.entity_type === 'Paper' && connectedPaperIds.has(n.id)
-    );
-
-    const allNodes = [...conceptNodes, ...paperNodes];
-    const allNodeIds = new Set(allNodes.map((n) => n.id));
-
-    // Filter edges to only those between visible nodes
-    const filteredEdges = graphData.edges.filter(
-      (e) => allNodeIds.has(e.source) && allNodeIds.has(e.target)
-    );
-
-    // Also include RELATED_TO edges between concepts
-    const conceptRelEdges = graphData.edges.filter(
-      (e) =>
-        e.relationship_type === 'RELATED_TO' &&
-        conceptNodeIds.has(e.source) &&
-        conceptNodeIds.has(e.target)
-    );
-
-    // Merge edges, avoiding duplicates
-    const edgeIds = new Set(filteredEdges.map((e) => e.id));
-    const mergedEdges = [
-      ...filteredEdges,
-      ...conceptRelEdges.filter((e) => !edgeIds.has(e.id)),
-    ];
-
-    return { nodes: allNodes, edges: mergedEdges };
+  applyRecommendedViewMode: (intent) => {
+    set({ viewMode: inferViewModeFromIntent(intent) });
   },
-    }),
-    {
-      name: 'scholarag-graph-settings',
-      partialize: (state) => ({
-        viewMode: state.viewMode,
-        filters: { entityTypes: state.filters.entityTypes },
-      }),
-    }
-  )
-);
+
+  // Pinned Nodes Actions (Graph-to-Prompt)
+  setPinnedNodes: (nodeIds) => set({ pinnedNodes: nodeIds }),
+
+  addPinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.includes(nodeId)
+      ? state.pinnedNodes
+      : [...state.pinnedNodes, nodeId]
+  })),
+
+  removePinnedNode: (nodeId) => set((state) => ({
+    pinnedNodes: state.pinnedNodes.filter(id => id !== nodeId)
+  })),
+
+  clearPinnedNodes: () => set({ pinnedNodes: [] }),
+
+  // Phase 11F: SAME_AS Edge Filter Actions
+  toggleSameAsEdges: () => set((state) => ({ showSameAsEdges: !state.showSameAsEdges })),
+}));

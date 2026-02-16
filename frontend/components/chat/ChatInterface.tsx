@@ -1,118 +1,77 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Send,
-  Sparkles,
-  Copy,
-  Check,
-  Bot,
-  User,
-  ExternalLink,
-  MessageSquare,
-  Lightbulb,
-  Zap,
-  Activity
-} from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { Send, Loader2, Sparkles, Copy, Check, ArrowRight } from 'lucide-react';
 import clsx from 'clsx';
-import ReactMarkdown from 'react-markdown';
-import type { Citation } from '@/types/graph';
+
+/* ============================================================
+   ScholaRAG Graph - Research Dialogue Chat Interface
+   VS Design Diverge: Direction B (T-Score 0.4)
+
+   Design Principles:
+   - No bubble backgrounds - use typography and spacing
+   - Left-aligned messages for both roles (conversational)
+   - Accent bar for assistant messages (2px teal)
+   - Inline superscript citations
+   - Bottom-border-only input field
+   ============================================================ */
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  citations?: Citation[] | string[];
+  citations?: string[];
   highlighted_nodes?: string[];
   highlighted_edges?: string[];
   timestamp: Date;
-  isStreaming?: boolean;
-  retrieval_trace?: {
-    strategy: string;
-    steps: Array<{ action: string; duration_ms: number; node_ids: string[] }>;
-    metrics: { total_steps: number; total_latency_ms: number };
-  };
+  // Phase 11B: Search strategy metadata
+  searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+  hopCount?: number;
 }
 
 interface ChatInterfaceProps {
   projectId: string;
   onSendMessage: (message: string) => Promise<{
     content: string;
-    citations?: Citation[] | string[];
+    citations?: string[];
     highlighted_nodes?: string[];
     highlighted_edges?: string[];
+    // Phase 11B: Search strategy metadata
+    searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
+    hopCount?: number;
   }>;
-  onCitationClick?: (citation: Citation | string) => void;
-  onHighlightNodes?: (nodeIds: string[]) => void;
+  onCitationClick?: (citation: string) => void;
   initialMessages?: Message[];
+  graphStats?: {
+    totalNodes?: number;
+    totalEdges?: number;
+    topConcepts?: string[];
+    clusterCount?: number;
+    gapCount?: number;
+  };
 }
-
-const messageVariants = {
-  hidden: { opacity: 0, x: -20, filter: 'blur(10px)' },
-  visible: {
-    opacity: 1,
-    x: 0,
-    filter: 'blur(0px)',
-    transition: { type: 'spring' as const, stiffness: 260, damping: 20 }
-  }
-};
 
 export function ChatInterface({
   projectId,
   onSendMessage,
   onCitationClick,
-  onHighlightNodes,
   initialMessages = [],
+  graphStats,
 }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<Message[]>(() => {
-    if (initialMessages.length > 0) return initialMessages;
-    try {
-      const stored = localStorage.getItem(`chat_history_${projectId}`);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.map((m: Record<string, unknown>) => ({
-          ...m,
-          timestamp: new Date(m.timestamp as string),
-        }));
-      }
-    } catch (e) {
-      // Ignore parse errors
-    }
-    return [];
-  });
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [hoveredCitation, setHoveredCitation] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages]);
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      try {
-        const serializable = messages.map(m => ({
-          ...m,
-          timestamp: m.timestamp.toISOString(),
-        }));
-        localStorage.setItem(`chat_history_${projectId}`, JSON.stringify(serializable));
-      } catch (e) {
-        // Ignore storage errors
-      }
-    }
-  }, [messages, projectId]);
-
-  const adjustTextareaHeight = useCallback(() => {
-    const textarea = inputRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`; // max ~6 lines
-    }
-  }, []);
-
+  // Handle send message
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -125,39 +84,30 @@ export function ChatInterface({
 
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
-
-    // Reset textarea height after send
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
-
     setIsLoading(true);
 
     try {
       const response = await onSendMessage(input.trim());
-      const messageId = `assistant-${Date.now()}`;
 
       const assistantMessage: Message = {
-        id: messageId,
+        id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: response.content,
         citations: response.citations,
+        highlighted_nodes: response.highlighted_nodes,
+        highlighted_edges: response.highlighted_edges,
         timestamp: new Date(),
-        isStreaming: true,
+        // Phase 11B: Search strategy metadata
+        searchStrategy: response.searchStrategy,
+        hopCount: response.hopCount,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-      setStreamingMessageId(messageId);
-
-      if (response.highlighted_nodes && onHighlightNodes) {
-        onHighlightNodes(response.highlighted_nodes);
-      }
     } catch (error) {
-      console.error(error);
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: '죄송합니다. 응답 생성 중 오류가 발생했습니다. 다시 시도해 주세요.',
+        content: 'Sorry, I encountered an error processing your request. Please try again.',
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -166,119 +116,254 @@ export function ChatInterface({
     }
   };
 
-  return (
-    <div className="flex flex-col h-full bg-surface-1 border-l border-border">
-      {/* Header */}
-      <div className="p-6 border-b border-border flex items-center gap-3">
-        <div className="w-10 h-10 rounded bg-teal-dim flex items-center justify-center border border-border">
-          <Bot className="w-5 h-5 text-teal" />
-        </div>
-        <div>
-          <h2 className="text-sm font-medium text-text-primary tracking-tight">Nexus AI Assistant</h2>
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-medium text-text-ghost uppercase tracking-widest">Neural Link Active</span>
-          </div>
-        </div>
-      </div>
+  // Handle copy message
+  const handleCopy = async (messageId: string, content: string) => {
+    await navigator.clipboard.writeText(content);
+    setCopiedId(messageId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-hide">
+  // Handle keyboard submit
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  // Format timestamp
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  };
+
+  // v0.11.0: Dynamic suggested questions based on graph data
+  const suggestedQuestions = useMemo(() => {
+    const questions: string[] = [];
+
+    // Base questions that always apply
+    questions.push('What are the main research themes in this collection?');
+    questions.push('Which methodologies are most commonly used?');
+
+    // Graph-aware questions
+    if (graphStats?.topConcepts && graphStats.topConcepts.length >= 2) {
+      questions.push(
+        `How are "${graphStats.topConcepts[0]}" and "${graphStats.topConcepts[1]}" related?`
+      );
+    } else {
+      questions.push('What are the key findings across all papers?');
+    }
+
+    if (graphStats?.gapCount && graphStats.gapCount > 0) {
+      questions.push(`What research gaps exist between the ${graphStats.clusterCount || ''} concept clusters?`);
+    } else {
+      questions.push('Identify potential research gaps in this literature');
+    }
+
+    return questions;
+  }, [graphStats]);
+
+  return (
+    <div className="chat-container flex flex-col h-full bg-paper dark:bg-ink">
+      {/* Messages Area */}
+      <div className="chat-messages flex-1 overflow-y-auto px-6 py-8 space-y-8">
+        {/* Empty State */}
         {messages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-center space-y-6">
-            <div className="relative">
-               <Sparkles className="w-12 h-12 text-teal relative" />
+          <div className="text-center py-16">
+            <div
+              className="w-16 h-16 mx-auto mb-6 flex items-center justify-center"
+              style={{
+                backgroundColor: 'rgb(var(--color-accent-teal) / 0.1)',
+                borderRadius: '4px',
+              }}
+            >
+              <Sparkles className="w-8 h-8 text-accent-teal" />
             </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-medium text-text-primary">Initiate Knowledge Scan</h3>
-              <p className="text-sm text-text-tertiary max-w-[240px]">Explore the literature through the Neural Nexus interface.</p>
+
+            <h3 className="font-display text-2xl text-ink dark:text-paper mb-3">
+              Explore Your Research
+            </h3>
+            <p className="text-muted max-w-md mx-auto mb-8 leading-relaxed">
+              Ask questions about your knowledge graph. I can help find connections,
+              identify trends, and reveal research gaps.
+            </p>
+
+            {/* Suggestion Tags */}
+            <div className="suggestion-tags flex flex-wrap justify-center gap-2">
+              {suggestedQuestions.map((question, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setInput(question);
+                    inputRef.current?.focus();
+                  }}
+                  className="suggestion-tag group flex items-center gap-2"
+                >
+                  <span>{question}</span>
+                  <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        <AnimatePresence initial={false}>
-          {messages.map((msg) => (
-            <motion.div
-              key={msg.id}
-              variants={messageVariants}
-              initial="hidden"
-              animate="visible"
-              className={clsx(
-                'flex flex-col gap-3',
-                msg.role === 'user' ? 'items-end' : 'items-start'
-              )}
-            >
-              <div className={clsx(
-                'max-w-[90%] p-4 rounded text-sm leading-relaxed',
-                msg.role === 'user'
-                  ? 'bg-teal text-text-primary'
-                  : msg.id.startsWith('error-')
-                  ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                  : 'bg-surface-2 border border-border text-text-primary'
-              )}>
-                {msg.role === 'assistant' && !msg.id.startsWith('error-') ? (
-                  <div className="prose prose-sm prose-invert max-w-none
-                    prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1
-                    prose-code:bg-surface-3 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
-                    prose-pre:bg-surface-3 prose-pre:p-3 prose-pre:rounded
-                    prose-a:text-teal prose-a:no-underline hover:prose-a:underline
-                    prose-strong:text-text-primary prose-em:text-text-secondary">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  </div>
-                ) : (
-                  msg.content
-                )}
-                {msg.retrieval_trace && (
-                  <details className="mt-2 border-t border-border/50 pt-2">
-                    <summary className="text-[10px] text-text-ghost cursor-pointer hover:text-text-tertiary flex items-center gap-1">
-                      <Activity className="w-3 h-3" />
-                      {msg.retrieval_trace.strategy} search • {msg.retrieval_trace.metrics.total_steps} steps • {msg.retrieval_trace.metrics.total_latency_ms}ms
-                    </summary>
-                    <div className="mt-1 space-y-1">
-                      {msg.retrieval_trace.steps.map((step, idx) => (
-                        <div key={idx} className="text-[10px] text-text-ghost font-mono flex justify-between">
-                          <span>{step.action}</span>
-                          <span>{step.duration_ms}ms • {step.node_ids.length} nodes</span>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                )}
+        {/* Messages */}
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={clsx(
+              'chat-message animate-fade-in',
+              message.role === 'user' ? 'chat-message--user' : 'chat-message--assistant'
+            )}
+          >
+            {/* Message Content */}
+            <div className="chat-message__content">
+              {/* Parse content to inject citation superscripts */}
+              {message.content}
+            </div>
+
+            {/* Inline Citations */}
+            {message.citations && message.citations.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {message.citations.map((citation, i) => (
+                  <span
+                    key={i}
+                    className="citation-ref relative"
+                    onClick={() => onCitationClick?.(citation)}
+                    onMouseEnter={() => setHoveredCitation(i)}
+                    onMouseLeave={() => setHoveredCitation(null)}
+                  >
+                    {i + 1}
+
+                    {/* Citation Popover */}
+                    {hoveredCitation === i && (
+                      <div className="citation-popover absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap">
+                        <span className="text-xs font-mono truncate max-w-[200px] block">
+                          {citation}
+                        </span>
+                      </div>
+                    )}
+                  </span>
+                ))}
               </div>
-              <span className="text-[10px] font-mono text-text-ghost uppercase tracking-tighter">
-                {msg.role === 'user' ? 'User' : 'Nexus AI'} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            )}
+
+            {/* Search Strategy Badge (Phase 12A: Icon-only with hover expansion) */}
+            {message.role === 'assistant' && message.searchStrategy && (
+              <div className="mt-3 flex items-center gap-2">
+                <span
+                  className="group inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono bg-accent-teal/10 text-accent-teal border border-accent-teal/30 transition-all duration-200 hover:px-3"
+                  aria-label={`${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색 전략 사용'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? `그래프 탐색 전략 사용, ${message.hopCount || 2} 홉`
+                      : '하이브리드 검색 전략 사용'
+                  }`}
+                  title={`이 답변은 ${
+                    message.searchStrategy === 'vector'
+                      ? '벡터 검색'
+                      : message.searchStrategy === 'graph_traversal'
+                      ? '그래프 탐색'
+                      : '하이브리드 검색'
+                  }으로 생성되었습니다`}
+                >
+                  {/* Icon only by default, expand text on hover */}
+                  {message.searchStrategy === 'vector' && (
+                    <>
+                      <span className="text-sm">🔍</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Vector Search</span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'graph_traversal' && (
+                    <>
+                      <span className="text-sm">🕸️</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">
+                        Graph Traversal{message.hopCount && ` (${message.hopCount}-hop)`}
+                      </span>
+                    </>
+                  )}
+                  {message.searchStrategy === 'hybrid' && (
+                    <>
+                      <span className="text-sm">🔀</span>
+                      <span className="hidden group-hover:inline transition-all duration-200">Hybrid</span>
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+
+            {/* Timestamp & Actions */}
+            <div className="flex items-center justify-between mt-3">
+              <span className="chat-message__time">
+                {formatTime(message.timestamp)}
               </span>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+
+              {message.role === 'assistant' && (
+                <button
+                  onClick={() => handleCopy(message.id, message.content)}
+                  className="p-1.5 text-muted hover:text-ink dark:hover:text-paper transition-colors"
+                  title="Copy to clipboard"
+                >
+                  {copiedId === message.id ? (
+                    <Check className="w-4 h-4 text-accent-teal" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="chat-message chat-message--assistant animate-fade-in">
+            <div className="flex items-center gap-3 text-muted">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="font-mono text-sm">Analyzing...</span>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="p-6 bg-surface-2 border-t border-border">
-        <div className="relative group">
-          <div className="relative bg-surface-2 rounded flex items-end gap-2 p-2 border border-border">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                adjustTextareaHeight();
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
-              placeholder="Query the nexus..."
-              className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-text-primary placeholder-text-tertiary min-h-[44px] py-3 px-2 resize-none"
-              rows={1}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || isLoading}
-              className="p-3 rounded bg-surface-2 hover:bg-teal text-text-tertiary hover:text-text-primary transition-all duration-300 disabled:opacity-30"
-            >
-              <Zap className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Input Area */}
+      <div className="chat-input-area">
+        <div className="flex items-end gap-4">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about your research..."
+            rows={1}
+            className="chat-input flex-1 font-body"
+            style={{
+              minHeight: '44px',
+              maxHeight: '120px',
+            }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isLoading}
+            className={clsx(
+              'btn btn--primary flex-shrink-0',
+              'disabled:opacity-40 disabled:cursor-not-allowed'
+            )}
+            style={{ marginBottom: '3px' }}
+          >
+            <Send className="w-4 h-4" />
+          </button>
         </div>
+
+        <p className="text-xs text-muted mt-3 text-center font-mono">
+          Enter to send · Shift+Enter for new line
+        </p>
       </div>
     </div>
   );

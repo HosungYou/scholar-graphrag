@@ -29,8 +29,17 @@ class ExtractionResult(BaseModel):
 class ConceptExtractionAgent:
     """Extracts and matches entities from user queries."""
 
-    SYSTEM_PROMPT = """Extract entities from user queries about a research knowledge graph.
-Entity types: Paper, Author, Concept, Method, Finding.
+    SYSTEM_PROMPT = """Extract entities from user queries about a research/technology transfer knowledge graph.
+Entity types: Paper, Author, Concept, Method, Finding, Invention, Patent, Inventor, Technology, License, Grant, Department.
+
+For technology transfer queries, use these entity types:
+- Invention: a novel creation or discovery
+- Patent: a patent filing or granted patent (includes patent numbers like "US 11,xxx,xxx")
+- Inventor: a person who created an invention
+- Technology: a technology area or domain (e.g., "Machine Learning", "Quantum Computing")
+- License: a licensing agreement
+- Grant: a research funding grant
+- Department: an academic department
 
 Respond with JSON:
 {
@@ -93,13 +102,13 @@ Respond with JSON:
         words = [w.strip("?.,!") for w in query.lower().split() if w.strip("?.,!") not in stop_words and len(w) > 2]
         return ExtractionResult(entities=[], keywords=words[:10], query_without_entities=query)
 
-    async def match_to_graph(self, entity_text: str, entity_type: str) -> Optional[str]:
+    async def match_to_graph(self, entity_text: str, entity_type: str, project_id: str = "") -> Optional[str]:
         """Try to match entity to graph using fuzzy search."""
         if not self.graph_store:
             return None
         try:
             results = await self.graph_store.search_entities(
-                query=entity_text, entity_types=[entity_type], limit=1
+                query=entity_text, project_id=project_id, entity_types=[entity_type], limit=1
             )
             if results:
                 return results[0].get("id")

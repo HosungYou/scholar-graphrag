@@ -86,7 +86,8 @@ class OpenAIProvider(BaseLLMProvider):
             return response.choices[0].message.content
 
         except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
+            error_type = type(e).__name__
+            logger.error(f"OpenAI API error ({error_type}): {self._sanitize_error(str(e))}")
             raise
 
     async def generate_stream(
@@ -121,7 +122,8 @@ class OpenAIProvider(BaseLLMProvider):
                     yield chunk.choices[0].delta.content
 
         except Exception as e:
-            logger.error(f"OpenAI streaming error: {e}")
+            error_type = type(e).__name__
+            logger.error(f"OpenAI streaming error ({error_type}): {self._sanitize_error(str(e))}")
             raise
 
     async def generate_json(
@@ -155,5 +157,30 @@ class OpenAIProvider(BaseLLMProvider):
             return json.loads(response.choices[0].message.content)
 
         except Exception as e:
-            logger.error(f"OpenAI JSON generation error: {e}")
+            error_type = type(e).__name__
+            logger.error(f"OpenAI JSON generation error ({error_type}): {self._sanitize_error(str(e))}")
             return {}
+
+    @staticmethod
+    def _sanitize_error(error: str) -> str:
+        """Remove sensitive info from error messages."""
+        import re
+        sanitized = re.sub(r"(sk-|api[_-]?key)[a-zA-Z0-9\-_]{10,}", "[redacted]", error, flags=re.IGNORECASE)
+        return sanitized[:200] if len(sanitized) > 200 else sanitized
+
+    async def close(self) -> None:
+        """
+        PERF-011: Release client resources to free memory.
+
+        Call this during application shutdown to release HTTP connections.
+        """
+        if self._client is not None:
+            try:
+                # AsyncOpenAI has a close method
+                if hasattr(self._client, 'close'):
+                    await self._client.close()
+                logger.debug("OpenAI LLM client closed for memory optimization")
+            except Exception as e:
+                logger.debug(f"Error closing OpenAI LLM client: {e}")
+            finally:
+                self._client = None

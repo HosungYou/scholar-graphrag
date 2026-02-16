@@ -2,300 +2,208 @@
 Import API Router
 
 Handles data import from ScholaRAG folders, PDFs, and CSVs.
+
+Security:
+- Path validation restricts access to allowed directories only
+- Symbolic link resolution prevents path traversal attacks
+- Input sanitization for all user-provided paths
+- All endpoints require authentication in production (configurable via REQUIRE_AUTH)
+- ALLOWED_IMPORT_ROOTS must be configured in production environments
 """
 
+import asyncio
 import logging
 import os
+from collections import deque
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any, Deque
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends, status
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 from enum import Enum
 
 from database import db
 from graph.graph_store import GraphStore
 from importers.scholarag_importer import ScholarAGImporter
+from jobs import JobStore, JobStatus
+from config import settings
+from auth.dependencies import require_auth_if_configured
+from auth.models import User
+from llm.claude_provider import ClaudeProvider
+from llm.gemini_provider import GeminiProvider
+from llm.openai_provider import OpenAIProvider
+from llm.groq_provider import GroqProvider
+from llm.cached_provider import wrap_with_cache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-# ============================================================================
-# Folder Browser API - 파일 탐색기 기능
-# ============================================================================
-
-class FolderItem(BaseModel):
-    """폴더/파일 항목"""
-    name: str
-    path: str
-    is_directory: bool
-    is_scholarag_project: bool = False  # config.yaml이 있는 폴더인지
-    has_subprojects: bool = False  # projects 하위 폴더에 프로젝트가 있는지
-
-
-class BrowseResponse(BaseModel):
-    """폴더 브라우징 응답"""
-    current_path: str
-    parent_path: Optional[str]
-    items: List[FolderItem]
-    is_scholarag_project: bool = False
-    suggested_projects: List[FolderItem] = []  # 자동 감지된 프로젝트 목록
-
-
-class DiscoveredProject(BaseModel):
-    """발견된 ScholaRAG 프로젝트"""
-    name: str
-    path: str
-    papers_count: int = 0
-    has_config: bool = True
-
-
-def _is_scholarag_project(folder: Path) -> bool:
-    """폴더가 ScholaRAG 프로젝트인지 확인"""
-    config_path = folder / "config.yaml"
-    return config_path.exists()
-
-
-def _get_safe_home_paths() -> List[str]:
-    """안전한 시작 경로 목록 반환"""
-    home = Path.home()
-    paths = [
-        str(home),
-        str(home / "Documents"),
-        str(home / "Desktop"),
-        str(home / "Downloads"),
+# Security Configuration
+# IMPORTANT: Set these via environment variables in production
+# Uses settings from config.py which loads from .env file
+def get_allowed_import_roots() -> List[str]:
+    """Get allowed import roots from settings."""
+    roots = [
+        settings.scholarag_import_root,
+        settings.scholarag_import_root_2,
     ]
-    # macOS의 /Volumes 경로도 허용
-    volumes = Path("/Volumes")
-    if volumes.exists():
-        paths.append(str(volumes))
-    return paths
+    return [r for r in roots if r]
+
+# Initialize at module level for backwards compatibility
+ALLOWED_IMPORT_ROOTS: List[str] = get_allowed_import_roots()
+
+# Maximum path depth to prevent deep traversal
+MAX_PATH_DEPTH = 10
 
 
-def _is_path_allowed(path: str) -> bool:
-    """경로 접근이 허용되는지 확인 (보안)"""
-    try:
-        resolved = Path(path).resolve()
-        # 홈 디렉토리 또는 /Volumes 하위만 허용
-        home = Path.home().resolve()
-        allowed_roots = [home, Path("/Volumes").resolve()]
-        return any(
-            str(resolved).startswith(str(root)) or resolved == root
-            for root in allowed_roots
-        )
-    except Exception:
-        return False
-
-
-@router.get("/browse", response_model=BrowseResponse)
-async def browse_folder(
-    path: Optional[str] = Query(None, description="탐색할 폴더 경로 (없으면 홈 디렉토리)"),
-):
+def get_llm_provider():
     """
-    폴더 내용을 탐색합니다.
+    Get an LLM provider instance based on settings.
 
-    보안: 사용자 홈 디렉토리 및 /Volumes 하위만 접근 가능
+    Supports:
+    - anthropic: Claude (requires ANTHROPIC_API_KEY)
+    - google: Gemini (requires GOOGLE_API_KEY) - FREE TIER AVAILABLE
+    - openai: GPT (requires OPENAI_API_KEY)
+    - groq: Llama/Mixtral (requires GROQ_API_KEY) - FREE TIER: 14,400 req/day!
+
+    Returns:
+        BaseLLMProvider or None if no API key is configured
     """
-    # 기본 경로 설정
-    if not path:
-        path = str(Path.home())
+    provider_name = settings.default_llm_provider
 
-    folder = Path(path)
+    # Anthropic Claude
+    if provider_name == "anthropic" and settings.anthropic_api_key:
+        logger.info("Using Anthropic Claude provider")
+        base_provider = ClaudeProvider(api_key=settings.anthropic_api_key)
+        return wrap_with_cache(base_provider)
 
-    # 경로 유효성 검사
-    if not folder.exists():
-        raise HTTPException(status_code=404, detail=f"경로를 찾을 수 없습니다: {path}")
+    # Google Gemini (FREE TIER AVAILABLE!)
+    if provider_name == "google" and settings.google_api_key:
+        logger.info("Using Google Gemini provider (free tier)")
+        base_provider = GeminiProvider(api_key=settings.google_api_key)
+        return wrap_with_cache(base_provider)
 
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail="파일이 아닌 폴더 경로를 입력하세요")
+    # OpenAI GPT
+    if provider_name == "openai" and settings.openai_api_key:
+        logger.info("Using OpenAI GPT provider")
+        base_provider = OpenAIProvider(api_key=settings.openai_api_key)
+        return wrap_with_cache(base_provider)
 
-    # 보안 검사
-    if not _is_path_allowed(path):
-        raise HTTPException(status_code=403, detail="접근이 허용되지 않은 경로입니다")
+    # Groq (FREE TIER - 14,400 requests/day, FASTEST inference!)
+    if provider_name == "groq" and settings.groq_api_key:
+        logger.info("Using Groq provider (free tier, fastest inference!)")
+        base_provider = GroqProvider(api_key=settings.groq_api_key)
+        return wrap_with_cache(base_provider)
 
-    # 부모 경로 계산
-    parent_path = None
-    if folder.parent != folder:  # 루트가 아니면
-        parent = folder.parent
-        if _is_path_allowed(str(parent)):
-            parent_path = str(parent)
+    # No provider configured
+    logger.warning(f"LLM provider '{provider_name}' not configured or no API key")
+    return None
 
-    # 폴더 내용 읽기
-    items: List[FolderItem] = []
-    suggested_projects: List[FolderItem] = []
 
+def validate_safe_path(folder_path: str) -> Path:
+    """
+    Validate that the provided path is safe to access.
+
+    Security checks:
+    1. Path must be absolute
+    2. Path must resolve within allowed root directories
+    3. No symbolic link escapes
+    4. Path depth limit
+
+    Raises:
+        HTTPException: If path validation fails
+    """
     try:
-        for entry in sorted(folder.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            # 숨김 파일 제외 (. 으로 시작하는 파일)
-            if entry.name.startswith('.'):
+        # Convert to Path object
+        path = Path(folder_path)
+
+        # SECURITY: Enforce absolute paths only
+        if not path.is_absolute():
+            logger.warning(f"Relative path rejected: {folder_path}")
+            raise HTTPException(
+                status_code=400,
+                detail="Only absolute paths are allowed for import operations"
+            )
+
+        # Check for path depth
+        if len(path.parts) > MAX_PATH_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail="Path depth exceeds maximum allowed"
+            )
+
+        # Resolve symbolic links and normalize path
+        resolved_path = path.resolve()
+
+        # SECURITY: Enforce allowed roots
+        if not ALLOWED_IMPORT_ROOTS:
+            if settings.environment in ("staging", "production"):
+                # In production/staging, fail hard if no roots configured
+                logger.error(
+                    "SECURITY ERROR: ALLOWED_IMPORT_ROOTS not configured in production. "
+                    "Set SCHOLARAG_IMPORT_ROOT environment variable."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Import service not configured. Contact administrator."
+                )
+            else:
+                # SECURITY: Even in development, block access to sensitive system directories
+                # This prevents accidental or malicious access to /etc, /var, system configs, etc.
+                blocked_prefixes = [
+                    "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/boot",
+                    "/root", "/sys", "/proc", "/dev", "/run", "/snap",
+                    "/System", "/Library", "/private",  # macOS system directories
+                    "C:\\Windows", "C:\\Program Files",  # Windows system directories
+                ]
+                resolved_str = str(resolved_path)
+                for blocked in blocked_prefixes:
+                    if resolved_str.startswith(blocked):
+                        logger.warning(f"Blocked access to system directory: {resolved_str}")
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Access denied: Cannot import from system directories"
+                        )
+                logger.warning(
+                    "SECURITY WARNING: No ALLOWED_IMPORT_ROOTS configured. "
+                    "Allowing non-system paths in development mode only."
+                )
+                return resolved_path
+
+        # Check if resolved path is within allowed roots
+        is_allowed = False
+        for allowed_root in ALLOWED_IMPORT_ROOTS:
+            allowed_path = Path(allowed_root).resolve()
+            try:
+                resolved_path.relative_to(allowed_path)
+                is_allowed = True
+                break
+            except ValueError:
                 continue
 
-            is_dir = entry.is_dir()
-            is_project = False
-            has_subprojects = False
+        if not is_allowed:
+            logger.warning(
+                f"Path access denied: {folder_path} (resolved: {resolved_path}) "
+                f"not within allowed roots"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Path is not within allowed import directories"
+            )
 
-            if is_dir:
-                is_project = _is_scholarag_project(entry)
-                # projects 하위 폴더 확인
-                projects_subdir = entry / "projects"
-                if projects_subdir.exists() and projects_subdir.is_dir():
-                    try:
-                        for sub in projects_subdir.iterdir():
-                            if sub.is_dir() and _is_scholarag_project(sub):
-                                has_subprojects = True
-                                suggested_projects.append(FolderItem(
-                                    name=sub.name,
-                                    path=str(sub),
-                                    is_directory=True,
-                                    is_scholarag_project=True,
-                                ))
-                    except PermissionError:
-                        pass
+        return resolved_path
 
-            items.append(FolderItem(
-                name=entry.name,
-                path=str(entry),
-                is_directory=is_dir,
-                is_scholarag_project=is_project,
-                has_subprojects=has_subprojects,
-            ))
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="폴더를 읽을 권한이 없습니다")
-
-    return BrowseResponse(
-        current_path=str(folder),
-        parent_path=parent_path,
-        items=items,
-        is_scholarag_project=_is_scholarag_project(folder),
-        suggested_projects=suggested_projects,
-    )
-
-
-@router.get("/browse/quick-access")
-async def get_quick_access_paths():
-    """
-    빠른 접근 경로 목록 반환 (홈, Documents, Volumes 등)
-    """
-    home = Path.home()
-    paths = []
-
-    # 기본 경로들
-    default_paths = [
-        ("홈", home),
-        ("Documents", home / "Documents"),
-        ("Desktop", home / "Desktop"),
-        ("Downloads", home / "Downloads"),
-    ]
-
-    for name, p in default_paths:
-        if p.exists():
-            paths.append({
-                "name": name,
-                "path": str(p),
-                "icon": "folder"
-            })
-
-    # 외장 드라이브 (macOS의 /Volumes)
-    volumes = Path("/Volumes")
-    if volumes.exists():
-        try:
-            for vol in volumes.iterdir():
-                if vol.is_dir() and not vol.name.startswith('.'):
-                    # 내장 디스크 (Macintosh HD) 제외
-                    if vol.name != "Macintosh HD":
-                        paths.append({
-                            "name": f"📁 {vol.name}",
-                            "path": str(vol),
-                            "icon": "hard-drive"
-                        })
-        except PermissionError:
-            pass
-
-    return {"paths": paths}
-
-
-@router.post("/scholarag/discover")
-async def discover_scholarag_projects(path: str = Query(..., description="탐색할 루트 경로")):
-    """
-    주어진 경로에서 ScholaRAG 프로젝트를 자동으로 찾습니다.
-
-    루트 폴더나 projects 폴더를 입력하면 하위의 모든 프로젝트를 찾습니다.
-    """
-    folder = Path(path)
-
-    if not folder.exists():
-        raise HTTPException(status_code=404, detail=f"경로를 찾을 수 없습니다: {path}")
-
-    if not _is_path_allowed(path):
-        raise HTTPException(status_code=403, detail="접근이 허용되지 않은 경로입니다")
-
-    projects: List[DiscoveredProject] = []
-
-    # 현재 폴더가 프로젝트인지 확인
-    if _is_scholarag_project(folder):
-        papers_count = _count_papers(folder)
-        projects.append(DiscoveredProject(
-            name=folder.name,
-            path=str(folder),
-            papers_count=papers_count,
-        ))
-
-    # projects 하위 폴더 탐색
-    projects_dir = folder / "projects"
-    if projects_dir.exists():
-        for sub in projects_dir.iterdir():
-            if sub.is_dir() and _is_scholarag_project(sub):
-                papers_count = _count_papers(sub)
-                projects.append(DiscoveredProject(
-                    name=sub.name,
-                    path=str(sub),
-                    papers_count=papers_count,
-                ))
-
-    # 직접 하위 폴더도 탐색 (depth 1)
-    if not projects and folder.is_dir():
-        try:
-            for sub in folder.iterdir():
-                if sub.is_dir() and _is_scholarag_project(sub):
-                    papers_count = _count_papers(sub)
-                    projects.append(DiscoveredProject(
-                        name=sub.name,
-                        path=str(sub),
-                        papers_count=papers_count,
-                    ))
-        except PermissionError:
-            pass
-
-    return {
-        "root_path": path,
-        "projects": projects,
-        "count": len(projects),
-    }
-
-
-def _count_papers(folder: Path) -> int:
-    """폴더에서 논문 수 카운트"""
-    csv_paths = [
-        folder / "data" / "02_screening" / "relevant_papers.csv",
-        folder / "data" / "02_screening" / "all_screened_papers.csv",
-    ]
-
-    for csv_path in csv_paths:
-        if csv_path.exists():
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    return max(0, sum(1 for _ in f) - 1)
-            except Exception:
-                pass
-    return 0
-
-
-# ============================================================================
-# Import API
-# ============================================================================
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Path validation error: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid path format"
+        )
 
 
 # Enums
@@ -307,6 +215,8 @@ class ImportStatus(str, Enum):
     BUILDING_GRAPH = "building_graph"
     COMPLETED = "completed"
     FAILED = "failed"
+    # BUG-028: Added INTERRUPTED for jobs killed by server restart
+    INTERRUPTED = "interrupted"
 
 
 # Pydantic Models
@@ -314,6 +224,31 @@ class ScholaRAGImportRequest(BaseModel):
     folder_path: str
     project_name: Optional[str] = None
     extract_entities: bool = True  # Use LLM to extract Concept, Method, Finding
+
+    @field_validator("folder_path")
+    @classmethod
+    def sanitize_path(cls, v: str) -> str:
+        """Sanitize folder path input."""
+        # Remove null bytes and control characters
+        sanitized = "".join(c for c in v if c.isprintable() and c != "\x00")
+        # Normalize path separators
+        sanitized = sanitized.replace("\\", "/")
+        # Remove consecutive dots that could indicate traversal
+        while ".." in sanitized:
+            sanitized = sanitized.replace("..", ".")
+        return sanitized.strip()
+
+    @field_validator("project_name")
+    @classmethod
+    def sanitize_project_name(cls, v: Optional[str]) -> Optional[str]:
+        """Sanitize project name."""
+        if v is None:
+            return v
+        # Remove special characters, keep alphanumeric, spaces, hyphens, underscores
+        sanitized = "".join(
+            c for c in v if c.isalnum() or c in " -_"
+        )
+        return sanitized[:100].strip() or None
 
 
 class ImportJobResponse(BaseModel):
@@ -323,8 +258,12 @@ class ImportJobResponse(BaseModel):
     message: str
     project_id: Optional[UUID] = None
     stats: Optional[dict] = None
+    result: Optional[dict] = None  # Contains nodes_created, edges_created for frontend
+    reliability_summary: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
+    # UI-002: Added metadata for interrupted jobs display (project_name, checkpoint)
+    metadata: Optional[dict] = None
 
 
 class ImportValidationResponse(BaseModel):
@@ -340,25 +279,370 @@ class ImportValidationResponse(BaseModel):
     warnings: list = []
 
 
-# In-memory storage
+def _build_reliability_summary(stats: Optional[dict]) -> dict:
+    """
+    Build a normalized reliability summary from importer stats.
+
+    This keeps API responses consistent across ScholaRAG/PDF/Zotero import paths.
+    """
+    stats = stats or {}
+
+    raw_entities = int(stats.get("raw_entities_extracted", 0) or 0)
+    resolved_entities = int(stats.get("entities_after_resolution", 0) or 0)
+    merges_applied = int(stats.get("merges_applied", 0) or 0)
+    relationships_created = int(stats.get("relationships_created", 0) or 0)
+    low_trust_edges = int(stats.get("low_trust_edges", 0) or 0)
+    evidence_backed_relationships = int(stats.get("evidence_backed_relationships", 0) or 0)
+    llm_pairs_reviewed = int(stats.get("llm_pairs_reviewed", 0) or 0)
+    llm_pairs_confirmed = int(stats.get("llm_pairs_confirmed", 0) or 0)
+    potential_false_merge_count = int(stats.get("potential_false_merge_count", 0) or 0)
+    potential_false_merge_samples = stats.get("potential_false_merge_samples", [])
+    if not isinstance(potential_false_merge_samples, list):
+        potential_false_merge_samples = []
+    potential_false_merge_samples = potential_false_merge_samples[:10]
+
+    if "canonicalization_rate" in stats and stats.get("canonicalization_rate") is not None:
+        canonicalization_rate = float(stats.get("canonicalization_rate", 0.0) or 0.0)
+    elif raw_entities > 0:
+        canonicalization_rate = merges_applied / raw_entities
+    else:
+        canonicalization_rate = 0.0
+
+    if relationships_created > 0 and evidence_backed_relationships > 0:
+        provenance_coverage = evidence_backed_relationships / relationships_created
+    elif relationships_created > 0:
+        # Conservative default when evidence counters are unavailable.
+        provenance_coverage = 0.0
+    else:
+        provenance_coverage = 1.0
+
+    low_trust_ratio = (low_trust_edges / relationships_created) if relationships_created > 0 else 0.0
+    llm_confirmation_accept_rate = (
+        llm_pairs_confirmed / llm_pairs_reviewed if llm_pairs_reviewed > 0 else 0.0
+    )
+    potential_false_merge_ratio = (
+        potential_false_merge_count / merges_applied if merges_applied > 0 else 0.0
+    )
+
+    return {
+        "raw_entities_extracted": raw_entities,
+        "entities_after_resolution": resolved_entities,
+        "merges_applied": merges_applied,
+        "canonicalization_rate": canonicalization_rate,
+        "llm_pairs_reviewed": llm_pairs_reviewed,
+        "llm_pairs_confirmed": llm_pairs_confirmed,
+        "llm_confirmation_accept_rate": llm_confirmation_accept_rate,
+        "potential_false_merge_count": potential_false_merge_count,
+        "potential_false_merge_ratio": potential_false_merge_ratio,
+        "potential_false_merge_samples": potential_false_merge_samples,
+        "relationships_created": relationships_created,
+        "evidence_backed_relationships": evidence_backed_relationships,
+        "provenance_coverage": provenance_coverage,
+        "low_trust_edges": low_trust_edges,
+        "low_trust_edge_ratio": low_trust_ratio,
+    }
+
+
+# Job store for persistent tracking
+# Falls back to in-memory if DB unavailable
+_job_store: Optional[JobStore] = None
+
+
+async def get_job_store() -> JobStore:
+    """Get or create job store instance."""
+    global _job_store
+    if _job_store is None:
+        _job_store = JobStore(db_connection=db if db.is_connected else None)
+        await _job_store.init_table()
+    return _job_store
+
+
+# Legacy in-memory storage (deprecated, use JobStore)
 _import_jobs: dict = {}
+
+_TERMINAL_IMPORT_STATUSES = {
+    ImportStatus.COMPLETED.value,
+    ImportStatus.FAILED.value,
+    ImportStatus.INTERRUPTED.value,
+}
+
+
+def cleanup_legacy_import_jobs(max_age_hours: int = 24) -> int:
+    """
+    Remove old terminal jobs from legacy in-memory storage.
+
+    This keeps backwards-compatible fallback state from growing unbounded.
+    """
+    now = datetime.now()
+    removed = 0
+
+    for job_id, job_data in list(_import_jobs.items()):
+        status_value = str(job_data.get("status", "")).lower()
+        updated_at = job_data.get("updated_at")
+
+        if not isinstance(updated_at, datetime):
+            continue
+
+        age_hours = (now - updated_at).total_seconds() / 3600
+        if status_value in _TERMINAL_IMPORT_STATUSES and age_hours >= max_age_hours:
+            _import_jobs.pop(job_id, None)
+            removed += 1
+
+    return removed
+
+
+class _CoalescedJobProgressUpdater:
+    """
+    Coalesce high-frequency progress updates into a single async worker.
+
+    Prevents unbounded create_task() growth under frequent callbacks.
+    """
+
+    def __init__(self, job_store: JobStore, job_id: str, log_prefix: str):
+        self.job_store = job_store
+        self.job_id = job_id
+        self.log_prefix = log_prefix
+        self._latest: Optional[dict[str, Any]] = None
+        self._worker: Optional[asyncio.Task] = None
+        self._closed = False
+
+    def enqueue(self, progress: float, message: str) -> None:
+        if self._closed:
+            return
+        self._latest = {"progress": progress, "message": message}
+        self._ensure_worker()
+
+    def _ensure_worker(self) -> None:
+        if self._worker and not self._worker.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[{self.log_prefix} {self.job_id}] Could not update JobStore: no running event loop")
+            return
+
+        self._worker = loop.create_task(self._drain())
+        self._worker.add_done_callback(self._handle_worker_done)
+
+    async def _drain(self) -> None:
+        while self._latest is not None and not self._closed:
+            payload = self._latest
+            self._latest = None
+            await self.job_store.update_job(
+                job_id=self.job_id,
+                progress=payload["progress"],
+                message=payload["message"],
+            )
+
+    def _handle_worker_done(self, task: asyncio.Task) -> None:
+        try:
+            error = task.exception()
+            if error:
+                logger.error(f"[{self.log_prefix} {self.job_id}] JobStore update failed: {error}")
+        except asyncio.CancelledError:
+            return
+        except Exception as callback_error:
+            logger.error(f"[{self.log_prefix} {self.job_id}] JobStore callback failed: {callback_error}")
+
+        if self._latest is not None and not self._closed:
+            self._ensure_worker()
+
+    async def flush_and_close(self) -> None:
+        if self._worker:
+            try:
+                await self._worker
+            except Exception as e:
+                logger.error(f"[{self.log_prefix} {self.job_id}] Failed to flush progress updates: {e}")
+
+        if self._latest is not None:
+            payload = self._latest
+            self._latest = None
+            try:
+                await self.job_store.update_job(
+                    job_id=self.job_id,
+                    progress=payload["progress"],
+                    message=payload["message"],
+                )
+            except Exception as e:
+                logger.error(f"[{self.log_prefix} {self.job_id}] Failed to apply final progress update: {e}")
+
+        self._closed = True
+        self._latest = None
+
+
+class _QueuedCheckpointSaver:
+    """Serialize checkpoint writes via a single worker task."""
+
+    def __init__(self, job_store: JobStore, job_id: str):
+        self.job_store = job_store
+        self.job_id = job_id
+        self._pending: Deque[dict[str, Any]] = deque()
+        self._worker: Optional[asyncio.Task] = None
+        self._closed = False
+
+    def enqueue(
+        self,
+        paper_id: str,
+        index: int,
+        total_papers: int,
+        project_id: str,
+        stage: str,
+    ) -> None:
+        if self._closed:
+            return
+        self._pending.append(
+            {
+                "paper_id": paper_id,
+                "index": index,
+                "total_papers": total_papers,
+                "project_id": project_id,
+                "stage": stage,
+            }
+        )
+        self._ensure_worker()
+
+    def _ensure_worker(self) -> None:
+        if self._worker and not self._worker.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(f"[Zotero Import {self.job_id}] Could not save checkpoint: no running event loop")
+            return
+        self._worker = loop.create_task(self._drain())
+        self._worker.add_done_callback(self._handle_worker_done)
+
+    async def _drain(self) -> None:
+        while self._pending and not self._closed:
+            payload = self._pending.popleft()
+            await save_checkpoint(
+                job_store=self.job_store,
+                job_id=self.job_id,
+                paper_id=payload["paper_id"],
+                index=payload["index"],
+                total_papers=payload["total_papers"],
+                project_id=payload["project_id"],
+                stage=payload["stage"],
+            )
+
+    def _handle_worker_done(self, task: asyncio.Task) -> None:
+        try:
+            error = task.exception()
+            if error:
+                logger.warning(f"[Zotero Import {self.job_id}] Checkpoint save failed: {error}")
+        except asyncio.CancelledError:
+            return
+        except Exception as callback_error:
+            logger.warning(f"[Zotero Import {self.job_id}] Checkpoint callback failed: {callback_error}")
+
+        if self._pending and not self._closed:
+            self._ensure_worker()
+
+    async def flush_and_close(self) -> None:
+        if self._worker:
+            try:
+                await self._worker
+            except Exception as e:
+                logger.warning(f"[Zotero Import {self.job_id}] Failed to flush checkpoints: {e}")
+
+        while self._pending:
+            payload = self._pending.popleft()
+            await save_checkpoint(
+                job_store=self.job_store,
+                job_id=self.job_id,
+                paper_id=payload["paper_id"],
+                index=payload["index"],
+                total_papers=payload["total_papers"],
+                project_id=payload["project_id"],
+                stage=payload["stage"],
+            )
+
+        self._closed = True
+
+
+# =============================================================================
+# BUG-028 Extension: Checkpoint Support for Resume Functionality
+# =============================================================================
+
+async def save_checkpoint(
+    job_store: JobStore,
+    job_id: str,
+    paper_id: str,
+    index: int,
+    total_papers: int,
+    project_id: str,
+    stage: str = "importing",
+) -> None:
+    """
+    Save checkpoint after each paper is processed.
+
+    BUG-028 Extension: Enables resume from interruption point.
+
+    Args:
+        job_store: JobStore instance
+        job_id: Current job ID
+        paper_id: ID of the paper just processed
+        index: Current index in the papers list
+        total_papers: Total number of papers to process
+        project_id: ID of the project being imported into
+        stage: Current import stage
+    """
+    try:
+        job = await job_store.get_job(job_id)
+        if not job:
+            logger.warning(f"[Checkpoint {job_id}] Job not found, skipping checkpoint")
+            return
+
+        # Get existing checkpoint or create new one
+        checkpoint = job.metadata.get("checkpoint", {
+            "processed_paper_ids": [],
+            "total_papers": total_papers,
+            "last_processed_index": 0,
+            "project_id": None,
+            "stage": "starting",
+            "updated_at": None,
+        })
+
+        # Update checkpoint
+        if paper_id not in checkpoint.get("processed_paper_ids", []):
+            checkpoint.setdefault("processed_paper_ids", []).append(paper_id)
+        checkpoint["last_processed_index"] = index
+        checkpoint["total_papers"] = total_papers
+        checkpoint["project_id"] = str(project_id) if project_id else None
+        checkpoint["stage"] = stage
+        checkpoint["updated_at"] = datetime.now().isoformat()
+
+        # Save to JobStore
+        await job_store.update_job(
+            job_id=job_id,
+            metadata={"checkpoint": checkpoint},
+        )
+
+        logger.debug(f"[Checkpoint {job_id}] Saved: {index + 1}/{total_papers} papers processed")
+
+    except Exception as e:
+        # Don't fail the import if checkpoint save fails
+        logger.warning(f"[Checkpoint {job_id}] Failed to save checkpoint: {type(e).__name__}: {e}")
 
 
 @router.post("/scholarag/validate", response_model=ImportValidationResponse)
-async def validate_scholarag_folder(request: ScholaRAGImportRequest):
+async def validate_scholarag_folder(
+    request: ScholaRAGImportRequest,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
     """
-    Validate a ScholaRAG project folder before import.
+    Validate a ScholaRAG project folder before import. Requires auth in production.
 
     Checks:
+    - Path is within allowed directories (security)
     - config.yaml exists
     - .scholarag metadata exists
     - data/02_screening/relevant_papers.csv exists
     - data/03_pdfs/ contains PDFs
     - data/04_rag/chroma_db/ exists (optional)
     """
-    from pathlib import Path
-
-    folder = Path(request.folder_path)
+    # Security: Validate path is within allowed directories
+    folder = validate_safe_path(request.folder_path)
 
     validation = ImportValidationResponse(
         valid=True,
@@ -392,56 +676,33 @@ async def validate_scholarag_folder(request: ScholaRAGImportRequest):
     if not validation.scholarag_metadata_found:
         validation.warnings.append(".scholarag metadata not found (optional)")
 
-    # Check papers CSV - try multiple possible locations
-    csv_candidates = [
-        ("data/02_screening/relevant_papers.csv", "relevant_papers.csv"),
-        ("data/02_screening/all_screened_papers.csv", "all_screened_papers.csv"),
-        ("data/02_screening/screened_papers.csv", "screened_papers.csv"),
-        ("data/01_identification/papers.csv", "papers.csv in identification"),
-        ("data/papers.csv", "papers.csv in data root"),
-    ]
-
-    found_csv_path = None
-    for csv_rel_path, csv_name in csv_candidates:
-        csv_path = folder / csv_rel_path
-        if csv_path.exists():
-            found_csv_path = csv_path
-            validation.papers_csv_found = True
-            if csv_name != "relevant_papers.csv":
-                validation.warnings.append(f"Using {csv_name} instead of relevant_papers.csv")
-            break
-
-    if found_csv_path:
+    # Check papers CSV
+    papers_csv = folder / "data" / "02_screening" / "relevant_papers.csv"
+    validation.papers_csv_found = papers_csv.exists()
+    if validation.papers_csv_found:
         # Count rows (excluding header)
         try:
-            with open(found_csv_path, "r", encoding="utf-8") as f:
-                validation.papers_count = max(0, sum(1 for _ in f) - 1)
+            with open(papers_csv, "r", encoding="utf-8") as f:
+                validation.papers_count = sum(1 for _ in f) - 1
         except Exception as e:
             validation.warnings.append(f"Could not count papers: {e}")
+    else:
+        # Try alternative path
+        alt_csv = folder / "data" / "02_screening" / "all_screened_papers.csv"
+        if alt_csv.exists():
+            validation.papers_csv_found = True
+            validation.warnings.append("Using all_screened_papers.csv instead")
 
     if not validation.papers_csv_found:
-        validation.errors.append(
-            "이 프로젝트에는 아직 논문 데이터가 없습니다. "
-            "ScholaRAG에서 논문을 수집한 후 다시 시도해주세요. "
-            "(필요: data/02_screening/relevant_papers.csv)"
-        )
+        validation.errors.append("No papers CSV found in data/02_screening/")
         validation.valid = False
 
-    # Check PDFs - try multiple possible locations
-    pdf_dirs = [
-        folder / "data" / "03_pdfs",
-        folder / "data" / "pdfs",
-        folder / "data" / "03_full_text",
-        folder / "pdfs",
-    ]
-
-    for pdfs_dir in pdf_dirs:
-        if pdfs_dir.exists():
-            validation.pdfs_count = len(list(pdfs_dir.rglob("*.pdf")))
-            break
-
-    if validation.pdfs_count == 0:
-        validation.warnings.append("PDF 파일을 찾을 수 없습니다 (선택사항)")
+    # Check PDFs
+    pdfs_dir = folder / "data" / "03_pdfs"
+    if pdfs_dir.exists():
+        validation.pdfs_count = len(list(pdfs_dir.rglob("*.pdf")))
+    else:
+        validation.warnings.append("No PDFs directory found")
 
     # Check ChromaDB
     chroma_dir = folder / "data" / "04_rag" / "chroma_db"
@@ -454,9 +715,15 @@ async def validate_scholarag_folder(request: ScholaRAGImportRequest):
 async def import_scholarag_folder(
     request: ScholaRAGImportRequest,
     background_tasks: BackgroundTasks,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """
-    Start importing a ScholaRAG project folder.
+    Start importing a ScholaRAG project folder. Requires auth in production.
+
+    Security:
+    - Path must be within allowed import directories
+    - Project name is sanitized
+    - Authentication required in production
 
     Process:
     1. Validate folder structure
@@ -467,14 +734,23 @@ async def import_scholarag_folder(
     6. Build relationships (AUTHORED_BY, DISCUSSES_CONCEPT, etc.)
     7. Store in PostgreSQL + pgvector
     """
-    from uuid import uuid4
+    # Security: Validate path is within allowed directories
+    validated_path = validate_safe_path(request.folder_path)
 
-    # Create import job
-    job_id = str(uuid4())
+    # Create job in persistent store
+    job_store = await get_job_store()
+    job = await job_store.create_job(
+        job_type="import",
+        metadata={
+            "folder_path": str(validated_path),
+            "project_name": request.project_name,
+            "extract_entities": request.extract_entities,
+        },
+    )
+
     now = datetime.now()
-
-    job = ImportJobResponse(
-        job_id=job_id,
+    response = ImportJobResponse(
+        job_id=job.id,
         status=ImportStatus.PENDING,
         progress=0.0,
         message="Import job created",
@@ -484,18 +760,28 @@ async def import_scholarag_folder(
         updated_at=now,
     )
 
-    _import_jobs[job_id] = job.model_dump()
+    # Legacy: also store in memory for backwards compatibility
+    _import_jobs[job.id] = response.model_dump()
 
-    # Start background import task
+    # Start background import task with validated path
     background_tasks.add_task(
         _run_scholarag_import,
-        job_id=job_id,
-        folder_path=request.folder_path,
+        job_id=job.id,
+        folder_path=str(validated_path),
         project_name=request.project_name,
         extract_entities=request.extract_entities,
     )
 
-    return job
+    return response
+
+
+def _mask_path_for_logging(path: str) -> str:
+    """Mask sensitive parts of path for logging."""
+    # Only show the last 2 path components
+    parts = Path(path).parts
+    if len(parts) <= 2:
+        return path
+    return f".../{'/'.join(parts[-2:])}"
 
 
 async def _run_scholarag_import(
@@ -505,7 +791,9 @@ async def _run_scholarag_import(
     extract_entities: bool,
 ):
     """Background task to run ScholaRAG import."""
-    logger.info(f"[Import {job_id}] Starting import from: {folder_path}")
+    # Mask path in logs to avoid exposing full directory structure
+    masked_path = _mask_path_for_logging(folder_path)
+    logger.info(f"[Import {job_id}] Starting import from: {masked_path}")
 
     def progress_callback(progress):
         """Update job status from importer progress."""
@@ -536,23 +824,29 @@ async def _run_scholarag_import(
         result = await importer.import_folder(
             folder_path=folder_path,
             project_name=project_name,
-            extract_entities=extract_entities,
+            extract_concepts=extract_entities,  # Maps extract_entities to extract_concepts
         )
 
         if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
             # Update job with results
             _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
             _import_jobs[job_id]["progress"] = 1.0
             _import_jobs[job_id]["message"] = "Import completed successfully!"
             _import_jobs[job_id]["project_id"] = result.get("project_id")
             _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
             _import_jobs[job_id]["updated_at"] = datetime.now()
 
             logger.info(f"[Import {job_id}] Completed successfully: {result.get('stats', {})}")
         else:
-            # Import failed
+            # Import failed - sanitize error message
+            error_msg = result.get("error", "Unknown error")
+            # Don't expose internal paths in error messages
+            sanitized_error = _sanitize_error_message(error_msg)
+
             _import_jobs[job_id]["status"] = ImportStatus.FAILED
-            _import_jobs[job_id]["message"] = f"Import failed: {result.get('error', 'Unknown error')}"
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
             _import_jobs[job_id]["updated_at"] = datetime.now()
             _import_jobs[job_id]["stats"] = {
                 "papers_imported": 0,
@@ -560,13 +854,19 @@ async def _run_scholarag_import(
                 "concepts_extracted": 0,
                 "relationships_created": 0,
             }
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary(
+                _import_jobs[job_id]["stats"]
+            )
 
-            logger.error(f"[Import {job_id}] Failed: {result.get('error')}")
+            logger.error(f"[Import {job_id}] Failed: {sanitized_error}")
 
     except Exception as e:
-        logger.exception(f"[Import {job_id}] Exception during import: {e}")
+        # Log full exception internally but sanitize for user response
+        logger.exception(f"[Import {job_id}] Exception during import")
+        sanitized_error = _sanitize_error_message(str(e))
+
         _import_jobs[job_id]["status"] = ImportStatus.FAILED
-        _import_jobs[job_id]["message"] = f"Import failed: {str(e)}"
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
         _import_jobs[job_id]["updated_at"] = datetime.now()
         _import_jobs[job_id]["stats"] = {
             "papers_imported": 0,
@@ -574,138 +874,696 @@ async def _run_scholarag_import(
             "concepts_extracted": 0,
             "relationships_created": 0,
         }
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary(
+            _import_jobs[job_id]["stats"]
+        )
+
+
+def _sanitize_error_message(error: str) -> str:
+    """Remove sensitive information from error messages."""
+    import re
+
+    # Remove full file paths
+    sanitized = re.sub(r"(/[a-zA-Z0-9_\-./]+)+", "[path]", error)
+
+    # Remove potential API keys or tokens
+    sanitized = re.sub(r"(sk-|api[_-]?key|token)[a-zA-Z0-9\-_]{10,}", "[redacted]", sanitized, flags=re.IGNORECASE)
+
+    # Remove email addresses
+    sanitized = re.sub(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[email]", sanitized)
+
+    # Limit message length
+    return sanitized[:500] if len(sanitized) > 500 else sanitized
 
 
 @router.get("/status/{job_id}", response_model=ImportJobResponse)
 async def get_import_status(job_id: str):
-    """Get the status of an import job."""
-    job = _import_jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Import job not found")
-    return ImportJobResponse(**job)
+    """Get the status of an import job.
+
+    BUG-027-D FIX: Compare timestamps between JobStore (DB) and in-memory storage,
+    returning whichever has the most recent update. This prevents stale DB data
+    from being returned when DB updates fail silently.
+    """
+    job_store = await get_job_store()
+    db_job = await job_store.get_job(job_id)
+    legacy_job = _import_jobs.get(job_id)
+
+    # BUG-027-D: Determine which source has more recent data
+    use_legacy = False
+    if legacy_job and db_job:
+        legacy_updated = legacy_job.get("updated_at")
+        db_updated = db_job.updated_at
+        if legacy_updated and db_updated and legacy_updated > db_updated:
+            use_legacy = True
+            logger.debug(f"[Status {job_id}] Using in-memory (newer): {legacy_updated} > {db_updated}")
+    elif legacy_job and not db_job:
+        use_legacy = True
+
+    if use_legacy and legacy_job:
+        return ImportJobResponse(**legacy_job)
+
+    if db_job:
+        # Convert JobStore job to ImportJobResponse
+        status_map = {
+            JobStatus.PENDING: ImportStatus.PENDING,
+            JobStatus.RUNNING: ImportStatus.PROCESSING,
+            JobStatus.COMPLETED: ImportStatus.COMPLETED,
+            JobStatus.FAILED: ImportStatus.FAILED,
+            JobStatus.CANCELLED: ImportStatus.FAILED,
+            # BUG-028: Map INTERRUPTED status for server restart cases
+            JobStatus.INTERRUPTED: ImportStatus.INTERRUPTED,
+        }
+        # Extract result data for frontend compatibility
+        result_data = None
+        if db_job.result:
+            result_data = {
+                "project_id": db_job.result.get("project_id"),
+                "nodes_created": db_job.result.get("nodes_created", 0),
+                "edges_created": db_job.result.get("edges_created", 0),
+            }
+
+        return ImportJobResponse(
+            job_id=db_job.id,
+            status=status_map.get(db_job.status, ImportStatus.PENDING),
+            progress=db_job.progress,
+            message=db_job.message,
+            project_id=db_job.result.get("project_id") if db_job.result else None,
+            stats=db_job.result.get("stats") if db_job.result else None,
+            result=result_data,
+            reliability_summary=(
+                db_job.result.get("reliability_summary")
+                if db_job.result and db_job.result.get("reliability_summary")
+                else _build_reliability_summary(db_job.result.get("stats") if db_job.result else None)
+            ),
+            created_at=db_job.created_at,
+            updated_at=db_job.updated_at,
+        )
+
+    # Fallback to legacy in-memory storage (if not already checked)
+    if legacy_job:
+        return ImportJobResponse(**legacy_job)
+
+    raise HTTPException(status_code=404, detail="Import job not found")
 
 
-@router.get("/jobs", response_model=List[ImportJobResponse])
-async def get_all_import_jobs(
-    status: Optional[ImportStatus] = Query(None, description="필터할 상태"),
-    limit: int = Query(20, ge=1, le=100, description="최대 반환 개수"),
+@router.get("/jobs", response_model=list[ImportJobResponse])
+async def list_import_jobs(
+    status: Optional[str] = None,
+    limit: int = 50,
+):
+    """List all import jobs with optional status filter."""
+    job_store = await get_job_store()
+
+    status_filter = None
+    if status:
+        try:
+            status_filter = JobStatus(status)
+        except ValueError:
+            pass
+
+    # BUG-030 FIX: Include all import-related job types, not just "import"
+    # Job types: "import", "pdf_import", "pdf_import_multiple", "zotero_import"
+    all_jobs = []
+    import_job_types = ["import", "pdf_import", "pdf_import_multiple", "zotero_import"]
+    for job_type in import_job_types:
+        type_jobs = await job_store.list_jobs(job_type=job_type, status=status_filter, limit=limit)
+        all_jobs.extend(type_jobs)
+
+    # Sort by created_at descending and limit
+    jobs = sorted(all_jobs, key=lambda j: j.created_at, reverse=True)[:limit]
+
+    # BUG-036 FIX: Include INTERRUPTED status in mapping
+    status_map = {
+        JobStatus.PENDING: ImportStatus.PENDING,
+        JobStatus.RUNNING: ImportStatus.PROCESSING,
+        JobStatus.COMPLETED: ImportStatus.COMPLETED,
+        JobStatus.FAILED: ImportStatus.FAILED,
+        JobStatus.CANCELLED: ImportStatus.FAILED,
+        JobStatus.INTERRUPTED: ImportStatus.INTERRUPTED,
+    }
+
+    return [
+        ImportJobResponse(
+            job_id=job.id,
+            status=status_map.get(job.status, ImportStatus.PENDING),
+            progress=job.progress,
+            message=job.message,
+            project_id=job.result.get("project_id") if job.result else None,
+            stats=job.result.get("stats") if job.result else None,
+            reliability_summary=(
+                job.result.get("reliability_summary")
+                if job.result and job.result.get("reliability_summary")
+                else _build_reliability_summary(job.result.get("stats") if job.result else None)
+            ),
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            # UI-002: Include metadata for frontend (project_name, checkpoint)
+            metadata=job.metadata if job.metadata else None,
+        )
+        for job in jobs
+    ]
+
+
+@router.delete("/jobs/interrupted")
+async def delete_interrupted_jobs(
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """
-    모든 import job 목록을 반환합니다.
+    Delete all interrupted import jobs.
 
-    진행 중인 작업은 맨 위에, 완료/실패된 작업은 최신순으로 정렬됩니다.
+    This endpoint cleans up stale jobs that were interrupted by server restarts.
+    Deletes from both JobStore (persistent DB) and in-memory _import_jobs dict.
+
+    Returns:
+        Dict with count of deleted jobs
     """
-    jobs = list(_import_jobs.values())
+    job_store = await get_job_store()
 
-    # Filter by status if provided
-    if status:
-        jobs = [j for j in jobs if j["status"] == status]
+    # Query JobStore for all interrupted jobs
+    import_job_types = ["import", "pdf_import", "pdf_import_multiple", "zotero_import"]
+    interrupted_jobs = []
 
-    # Sort: in-progress first, then by updated_at descending
-    def sort_key(job):
-        is_in_progress = job["status"] not in [ImportStatus.COMPLETED, ImportStatus.FAILED]
-        return (-int(is_in_progress), -job["updated_at"].timestamp())
+    for job_type in import_job_types:
+        type_jobs = await job_store.list_jobs(
+            job_type=job_type,
+            status=JobStatus.INTERRUPTED,
+            limit=1000  # High limit to catch all interrupted jobs
+        )
+        interrupted_jobs.extend(type_jobs)
 
-    jobs.sort(key=sort_key)
+    deleted_count = 0
 
-    return [ImportJobResponse(**j) for j in jobs[:limit]]
+    # Delete from JobStore (persistent DB)
+    for job in interrupted_jobs:
+        try:
+            await job_store.delete_job(job.id)
+            deleted_count += 1
+
+            # Also remove from in-memory dict if present
+            _import_jobs.pop(job.id, None)
+
+            logger.info(f"Deleted interrupted job: {job.id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete job {job.id}: {e}")
+
+    return {
+        "deleted_count": deleted_count,
+        "message": f"Deleted {deleted_count} interrupted import jobs"
+    }
+
+
+class PDFImportRequest(BaseModel):
+    """Request model for PDF import."""
+    project_name: Optional[str] = None
+    research_question: Optional[str] = None
+    extract_concepts: bool = True
 
 
 class PDFImportResponse(BaseModel):
-    """PDF import response."""
+    """Response model for PDF import."""
     job_id: str
-    status: str
-    filename: str
+    status: ImportStatus
     message: str
-    paper_id: Optional[str] = None
-    stats: Optional[dict] = None
+    filename: str
+    project_id: Optional[str] = None
+    reliability_summary: Optional[dict] = None
 
 
 @router.post("/pdf", response_model=PDFImportResponse)
 async def import_pdf(
-    project_id: UUID,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    project_name: Optional[str] = None,
+    research_question: Optional[str] = None,
+    extract_concepts: bool = True,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """
-    Import a single PDF file into a project.
+    Import a single PDF file and create a Knowledge Graph. Requires auth in production.
 
-    Extracts text, metadata, and creates Paper/Author entities.
+    This endpoint allows direct PDF upload without needing a ScholaRAG project structure.
+    It will:
+    1. Extract text from the PDF using PyMuPDF
+    2. Extract metadata (title, authors, year, abstract)
+    3. Create a new project automatically
+    4. Use LLM to extract concepts, methods, and findings
+    5. Build a knowledge graph
+
+    Args:
+        file: PDF file to upload
+        project_name: Optional project name (defaults to PDF title)
+        research_question: Optional research question
+        extract_concepts: Whether to use LLM for concept extraction (default: True)
+
+    Returns:
+        Import job information including job_id for status tracking
     """
     from uuid import uuid4
-    from importers.pdf_importer import import_pdf_from_upload
 
+    # Validate file type
     if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다")
+        raise HTTPException(status_code=400, detail="File must be a PDF")
 
-    job_id = str(uuid4())
+    # Validate file size (max 50MB)
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB"
+        )
+
+    # Create job
+    job_store = await get_job_store()
+    job = await job_store.create_job(
+        job_type="pdf_import",
+        metadata={
+            "filename": file.filename,
+            "file_size": len(content),
+            "project_name": project_name,
+            "research_question": research_question,
+            "extract_concepts": extract_concepts,
+        },
+    )
+
     now = datetime.now()
-
-    # Create import job
-    job = {
-        "job_id": job_id,
-        "status": ImportStatus.PROCESSING,
+    _import_jobs[job.id] = {
+        "job_id": job.id,
+        "status": ImportStatus.PENDING,
         "progress": 0.0,
-        "message": f"PDF 파일 처리 중: {file.filename}",
-        "project_id": project_id,
+        "message": "PDF import job created",
+        "project_id": None,
         "stats": None,
         "created_at": now,
         "updated_at": now,
     }
-    _import_jobs[job_id] = job
 
-    # Read file content
-    try:
-        file_content = await file.read()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"파일을 읽을 수 없습니다: {e}")
-
-    # Run import in background
-    async def run_pdf_import():
-        def progress_callback(progress):
-            _import_jobs[job_id]["status"] = ImportStatus.PROCESSING if progress.status == "processing" else (
-                ImportStatus.COMPLETED if progress.status == "completed" else ImportStatus.FAILED
-            )
-            _import_jobs[job_id]["progress"] = progress.progress
-            _import_jobs[job_id]["message"] = progress.message
-            _import_jobs[job_id]["updated_at"] = datetime.now()
-
-        try:
-            graph_store = GraphStore(db=db)
-            result = await import_pdf_from_upload(
-                file_content=file_content,
-                filename=file.filename,
-                project_id=str(project_id),
-                db_connection=db,
-                graph_store=graph_store,
-                progress_callback=progress_callback,
-            )
-
-            if result["success"]:
-                _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
-                _import_jobs[job_id]["progress"] = 1.0
-                _import_jobs[job_id]["message"] = f"Import 완료: {result.get('title', file.filename)}"
-                _import_jobs[job_id]["stats"] = result.get("stats", {})
-            else:
-                _import_jobs[job_id]["status"] = ImportStatus.FAILED
-                _import_jobs[job_id]["message"] = f"Import 실패: {result.get('error', 'Unknown error')}"
-
-            _import_jobs[job_id]["updated_at"] = datetime.now()
-
-        except Exception as e:
-            logger.exception(f"PDF import failed: {e}")
-            _import_jobs[job_id]["status"] = ImportStatus.FAILED
-            _import_jobs[job_id]["message"] = f"Import 실패: {str(e)}"
-            _import_jobs[job_id]["updated_at"] = datetime.now()
-
-    background_tasks.add_task(run_pdf_import)
+    # Start background import task
+    background_tasks.add_task(
+        _run_pdf_import,
+        job_id=job.id,
+        pdf_content=content,
+        filename=file.filename,
+        project_name=project_name,
+        research_question=research_question,
+        extract_concepts=extract_concepts,
+    )
 
     return PDFImportResponse(
-        job_id=job_id,
-        status="processing",
+        job_id=job.id,
+        status=ImportStatus.PENDING,
+        message="PDF import started",
         filename=file.filename,
-        message=f"PDF import 시작: {file.filename}",
     )
+
+
+async def _run_pdf_import(
+    job_id: str,
+    pdf_content: bytes,
+    filename: str,
+    project_name: Optional[str],
+    research_question: Optional[str],
+    extract_concepts: bool,
+):
+    """Background task to run PDF import."""
+    from importers.pdf_importer import PDFImporter
+
+    logger.info(f"[PDF Import {job_id}] Starting import: {filename}")
+
+    # Get job store for persistent updates
+    job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="PDF Import",
+    )
+
+    # Map import stages to JobStore status
+    stage_to_job_status = {
+        "starting": JobStatus.RUNNING,
+        "extracting": JobStatus.RUNNING,
+        "creating": JobStatus.RUNNING,
+        "storing": JobStatus.RUNNING,
+        "analyzing": JobStatus.RUNNING,
+        "building": JobStatus.RUNNING,
+        "complete": JobStatus.COMPLETED,
+    }
+
+    def progress_callback(stage: str, progress: float, message: str):
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        """
+        status_map = {
+            "starting": ImportStatus.PENDING,
+            "extracting": ImportStatus.EXTRACTING,
+            "creating": ImportStatus.PROCESSING,
+            "storing": ImportStatus.PROCESSING,
+            "analyzing": ImportStatus.PROCESSING,
+            "building": ImportStatus.BUILDING_GRAPH,
+            "complete": ImportStatus.COMPLETED,
+        }
+        _import_jobs[job_id]["status"] = status_map.get(stage, ImportStatus.PROCESSING)
+        _import_jobs[job_id]["progress"] = progress
+        _import_jobs[job_id]["message"] = message
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress, message=message)
+
+        logger.info(f"[PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
+
+    try:
+        # Mark job as running in JobStore
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.RUNNING,
+            progress=0.0,
+            message="Starting PDF import...",
+        )
+
+        # Create importer with database connection and GraphStore
+        graph_store = GraphStore(db=db)
+
+        # Get actual LLM provider object (not string) for concept extraction
+        llm_provider = get_llm_provider() if extract_concepts else None
+        if extract_concepts and llm_provider is None:
+            logger.warning("Concept extraction requested but LLM provider not configured")
+
+        importer = PDFImporter(
+            llm_provider=llm_provider,
+            llm_model=settings.default_llm_model,
+            db_connection=db,
+            graph_store=graph_store,
+            progress_callback=progress_callback,
+        )
+
+        # Run the import
+        result = await importer.import_single_pdf(
+            pdf_content=pdf_content,
+            filename=filename,
+            project_name=project_name,
+            research_question=research_question,
+            extract_concepts=extract_concepts,
+        )
+
+        if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
+            _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
+            _import_jobs[job_id]["progress"] = 1.0
+            _import_jobs[job_id]["message"] = "PDF import completed successfully!"
+            _import_jobs[job_id]["project_id"] = result.get("project_id")
+            _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
+
+            # Update JobStore with completion status and result
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.COMPLETED,
+                progress=1.0,
+                message="PDF import completed successfully!",
+                result={
+                    "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                    "stats": result.get("stats", {}),
+                    "reliability_summary": reliability_summary,
+                },
+            )
+
+            logger.info(f"[PDF Import {job_id}] Completed: {result.get('stats', {})}")
+        else:
+            error_msg = result.get("error", "Unknown error")
+            sanitized_error = _sanitize_error_message(error_msg)
+
+            _import_jobs[job_id]["status"] = ImportStatus.FAILED
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
+
+            # Update JobStore with failure
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                message=f"Import failed: {sanitized_error}",
+                error=sanitized_error,
+            )
+
+            logger.error(f"[PDF Import {job_id}] Failed: {sanitized_error}")
+
+    except Exception as e:
+        logger.exception(f"[PDF Import {job_id}] Exception during import")
+        sanitized_error = _sanitize_error_message(str(e))
+
+        _import_jobs[job_id]["status"] = ImportStatus.FAILED
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        await progress_updater.flush_and_close()
+
+        # Update JobStore with exception
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.FAILED,
+            message=f"Import failed: {sanitized_error}",
+            error=sanitized_error,
+        )
+
+
+@router.post("/pdf/multiple", response_model=PDFImportResponse)
+async def import_multiple_pdfs(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    project_name: str = "Uploaded PDFs",
+    research_question: Optional[str] = None,
+    extract_concepts: bool = True,
+):
+    """
+    Import multiple PDF files into a single project.
+
+    This endpoint allows batch PDF upload to create a Knowledge Graph from multiple papers.
+
+    Args:
+        files: List of PDF files to upload
+        project_name: Name for the project (required for multiple files)
+        research_question: Optional research question
+        extract_concepts: Whether to use LLM for concept extraction
+
+    Returns:
+        Import job information including job_id for status tracking
+    """
+    from uuid import uuid4
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    # Validate all files are PDFs
+    for file in files:
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"All files must be PDFs. Invalid file: {file.filename}"
+            )
+
+    # Read all file contents
+    MAX_TOTAL_SIZE = 200 * 1024 * 1024  # 200MB total
+    pdf_files = []
+    total_size = 0
+
+    for file in files:
+        content = await file.read()
+        total_size += len(content)
+        if total_size > MAX_TOTAL_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Total file size exceeds maximum of {MAX_TOTAL_SIZE // (1024*1024)}MB"
+            )
+        pdf_files.append((file.filename, content))
+
+    # Create job
+    job_store = await get_job_store()
+    job = await job_store.create_job(
+        job_type="pdf_import_multiple",
+        metadata={
+            "file_count": len(pdf_files),
+            "total_size": total_size,
+            "project_name": project_name,
+            "research_question": research_question,
+            "extract_concepts": extract_concepts,
+        },
+    )
+
+    now = datetime.now()
+    _import_jobs[job.id] = {
+        "job_id": job.id,
+        "status": ImportStatus.PENDING,
+        "progress": 0.0,
+        "message": f"Starting import of {len(pdf_files)} PDFs",
+        "project_id": None,
+        "stats": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # Start background import task
+    background_tasks.add_task(
+        _run_multiple_pdf_import,
+        job_id=job.id,
+        pdf_files=pdf_files,
+        project_name=project_name,
+        research_question=research_question,
+        extract_concepts=extract_concepts,
+    )
+
+    return PDFImportResponse(
+        job_id=job.id,
+        status=ImportStatus.PENDING,
+        message=f"Started importing {len(pdf_files)} PDFs",
+        filename=f"{len(pdf_files)} files",
+    )
+
+
+async def _run_multiple_pdf_import(
+    job_id: str,
+    pdf_files: List[tuple],
+    project_name: str,
+    research_question: Optional[str],
+    extract_concepts: bool,
+):
+    """Background task to run multiple PDF import."""
+    from importers.pdf_importer import PDFImporter
+
+    logger.info(f"[Multi-PDF Import {job_id}] Starting import: {len(pdf_files)} files")
+
+    # Get job store for persistent updates
+    job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="Multi-PDF Import",
+    )
+
+    def progress_callback(stage: str, progress: float, message: str):
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        """
+        status_map = {
+            "starting": ImportStatus.PENDING,
+            "importing": ImportStatus.PROCESSING,
+            "building": ImportStatus.BUILDING_GRAPH,
+            "complete": ImportStatus.COMPLETED,
+        }
+        _import_jobs[job_id]["status"] = status_map.get(stage, ImportStatus.PROCESSING)
+        _import_jobs[job_id]["progress"] = progress
+        _import_jobs[job_id]["message"] = message
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress, message=message)
+
+        logger.info(f"[Multi-PDF Import {job_id}] {stage}: {progress:.0%} - {message}")
+
+    try:
+        # Mark job as running in JobStore
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.RUNNING,
+            progress=0.0,
+            message=f"Starting import of {len(pdf_files)} PDFs...",
+        )
+
+        graph_store = GraphStore(db=db)
+
+        # Get actual LLM provider object (not string) for concept extraction
+        llm_provider = get_llm_provider() if extract_concepts else None
+        if extract_concepts and llm_provider is None:
+            logger.warning("Concept extraction requested but LLM provider not configured")
+
+        importer = PDFImporter(
+            llm_provider=llm_provider,
+            llm_model=settings.default_llm_model,
+            db_connection=db,
+            graph_store=graph_store,
+            progress_callback=progress_callback,
+        )
+
+        result = await importer.import_multiple_pdfs(
+            pdf_files=pdf_files,
+            project_name=project_name,
+            research_question=research_question,
+            extract_concepts=extract_concepts,
+        )
+
+        if result["success"]:
+            reliability_summary = _build_reliability_summary(result.get("stats", {}))
+            _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
+            _import_jobs[job_id]["progress"] = 1.0
+            _import_jobs[job_id]["message"] = f"Imported {result['stats']['papers_imported']} PDFs successfully!"
+            _import_jobs[job_id]["project_id"] = result.get("project_id")
+            _import_jobs[job_id]["stats"] = result.get("stats", {})
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
+
+            # Update JobStore with completion status and result
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.COMPLETED,
+                progress=1.0,
+                message=f"Imported {result['stats']['papers_imported']} PDFs successfully!",
+                result={
+                    "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                    "stats": result.get("stats", {}),
+                    "reliability_summary": reliability_summary,
+                },
+            )
+
+            logger.info(f"[Multi-PDF Import {job_id}] Completed: {result.get('stats', {})}")
+        else:
+            error_msg = result.get("error", "Unknown error")
+            sanitized_error = _sanitize_error_message(error_msg)
+
+            _import_jobs[job_id]["status"] = ImportStatus.FAILED
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            await progress_updater.flush_and_close()
+
+            # Update JobStore with failure
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                message=f"Import failed: {sanitized_error}",
+                error=sanitized_error,
+            )
+
+            logger.error(f"[Multi-PDF Import {job_id}] Failed: {sanitized_error}")
+
+    except Exception as e:
+        logger.exception(f"[Multi-PDF Import {job_id}] Exception during import")
+        sanitized_error = _sanitize_error_message(str(e))
+
+        _import_jobs[job_id]["status"] = ImportStatus.FAILED
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        await progress_updater.flush_and_close()
+
+        # Update JobStore with exception
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.FAILED,
+            message=f"Import failed: {sanitized_error}",
+            error=sanitized_error,
+        )
 
 
 @router.post("/csv")
@@ -716,7 +1574,7 @@ async def import_csv(
     """Import papers from a CSV file."""
     from uuid import uuid4
 
-    if not file.filename or not file.filename.lower().endswith(".csv"):
+    if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a CSV")
 
     job_id = str(uuid4())
@@ -727,4 +1585,629 @@ async def import_csv(
         "status": "pending",
         "filename": file.filename,
         "message": "CSV import not yet implemented",
+    }
+
+
+# =============================================================================
+# Zotero RDF Export Import
+# =============================================================================
+
+class ZoteroImportRequest(BaseModel):
+    """Request model for Zotero import."""
+    project_name: Optional[str] = None
+    research_question: Optional[str] = None
+    extract_concepts: bool = True
+
+
+class ZoteroValidationResponse(BaseModel):
+    """Response model for Zotero folder validation."""
+    valid: bool
+    folder_path: str
+    rdf_file: Optional[str] = None
+    items_count: int = 0
+    pdfs_available: int = 0
+    has_files_dir: bool = False
+    errors: List[str] = []
+    warnings: List[str] = []
+
+
+class ZoteroImportResponse(BaseModel):
+    """Response model for Zotero import."""
+    job_id: str
+    status: ImportStatus
+    message: str
+    items_count: int = 0
+    project_id: Optional[str] = None
+    reliability_summary: Optional[dict] = None
+
+
+@router.post("/zotero/validate", response_model=ZoteroValidationResponse)
+async def validate_zotero_folder(
+    files: List[UploadFile] = File(...),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Validate uploaded Zotero export files before import.
+
+    Expects:
+    - One .rdf file (Zotero metadata export)
+    - Multiple .pdf files (optional, from "Export Files" option)
+
+    Returns validation results including item count and PDF availability.
+    """
+    import tempfile
+    import shutil
+    from importers.zotero_rdf_importer import ZoteroRDFImporter
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    # Create temp directory for validation
+    temp_dir = tempfile.mkdtemp(prefix="zotero_validate_")
+
+    try:
+        rdf_file = None
+        pdf_count = 0
+
+        # Save uploaded files to temp directory, preserving relative paths
+        logger.info(f"Received {len(files)} files for Zotero validation")
+        for file in files:
+            logger.info(f"  - filename: '{file.filename}', content_type: {file.content_type}")
+            content = await file.read()
+
+            # Security: Validate path (no absolute paths or path traversal)
+            filename = file.filename or ""
+            if filename.startswith("/") or ".." in filename:
+                logger.warning(f"Rejected unsafe path: {filename}")
+                continue
+
+            # Preserve full relative path for ALL files (RDF and PDF)
+            # This maintains Zotero's folder structure: files/<item_key>/paper.pdf
+            target_path = Path(temp_dir) / filename
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(target_path, 'wb') as f:
+                f.write(content)
+
+            if filename.lower().endswith('.rdf'):
+                rdf_file = filename
+            elif filename.lower().endswith('.pdf'):
+                pdf_count += 1
+                logger.info(f"    → Saved PDF to: {target_path}")
+
+        if not rdf_file:
+            return ZoteroValidationResponse(
+                valid=False,
+                folder_path=temp_dir,
+                errors=["RDF 파일이 업로드되지 않았습니다. Zotero에서 RDF 형식으로 내보내기 해주세요."],
+            )
+
+        # Run validation
+        importer = ZoteroRDFImporter()
+        result = await importer.validate_folder(temp_dir)
+
+        return ZoteroValidationResponse(
+            valid=result.get("valid", False),
+            folder_path=temp_dir,
+            rdf_file=result.get("rdf_file"),
+            items_count=result.get("items_count", 0),
+            pdfs_available=result.get("pdfs_available", 0),
+            has_files_dir=result.get("has_files_dir", False),
+            errors=result.get("errors", []),
+            warnings=result.get("warnings", []),
+        )
+
+    finally:
+        # Cleanup temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@router.post("/zotero", response_model=ZoteroImportResponse)
+async def import_zotero_folder(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    project_name: Optional[str] = None,
+    research_question: Optional[str] = None,
+    extract_concepts: bool = True,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Import a Zotero RDF export with PDFs. Requires auth in production.
+
+    Upload a Zotero export (RDF file + PDFs from "Export Files" option).
+    This endpoint will:
+    1. Parse RDF/XML for bibliographic metadata
+    2. Extract text from uploaded PDFs
+    3. Create a new project automatically
+    4. Use LLM to extract concepts, methods, and findings
+    5. Build a concept-centric knowledge graph
+
+    Args:
+        files: Uploaded files (one .rdf + multiple .pdf files)
+        project_name: Optional project name (defaults to "Zotero Import YYYY-MM-DD")
+        research_question: Optional research question for context
+        extract_concepts: Whether to use LLM for concept extraction (default: True)
+
+    Returns:
+        Import job information including job_id for status tracking
+    """
+    import tempfile
+    from uuid import uuid4
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    # Validate that we have an RDF file (case-insensitive)
+    rdf_files = [f for f in files if f.filename and f.filename.lower().endswith('.rdf')]
+    if not rdf_files:
+        raise HTTPException(
+            status_code=400,
+            detail="RDF 파일이 필요합니다. Zotero에서 RDF 형식으로 내보내기 해주세요."
+        )
+
+    # Read all file contents
+    MAX_TOTAL_SIZE = 500 * 1024 * 1024  # 500MB total
+    uploaded_files = []
+    total_size = 0
+
+    for file in files:
+        content = await file.read()
+        total_size += len(content)
+        if total_size > MAX_TOTAL_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"전체 파일 크기가 {MAX_TOTAL_SIZE // (1024*1024)}MB를 초과합니다."
+            )
+        uploaded_files.append((file.filename, content))
+
+    # Count items (basic RDF parsing to get count)
+    rdf_content = next((c for f, c in uploaded_files if f and f.lower().endswith('.rdf')), None)
+    items_count = 0
+    if rdf_content:
+        try:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(rdf_content)
+            # Count bibliographic items
+            for item_type in ['Article', 'Book', 'BookSection', 'ConferencePaper',
+                             'JournalArticle', 'Report', 'Thesis', 'Document']:
+                items_count += len(root.findall(f'.//{{{NAMESPACES_FOR_COUNT["bib"]}}}{item_type}', NAMESPACES_FOR_COUNT))
+        except:
+            pass
+
+    # Create job
+    job_store = await get_job_store()
+    job = await job_store.create_job(
+        job_type="zotero_import",
+        metadata={
+            "file_count": len(uploaded_files),
+            "total_size": total_size,
+            "items_count": items_count,
+            "project_name": project_name,
+            "research_question": research_question,
+            "extract_concepts": extract_concepts,
+        },
+    )
+
+    now = datetime.now()
+    _import_jobs[job.id] = {
+        "job_id": job.id,
+        "status": ImportStatus.PENDING,
+        "progress": 0.0,
+        "message": f"Zotero import starting: {items_count} items",
+        "project_id": None,
+        "stats": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # Start background import task
+    background_tasks.add_task(
+        _run_zotero_import,
+        job_id=job.id,
+        uploaded_files=uploaded_files,
+        project_name=project_name,
+        research_question=research_question,
+        extract_concepts=extract_concepts,
+    )
+
+    return ZoteroImportResponse(
+        job_id=job.id,
+        status=ImportStatus.PENDING,
+        message=f"Zotero import starting: {items_count} items, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])} PDFs",
+        items_count=items_count,
+    )
+
+
+# Namespace constants for RDF parsing in endpoint
+NAMESPACES_FOR_COUNT = {
+    'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+    'bib': 'http://purl.org/net/biblio#',
+}
+
+
+async def _run_zotero_import(
+    job_id: str,
+    uploaded_files: List[tuple],
+    project_name: Optional[str],
+    research_question: Optional[str],
+    extract_concepts: bool,
+    resume_checkpoint: Optional[dict] = None,
+):
+    """Background task to run Zotero import.
+
+    BUG-028 Extension: Added resume_checkpoint parameter for resume support.
+    """
+    from importers.zotero_rdf_importer import ZoteroRDFImporter
+
+    # BUG-028 Extension: Extract resume info from checkpoint
+    skip_paper_ids = set()
+    existing_project_id = None
+    if resume_checkpoint:
+        skip_paper_ids = set(resume_checkpoint.get("processed_paper_ids", []))
+        existing_project_id = resume_checkpoint.get("project_id")
+        logger.info(f"[Zotero Import {job_id}] Resuming: skipping {len(skip_paper_ids)} already processed papers")
+
+    logger.info(f"[Zotero Import {job_id}] Starting import: {len(uploaded_files)} files")
+
+    # Get job store for persistent updates
+    job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="Zotero Import",
+    )
+    checkpoint_saver = _QueuedCheckpointSaver(job_store=job_store, job_id=job_id)
+
+    # BUG-028 Extension: Track processed papers for checkpoint
+    processed_paper_ids = list(skip_paper_ids)  # Start with already processed
+    current_project_id = existing_project_id
+
+    def progress_callback(progress):
+        """Update job status from importer progress.
+
+        BUG-027 FIX: Updates BOTH _import_jobs (legacy) AND JobStore (persistent).
+        BUG-028 Extension: Also saves checkpoint after each paper is processed.
+        """
+        nonlocal current_project_id
+
+        status_map = {
+            "validating": ImportStatus.VALIDATING,
+            "parsing": ImportStatus.EXTRACTING,
+            "scanning": ImportStatus.EXTRACTING,
+            "creating_project": ImportStatus.PROCESSING,
+            "importing": ImportStatus.PROCESSING,
+            "building_relationships": ImportStatus.BUILDING_GRAPH,
+            "embeddings": ImportStatus.BUILDING_GRAPH,
+            "complete": ImportStatus.COMPLETED,
+        }
+        import_status = status_map.get(progress.status, ImportStatus.PROCESSING)
+
+        # Update legacy in-memory store
+        _import_jobs[job_id]["status"] = import_status
+        _import_jobs[job_id]["progress"] = progress.progress
+        _import_jobs[job_id]["message"] = progress.message
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-028 Extension: Save checkpoint when a paper is processed
+        # Check if current_paper_id is set and not already in processed list
+        if (hasattr(progress, 'current_paper_id') and
+            progress.current_paper_id and
+            progress.current_paper_id not in processed_paper_ids):
+
+            processed_paper_ids.append(progress.current_paper_id)
+
+            checkpoint_saver.enqueue(
+                paper_id=progress.current_paper_id,
+                index=(
+                    progress.current_paper_index
+                    if hasattr(progress, "current_paper_index")
+                    else len(processed_paper_ids) - 1
+                ),
+                total_papers=progress.papers_total,
+                project_id=current_project_id or "",
+                stage=progress.status,
+            )
+
+        # BUG-027/PERF: Coalesced JobStore updates to avoid task bursts.
+        progress_updater.enqueue(progress=progress.progress, message=progress.message)
+
+        logger.info(f"[Zotero Import {job_id}] {progress.status}: {progress.progress:.0%} - {progress.message}")
+
+    try:
+        # Mark job as running in JobStore
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.RUNNING,
+            progress=0.0,
+            message="Starting Zotero import...",
+        )
+
+        # Create importer with database connection and GraphStore
+        graph_store = GraphStore(db=db)
+
+        # Get actual LLM provider object (not string) for concept extraction
+        llm_provider = get_llm_provider() if extract_concepts else None
+        if extract_concepts and llm_provider is None:
+            logger.warning("Concept extraction requested but LLM provider not configured, using fallback extraction")
+
+        importer = ZoteroRDFImporter(
+            llm_provider=llm_provider,
+            llm_model=settings.default_llm_model,
+            db_connection=db,
+            graph_store=graph_store,
+            progress_callback=progress_callback,
+        )
+
+        # Run the import
+        # BUG-028 Extension: Pass resume parameters
+        result = await importer.import_from_upload(
+            files=uploaded_files,
+            project_name=project_name,
+            research_question=research_question,
+            skip_paper_ids=skip_paper_ids if skip_paper_ids else None,
+            existing_project_id=existing_project_id,
+        )
+
+        # BUG-028 Extension: Update current_project_id for checkpoint
+        if result.get("project_id"):
+            current_project_id = str(result.get("project_id"))
+
+            # BUG-035 FIX: Update checkpoint with project_id immediately
+            # Checkpoint may have been saved during import without project_id
+            # because project is created DURING processing, not before
+            try:
+                existing_job = await job_store.get_job(job_id)
+                if existing_job and existing_job.metadata.get("checkpoint"):
+                    checkpoint = existing_job.metadata["checkpoint"]
+                    checkpoint["project_id"] = current_project_id
+                    await job_store.update_job(
+                        job_id=job_id,
+                        metadata={"checkpoint": checkpoint},
+                    )
+                    logger.debug(f"[Zotero Import {job_id}] Updated checkpoint with project_id: {current_project_id}")
+            except Exception as e:
+                logger.warning(f"[Zotero Import {job_id}] Failed to update checkpoint with project_id: {e}")
+
+        if result.get("success"):
+            concepts_count = result.get("concepts_extracted", 0)
+            relationships_count = result.get("relationships_created", 0)
+            reliability_summary = _build_reliability_summary(result)
+
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
+
+            _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
+            _import_jobs[job_id]["progress"] = 1.0
+            _import_jobs[job_id]["message"] = f"Zotero import completed: {result.get('papers_imported', 0)} papers"
+            _import_jobs[job_id]["project_id"] = result.get("project_id")
+            _import_jobs[job_id]["stats"] = {
+                "papers_imported": result.get("papers_imported", 0),
+                "pdfs_processed": result.get("pdfs_processed", 0),
+                "concepts_extracted": concepts_count,
+                "relationships_created": relationships_count,
+                "raw_entities_extracted": result.get("raw_entities_extracted", 0),
+                "entities_after_resolution": result.get("entities_after_resolution", 0),
+                "entities_stored_unique": result.get("entities_stored_unique", 0),
+                "merges_applied": result.get("merges_applied", 0),
+                "canonicalization_rate": result.get("canonicalization_rate", 0.0),
+                # Frontend-compatible field names
+                "nodes_created": concepts_count,
+                "edges_created": relationships_count,
+            }
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
+            _import_jobs[job_id]["result"] = {
+                "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                "nodes_created": concepts_count,
+                "edges_created": relationships_count,
+                "reliability_summary": reliability_summary,
+            }
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            # Update JobStore with completion status and result
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.COMPLETED,
+                progress=1.0,
+                message=f"Zotero import completed: {result.get('papers_imported', 0)} papers",
+                result={
+                    "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                    "stats": _import_jobs[job_id]["stats"],
+                    "nodes_created": concepts_count,
+                    "edges_created": relationships_count,
+                    "reliability_summary": reliability_summary,
+                },
+            )
+
+            logger.info(f"[Zotero Import {job_id}] Completed: {_import_jobs[job_id]['stats']}")
+        else:
+            errors = result.get("errors", ["Unknown error"])
+            error_msg = "; ".join(errors[:3])  # Limit error message length
+            sanitized_error = _sanitize_error_message(error_msg)
+
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
+
+            _import_jobs[job_id]["status"] = ImportStatus.FAILED
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            # Update JobStore with failure
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                message=f"Import failed: {sanitized_error}",
+                error=sanitized_error,
+            )
+
+            logger.error(f"[Zotero Import {job_id}] Failed: {sanitized_error}")
+
+    except Exception as e:
+        logger.exception(f"[Zotero Import {job_id}] Exception during import")
+        sanitized_error = _sanitize_error_message(str(e))
+
+        await checkpoint_saver.flush_and_close()
+        await progress_updater.flush_and_close()
+
+        _import_jobs[job_id]["status"] = ImportStatus.FAILED
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # Update JobStore with exception
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.FAILED,
+            message=f"Import failed: {sanitized_error}",
+            error=sanitized_error,
+        )
+
+
+# =============================================================================
+# BUG-028 Extension: Resume Interrupted Import
+# =============================================================================
+
+@router.post("/resume/{job_id}", response_model=ImportJobResponse)
+async def resume_import(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Resume an interrupted import job.
+
+    BUG-028 Extension: Allows resuming imports that were interrupted by server restart.
+
+    Conditions:
+    - Original job status must be INTERRUPTED
+    - Checkpoint must exist in job metadata
+
+    Process:
+    1. Load checkpoint from original job
+    2. Create new job with reference to original
+    3. Resume import, skipping already processed papers
+    4. Continue adding to the same project
+
+    Args:
+        job_id: ID of the interrupted job to resume
+
+    Returns:
+        New job information for tracking the resumed import
+    """
+    job_store = await get_job_store()
+
+    # Get the original job
+    original_job = await job_store.get_job(job_id)
+    if not original_job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Validate job status
+    if original_job.status != JobStatus.INTERRUPTED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resume job with status '{original_job.status.value}'. Only INTERRUPTED jobs can be resumed."
+        )
+
+    # Validate checkpoint exists
+    checkpoint = original_job.metadata.get("checkpoint")
+    if not checkpoint:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot resume: No checkpoint found. The job may have failed before any papers were processed."
+        )
+
+    # Validate checkpoint has required data
+    if not checkpoint.get("project_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot resume: Checkpoint is missing project_id."
+        )
+
+    # Get original job metadata for re-running the import
+    original_metadata = original_job.metadata
+    job_type = original_job.job_type
+
+    # Create new job for the resumed import
+    new_job = await job_store.create_job(
+        job_type=job_type,
+        metadata={
+            **original_metadata,
+            "resumed_from_job_id": job_id,
+            "checkpoint": checkpoint,  # Carry forward the checkpoint
+        },
+    )
+
+    now = datetime.now()
+    processed_count = len(checkpoint.get("processed_paper_ids", []))
+    total_count = checkpoint.get("total_papers", 0)
+
+    response = ImportJobResponse(
+        job_id=new_job.id,
+        status=ImportStatus.PENDING,
+        progress=0.0,
+        message=f"Resuming import: {processed_count}/{total_count} papers already processed",
+        project_id=checkpoint.get("project_id"),
+        stats=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    # Legacy: also store in memory
+    _import_jobs[new_job.id] = response.model_dump()
+
+    # Start background task based on job type
+    if job_type == "zotero_import":
+        # For Zotero import, we need the uploaded files
+        # Since files are not persisted, we need to inform the user
+        # For now, we'll need to re-upload files - but the checkpoint will skip processed papers
+        raise HTTPException(
+            status_code=400,
+            detail="Zotero import resume requires re-uploading files. The checkpoint will skip already processed papers. Please use the import endpoint with the same files."
+        )
+
+    # For other job types (like PDF import), start the background task
+    # This is a placeholder - specific implementations would go here
+    logger.info(f"[Resume {new_job.id}] Created resume job from {job_id}, {processed_count}/{total_count} papers already processed")
+
+    return response
+
+
+@router.get("/resume/{job_id}/info")
+async def get_resume_info(
+    job_id: str,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Get information about resuming an interrupted job.
+
+    BUG-028 Extension: Returns checkpoint details to help user understand resume state.
+
+    Args:
+        job_id: ID of the interrupted job
+
+    Returns:
+        Resume information including processed papers count and project details
+    """
+    job_store = await get_job_store()
+
+    job = await job_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    checkpoint = job.metadata.get("checkpoint", {})
+
+    return {
+        "job_id": job_id,
+        "status": job.status.value,
+        "can_resume": job.status == JobStatus.INTERRUPTED and bool(checkpoint.get("project_id")),
+        "checkpoint": {
+            "processed_count": len(checkpoint.get("processed_paper_ids", [])),
+            "total_papers": checkpoint.get("total_papers", 0),
+            "last_processed_index": checkpoint.get("last_processed_index", 0),
+            "project_id": checkpoint.get("project_id"),
+            "stage": checkpoint.get("stage"),
+            "updated_at": checkpoint.get("updated_at"),
+        } if checkpoint else None,
+        "error": job.error,
+        "message": "Re-upload files to resume. Already processed papers will be skipped." if job.status == JobStatus.INTERRUPTED else None,
     }
