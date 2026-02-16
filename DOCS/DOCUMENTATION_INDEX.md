@@ -1,7 +1,7 @@
 # ScholaRAG_Graph Documentation Index
 
-**Last Updated**: 2026-02-06
-**Documentation Version**: 3.2.0
+**Last Updated**: 2026-02-16
+**Documentation Version**: 4.0.0
 **Status**: Complete & Verified ✅
 
 ## Quick Navigation
