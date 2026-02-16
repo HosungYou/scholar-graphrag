@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.17.0
-**Last Updated**: 2026-02-13
+**Version**: 0.24.0
+**Last Updated**: 2026-02-16
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.8.0 |
-| **Project Version** | 0.17.0 |
+| **Document Version** | 1.9.0 |
+| **Project Version** | 0.24.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -784,7 +784,8 @@ CREATE INDEX idx_entities_embedding ON entities
 ```sql
 CREATE TYPE relationship_type AS ENUM (
     'AUTHORED_BY', 'CITES', 'DISCUSSES_CONCEPT',
-    'USES_METHOD', 'HAS_FINDING', 'RELATED_TO', 'CO_OCCURS'
+    'USES_METHOD', 'HAS_FINDING', 'RELATED_TO', 'CO_OCCURS',
+    'REPORTS_FINDING', 'ADDRESSES_PROBLEM', 'PROPOSES_INNOVATION'
 );
 
 CREATE TABLE relationships (
@@ -1278,6 +1279,15 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### v0.24.0 — P0-P2 Comprehensive Fix (2026-02-16)
+- **Database**: Migration number conflicts resolved (004B→022, 005B→023, 006B→024); new migration 025 adds REPORTS_FINDING, ADDRESSES_PROBLEM, PROPOSES_INNOVATION relationship types
+- **Feature Flags**: lexical_graph_v1, hybrid_trace_v1, topic_lod_default default to True
+- **Visualization API**: paper_count derived from source_paper_ids array length; max_nodes default 1000→2000
+- **Community Detection**: Leiden algorithm integration with K-means fallback in gap_detector.cluster_concepts()
+- **Cluster Labels**: LLM timeout 5s→15s, 1 retry, keyword-based fallback (never generic "Cluster N")
+- **Edge Visibility**: Opacity floors raised across 3D and Topic views for better readability
+- **Frontend**: 6 new RelationshipType values, Edge Types filter in FilterPanel, default viewMode 'topic'
 
 ### Version 0.17.0 (2026-02-13) — InfraNodus Topic View + 6+2 Bug Fixes
 
