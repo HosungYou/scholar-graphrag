@@ -447,6 +447,13 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       return a.id.localeCompare(b.id);
     });
 
+    // v0.20.0: Build edge count map for connection-based node sizing
+    const edgeCountMap = new Map<string, number>();
+    orderedEdges.forEach(edge => {
+      edgeCountMap.set(edge.source, (edgeCountMap.get(edge.source) || 0) + 1);
+      edgeCountMap.set(edge.target, (edgeCountMap.get(edge.target) || 0) + 1);
+    });
+
     const forceNodes: ForceGraphNode[] = orderedNodes.map(node => {
       const clusterId = (node.properties as { cluster_id?: number })?.cluster_id;
       const centrality = centralityMap.get(node.id) || 0;
@@ -460,11 +467,13 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         color = ENTITY_TYPE_COLORS[node.entity_type] || '#888888';
       }
 
-      // Size based on centrality (sqrt for visual balance)
+      // v0.20.0: Size based on centrality AND edge count (logarithmic scaling for balance)
+      const connectionCount = edgeCountMap.get(node.id) || 0;
       const baseSize = 3;
       const centralityBoost = Math.sqrt(centrality * 100) * 2;
+      const connectionBoost = Math.log(1 + connectionCount) * 1.5;
       const bridgeBoost = isBridge ? 2 : 0;
-      const nodeSize = baseSize + centralityBoost + bridgeBoost;
+      const nodeSize = baseSize + centralityBoost + connectionBoost + bridgeBoost;
 
       // UI-010 FIX: Restore position from ref if available
       const savedPosition = nodePositionsRef.current.get(node.id);
@@ -901,15 +910,33 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     });
   }, [centralityPercentileMap, nodeStyleMap]);
 
-  // Link width based on weight
+  // Link width based on weight with strength-tier differentiation
   // UI-010 FIX: Uses edgeStyleMap for highlight state
+  // v0.20.0: Weight-based visual tiers: strong (>0.7), medium (0.3-0.7), weak (<0.3)
   const linkWidth = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
     if (link.isGhost) {
       // Ghost edges are thinner with dashed appearance feel
       return 1.5;
     }
-    const baseWidth = Math.max(0.3, (link.weight || 1) * 0.5);
+
+    const weight = link.weight || 0.5;
+
+    // Weight-tier base widths
+    let baseWidth: number;
+    if (weight > 0.7) {
+      baseWidth = 1.2;  // Strong: thick
+    } else if (weight >= 0.3) {
+      baseWidth = 0.6;  // Medium: normal
+    } else {
+      baseWidth = 0.3;  // Weak: thin
+    }
+
+    // BRIDGES_GAP edges get a distinct width
+    if (link.relationshipType === 'BRIDGES_GAP') {
+      baseWidth = 1.0;
+    }
+
     // Get highlight state from style map
     const edgeStyle = edgeStyleMap.get(link.id);
     const isHighlighted = edgeStyle?.isHighlighted || false;
@@ -974,21 +1001,36 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       }
     }
 
+    // v0.20.0: Weight-based opacity tiers for visual differentiation
+    const weight = link.weight || 0.5;
+    let weightOpacity: number;
+    if (weight > 0.7) {
+      weightOpacity = 0.6;   // Strong: full visibility
+    } else if (weight >= 0.3) {
+      weightOpacity = 0.35;  // Medium: moderate visibility
+    } else {
+      weightOpacity = 0.15;  // Weak: subtle
+    }
+
     // v0.18.0: Semantic edge coloring by relationship type
     const relColor = RELATIONSHIP_COLORS[link.relationshipType];
     if (relColor) {
-      return hexToRgba(relColor, 0.4);
+      // BRIDGES_GAP uses its own gold color at higher opacity
+      if (link.relationshipType === 'BRIDGES_GAP') {
+        return hexToRgba(relColor, 0.7);
+      }
+      return hexToRgba(relColor, weightOpacity);
     }
 
     // Get cluster IDs for source and target
     const sourceCluster = nodeClusterMap.get(sourceId);
     const targetCluster = nodeClusterMap.get(targetId);
 
-    // Same cluster: use cluster color with low opacity (fallback)
+    // Same cluster: use cluster color with weight-scaled opacity
     if (sourceCluster !== undefined && sourceCluster === targetCluster) {
       const clusterColor = clusterColorMap.get(sourceCluster);
       if (clusterColor) {
-        return hexToRgba(clusterColor, 0.35);
+        return hexToRgba(clusterColor, weightOpacity);
       }
     }
 
@@ -997,15 +1039,26 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       const sourceColor = clusterColorMap.get(sourceCluster);
       const targetColor = clusterColorMap.get(targetCluster);
       if (sourceColor && targetColor) {
-        return blendColors(sourceColor, targetColor, 0.5);
+        // blendColors already uses 0.35 opacity; scale by weight tier
+        const blendAlpha = weight > 0.7 ? 0.5 : weight >= 0.3 ? 0.3 : 0.12;
+        const r1 = parseInt(sourceColor.slice(1, 3), 16);
+        const g1 = parseInt(sourceColor.slice(3, 5), 16);
+        const b1 = parseInt(sourceColor.slice(5, 7), 16);
+        const r2 = parseInt(targetColor.slice(1, 3), 16);
+        const g2 = parseInt(targetColor.slice(3, 5), 16);
+        const b2 = parseInt(targetColor.slice(5, 7), 16);
+        const r = Math.round((r1 + r2) / 2);
+        const g = Math.round((g1 + g2) / 2);
+        const b = Math.round((b1 + b2) / 2);
+        return `rgba(${r}, ${g}, ${b}, ${blendAlpha})`;
       }
     }
 
-    // Default: white with low opacity
-    return 'rgba(255, 255, 255, 0.15)';
-  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, blendColors, showSameAsEdges, highlightedNodes, nodeStyleMap]);
+    // Default: white with weight-scaled opacity
+    return `rgba(255, 255, 255, ${Math.max(0.08, weightOpacity * 0.5)})`;
+  }, [edgeStyleMap, nodeClusterMap, clusterColorMap, hexToRgba, showSameAsEdges, highlightedNodes, nodeStyleMap]);
 
-  // Custom link rendering for ghost edges and SAME_AS edges (dashed lines)
+  // Custom link rendering for ghost edges, SAME_AS edges, and BRIDGES_GAP edges (dashed lines)
   const linkThreeObject = useCallback((linkData: unknown) => {
     const link = linkData as ForceGraphLink;
 
@@ -1017,6 +1070,23 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         dashSize: 2,
         gapSize: 1.5,
         opacity: 0.7,
+        transparent: true,
+      });
+
+      const line = new THREE.Line(geometry, material);
+      line.computeLineDistances();
+
+      return line;
+    }
+
+    // v0.20.0: Render BRIDGES_GAP edges as dashed gold lines
+    if (link.relationshipType === 'BRIDGES_GAP') {
+      const geometry = new THREE.BufferGeometry();
+      const material = new THREE.LineDashedMaterial({
+        color: 0xFFD700, // Gold
+        dashSize: 4,
+        gapSize: 2.5,
+        opacity: 0.8,
         transparent: true,
       });
 
@@ -1050,8 +1120,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   const linkPositionUpdate = useCallback((line: THREE.Object3D, coords: { start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number } }, linkData: unknown) => {
     const link = linkData as ForceGraphLink;
 
-    // Phase 11F: Handle SAME_AS edges (dashed lines)
-    if ((link.isGhost || link.relationshipType === 'SAME_AS') && line instanceof THREE.Line) {
+    // Phase 11F + v0.20.0: Handle SAME_AS, BRIDGES_GAP, and ghost edges (dashed lines)
+    if ((link.isGhost || link.relationshipType === 'SAME_AS' || link.relationshipType === 'BRIDGES_GAP') && line instanceof THREE.Line) {
       const positions = new Float32Array([
         coords.start.x, coords.start.y, coords.start.z,
         coords.end.x, coords.end.y, coords.end.z

@@ -1389,6 +1389,12 @@ async def refresh_gap_analysis(
         # Build concept id -> name mapping for lookup
         concept_name_map = {c["id"]: c["name"] for c in concepts}
 
+        # Build edge pairs for intra-cluster density computation
+        edge_pairs = [
+            (rel["source_id"], rel["target_id"])
+            for rel in relationships
+        ]
+
         for cluster in analysis.get("clusters", []):
             # Get concept names from the mapping
             cluster_concept_names = [
@@ -1405,7 +1411,20 @@ async def refresh_gap_analysis(
             else:
                 label = f"Cluster {cluster.id + 1}"
 
-            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}")
+            # Compute intra-cluster edge density
+            cluster_node_ids = set(str(cid) for cid in cluster.concept_ids)
+            n = len(cluster_node_ids)
+            if n >= 2:
+                intra_edges = sum(
+                    1 for src, tgt in edge_pairs
+                    if src in cluster_node_ids and tgt in cluster_node_ids
+                )
+                max_edges = n * (n - 1) / 2
+                density = intra_edges / max_edges if max_edges > 0 else 0.0
+            else:
+                density = 0.0
+
+            logger.info(f"Storing cluster {cluster.id}: {len(cluster.concept_ids)} concepts, name={cluster.name}, label={label}, density={density:.3f}")
 
             await database.execute(
                 """
@@ -1417,7 +1436,7 @@ async def refresh_gap_analysis(
                 [str(cid) for cid in cluster.concept_ids],  # Convert to strings for TEXT[]
                 cluster_concept_names,  # Derived from concept_ids
                 len(cluster.concept_ids),  # Computed size
-                0.0,  # Default density (can be calculated if needed)
+                density,  # Actual intra-cluster edge density
                 label,
             )
 
@@ -2012,9 +2031,11 @@ def _build_gap_recommendation_query(
     cluster_a_names: List[str],
     cluster_b_names: List[str],
 ) -> str:
-    """Build deterministic recommendation query from gap context.
+    """Build a concise, Semantic Scholar-friendly search query from gap metadata.
 
     v0.19.0: Filter empty strings and avoid literal 'research gap' fallback.
+    v0.20.0: Improved to produce better academic search terms by limiting to
+    the most specific bridge candidates and cross-cluster concept pairs.
     Returns empty string if no meaningful terms available (caller should skip S2 call).
     """
     # Try bridge candidates first (most specific)
@@ -2022,9 +2043,9 @@ def _build_gap_recommendation_query(
     if parts:
         return " ".join(parts)
 
-    # Try combining cluster names
-    a_names = [n.strip() for n in (cluster_a_names or [])[:3] if n and n.strip()]
-    b_names = [n.strip() for n in (cluster_b_names or [])[:3] if n and n.strip()]
+    # Combine top concepts from both clusters for cross-cluster search
+    a_names = [n.strip() for n in (cluster_a_names or [])[:2] if n and n.strip()]
+    b_names = [n.strip() for n in (cluster_b_names or [])[:2] if n and n.strip()]
 
     if a_names and b_names:
         return f"{a_names[0]} {b_names[0]}"
@@ -2034,7 +2055,7 @@ def _build_gap_recommendation_query(
     if available:
         return " ".join(available[:3])
 
-    # v0.19.0: Return empty instead of literal "research gap"
+    # Return empty instead of literal "research gap"
     return ""
 
 

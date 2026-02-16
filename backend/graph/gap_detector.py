@@ -130,7 +130,7 @@ class GapDetector:
         self.min_clusters = min_clusters
         self.max_clusters = max_clusters
 
-    def cluster_concepts(
+    async def cluster_concepts(
         self,
         concepts: list[dict],
         n_clusters: Optional[int] = None,
@@ -216,12 +216,14 @@ class GapDetector:
             # Use top 5 most central concepts as keywords
             cluster.keywords = cluster.keywords[:5]
 
-            # Generate cluster name from top keywords
-            # NOTE: _generate_cluster_label() is async but cluster_concepts() is sync,
-            # so LLM labeling requires making this method async. Using keyword join for now.
+            # Generate cluster name from top keywords using LLM
             if cluster.keywords:
-                filtered = [k for k in cluster.keywords[:3] if k and k.strip()]
-                cluster.name = " / ".join(filtered) if filtered else f"Cluster {cluster_id + 1}"
+                try:
+                    cluster.name = await self._generate_cluster_label(cluster.keywords)
+                except Exception as e:
+                    logger.warning(f"LLM label generation failed for cluster {cluster_id}: {e}")
+                    filtered = [k for k in cluster.keywords[:3] if k and k.strip()]
+                    cluster.name = " / ".join(filtered) if filtered else f"Cluster {cluster_id + 1}"
             else:
                 cluster.name = f"Cluster {cluster_id + 1}"
 
@@ -860,7 +862,7 @@ Return ONLY the research questions, one per line, without numbering or bullets.
         logger.info(f"Analyzing graph with {len(concepts)} concepts and {len(relationships)} relationships")
 
         # Step 1: Cluster concepts
-        clusters = self.cluster_concepts(concepts)
+        clusters = await self.cluster_concepts(concepts)
 
         # Step 2: Calculate centrality
         centrality = self.calculate_centrality(concepts, relationships)
