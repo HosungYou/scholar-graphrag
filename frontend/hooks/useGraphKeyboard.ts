@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState } from 'react';
-import { useGraphStore, ViewMode } from './useGraphStore';
+import { useGraphStore } from './useGraphStore';
 
 interface UseGraphKeyboardOptions {
   enabled?: boolean;
@@ -33,13 +33,13 @@ export function useGraphKeyboard({
 
       switch (e.key) {
         case '1':
-          setViewMode('concepts');
+          setViewMode('3d');
           break;
         case '2':
-          setViewMode('papers');
+          setViewMode('topic');
           break;
         case '3':
-          setViewMode('full');
+          setViewMode('gaps');
           break;
         case 'r':
         case 'R':
@@ -75,9 +75,9 @@ export function useGraphKeyboard({
 }
 
 export const KEYBOARD_SHORTCUTS = [
-  { key: '1', description: 'Concepts view' },
-  { key: '2', description: 'Papers view' },
-  { key: '3', description: 'All nodes view' },
+  { key: '1', description: '3D graph view' },
+  { key: '2', description: 'Topic view' },
+  { key: '3', description: 'Gaps view' },
   { key: 'R', description: 'Reset camera' },
   { key: 'Esc', description: 'Clear selection' },
   { key: 'F', description: 'Toggle filters' },

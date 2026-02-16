@@ -21,7 +21,27 @@ export type EntityType =
   | 'Technology' // TTO - Technology area
   | 'License'    // TTO - License
   | 'Grant'      // TTO - Grant
-  | 'Department'; // TTO - Department
+  | 'Department' // TTO - Department
+  // Phase 0-3: Additional entity types
+  | 'Result'     // Research result
+  | 'Claim';     // Research claim
+
+// Phase 0-3: Retrieval Trace Types
+export interface TraceStep {
+  step_index: number;
+  action: string;
+  node_ids: string[];
+  edge_ids: string[];
+  thought: string;
+  duration_ms: number;
+}
+
+export interface RetrievalTrace {
+  strategy: string;
+  steps: TraceStep[];
+  reasoning_path: string[];
+  metrics: Record<string, number>;
+}
 
 // Relationship Types (Updated for Concept-Centric Design)
 export type RelationshipType =
@@ -205,6 +225,8 @@ export interface ChatResponse {
   highlighted_edges: string[];
   suggested_follow_ups?: string[];
   agent_trace?: Record<string, unknown>;
+  // Phase 0-3: Retrieval trace for graph path visualization
+  retrieval_trace?: RetrievalTrace;
   // Phase 11B: Search strategy metadata
   meta?: ChatResponseMeta;
 }

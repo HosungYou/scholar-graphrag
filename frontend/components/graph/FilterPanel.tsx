@@ -103,6 +103,15 @@ const entityTypeConfig: Record<string, { color: string; icon: React.ReactNode }>
     color: '#A855F7',
     icon: <Octagon className="w-3 h-3" strokeWidth={2} />
   },
+  // Phase 0-3: Additional entity types
+  Result: {
+    color: '#EF4444', // Red
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Claim: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
 };
 
 // Data source badge styles
@@ -198,6 +207,32 @@ export function FilterPanel({
                   None
                 </button>
               </div>
+            </div>
+
+            {/* Phase 0-3: Quick Filter Presets */}
+            <div className="flex gap-1 mb-3">
+              <button
+                onClick={() => onTypeChange(entityTypes.filter(t =>
+                  ['Concept', 'Method', 'Finding', 'Problem', 'Result', 'Claim'].includes(t)
+                ))}
+                className="flex-1 px-2 py-1 font-mono text-xs border border-ink/10 dark:border-paper/10 text-muted hover:text-accent-teal hover:border-accent-teal transition-colors"
+              >
+                Concepts
+              </button>
+              <button
+                onClick={() => onTypeChange(entityTypes.filter(t =>
+                  ['Paper', 'Author', 'Dataset'].includes(t)
+                ))}
+                className="flex-1 px-2 py-1 font-mono text-xs border border-ink/10 dark:border-paper/10 text-muted hover:text-accent-teal hover:border-accent-teal transition-colors"
+              >
+                Papers
+              </button>
+              <button
+                onClick={selectAll}
+                className="flex-1 px-2 py-1 font-mono text-xs border border-ink/10 dark:border-paper/10 text-muted hover:text-accent-teal hover:border-accent-teal transition-colors"
+              >
+                All
+              </button>
             </div>
 
             <div className="space-y-1">

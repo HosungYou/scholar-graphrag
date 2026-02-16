@@ -24,7 +24,7 @@ export interface ClusterNode {
   properties: {
     nodeCount: number;
     nodeIds: string[];
-    entityTypes: Record<EntityType, number>;
+    entityTypes: Partial<Record<EntityType, number>>;
     representative: string;
   };
 }
@@ -43,12 +43,14 @@ const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
   minZoom: 0.5,
 };
 
-const CLUSTER_COLORS: Record<EntityType, string> = {
+const CLUSTER_COLORS: Partial<Record<EntityType, string>> = {
   Paper: '#3b82f6',
   Author: '#10b981',
   Concept: '#8b5cf6',
   Method: '#f59e0b',
   Finding: '#ef4444',
+  Result: '#EF4444',
+  Claim: '#EC4899',
 };
 
 export function shouldCluster(nodeCount: number, zoom: number, config: ClusterConfig = DEFAULT_CLUSTER_CONFIG): boolean {
@@ -90,16 +92,18 @@ export function clusterNodes(
       clusteredNodes.push(cellNodes[0]);
       clusterMap.set(cellNodes[0].id, cellNodes[0].id);
     } else {
-      const entityTypeCounts: Record<EntityType, number> = {
+      const entityTypeCounts: Partial<Record<EntityType, number>> = {
         Paper: 0,
         Author: 0,
         Concept: 0,
         Method: 0,
         Finding: 0,
+        Result: 0,
+        Claim: 0,
       };
       
       for (const node of cellNodes) {
-        entityTypeCounts[node.entity_type]++;
+        entityTypeCounts[node.entity_type] = (entityTypeCounts[node.entity_type] || 0) + 1;
       }
       
       const dominantType = (Object.entries(entityTypeCounts)
@@ -228,18 +232,20 @@ export function optimizedForceLayout(
   
   const positions = new Map<string, { x: number; y: number; vx: number; vy: number }>();
   
-  const entityAngles: Record<EntityType, number> = {
+  const entityAngles: Partial<Record<EntityType, number>> = {
     Paper: 0,
     Author: Math.PI * 0.4,
     Concept: Math.PI * 0.8,
     Method: Math.PI * 1.2,
     Finding: Math.PI * 1.6,
+    Result: Math.PI * 1.8,
+    Claim: Math.PI * 0.2,
   };
   
   const scale = Math.min(width, height) * 0.35;
   
   for (const node of nodes) {
-    const angle = entityAngles[node.entity_type] + (Math.random() - 0.5) * 0.8;
+    const angle = (entityAngles[node.entity_type] ?? 0) + (Math.random() - 0.5) * 0.8;
     const radius = scale * (0.3 + Math.random() * 0.7);
     
     positions.set(node.id, {

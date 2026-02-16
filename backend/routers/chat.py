@@ -497,6 +497,7 @@ class ChatResponse(BaseModel):
     highlighted_edges: List[str] = []
     suggested_follow_ups: List[str] = []
     agent_trace: Optional[dict] = None
+    retrieval_trace: Optional[dict] = None
     # New: Gap-based suggestions
     research_gaps: List[ResearchGapSummary] = []
     hidden_connections: List[str] = []

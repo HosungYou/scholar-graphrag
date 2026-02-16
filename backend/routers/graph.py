@@ -4506,3 +4506,25 @@ async def create_cross_paper_links(
             status_code=500,
             detail=f"Cross-paper entity linking failed: {str(e)}"
         )
+
+
+@router.get("/communities/{project_id}")
+async def get_communities(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Get community detection results for a project."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    try:
+        from graph.community_detector import CommunityDetector
+        detector = CommunityDetector(db_connection=database)
+        communities = await detector.detect_communities(str(project_id))
+        return {"communities": communities}
+    except Exception as e:
+        logger.error(f"Community detection failed for project {project_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Community detection failed: {str(e)}"
+        )

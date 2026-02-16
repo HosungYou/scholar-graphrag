@@ -7,12 +7,26 @@ Supports all task types from TaskPlanningAgent: search, retrieve, analyze, compa
 
 import logging
 import json
+import time
 from typing import Any, Optional
 from pydantic import BaseModel
+from dataclasses import dataclass, field
 
 from graph.hierarchical_retriever import HierarchicalRetriever, RetrievalMode
+from graph.reranker import SemanticReranker
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TraceStep:
+    """A single step in the retrieval trace for hybrid search transparency."""
+    step_index: int = 0
+    action: str = ""  # 'vector_search', 'graph_traverse', 'rerank', 'evidence_gather'
+    node_ids: list = field(default_factory=list)
+    edge_ids: list = field(default_factory=list)
+    thought: str = ""
+    duration_ms: float = 0.0
 
 
 class QueryResult(BaseModel):
@@ -26,6 +40,7 @@ class ExecutionResult(BaseModel):
     results: list[QueryResult]
     nodes_accessed: list[str] = []
     edges_traversed: list[str] = []
+    trace_steps: list = []
 
 
 class QueryExecutionAgent:
@@ -127,7 +142,9 @@ class QueryExecutionAgent:
         results = []
         nodes_accessed = []
         edges_traversed = []
+        trace_steps = []
         self._previous_results = {}
+        step_counter = 0
 
         for i, task in enumerate(task_plan.tasks):
             # Check dependencies
@@ -151,6 +168,7 @@ class QueryExecutionAgent:
 
                 # Read search_strategy from SubTask (defaults to "vector")
                 search_strategy = getattr(task, "search_strategy", "vector")
+                step_start = time.perf_counter()
 
                 # Route to appropriate handler
                 if task.task_type == "graph_traversal":
@@ -183,6 +201,22 @@ class QueryExecutionAgent:
                     logger.warning(f"Unknown task type: {task.task_type}, returning empty result")
                     data = {"task_type": task.task_type, "status": "unsupported"}
 
+                # Record trace step
+                step_duration_ms = (time.perf_counter() - step_start) * 1000
+                step_node_ids = []
+                if isinstance(data, dict) and "nodes" in data:
+                    step_node_ids = [n.get("id", "") for n in data.get("nodes", []) if isinstance(n, dict)]
+                elif isinstance(data, list):
+                    step_node_ids = [item["id"] for item in data if isinstance(item, dict) and "id" in item]
+                trace_steps.append(TraceStep(
+                    step_index=step_counter,
+                    action=task.task_type if hasattr(task, 'task_type') else 'unknown',
+                    node_ids=step_node_ids[:20],
+                    thought=f"Executed {task.task_type} with strategy={search_strategy}",
+                    duration_ms=round(step_duration_ms, 2),
+                ))
+                step_counter += 1
+
                 # Store for dependent tasks
                 self._previous_results[i] = data
 
@@ -212,6 +246,7 @@ class QueryExecutionAgent:
             results=results,
             nodes_accessed=list(set(nodes_accessed)),  # Deduplicate
             edges_traversed=list(set(edges_traversed)),
+            trace_steps=trace_steps,
         )
 
     async def _execute_graph_traversal(self, params: dict, dep_results: list = None) -> dict:
@@ -405,7 +440,17 @@ class QueryExecutionAgent:
                     entity_types=entity_types,
                     limit=limit,
                 )
-                return self._apply_low_trust_filter(results, params)
+                results = self._apply_low_trust_filter(results, params)
+
+                # Rerank results for better relevance ordering
+                if results and query:
+                    try:
+                        reranker = SemanticReranker()
+                        results = await reranker.rerank(query=query, results=results, top_k=min(20, limit))
+                    except Exception as e:
+                        logger.debug(f"Reranking skipped: {e}")
+
+                return results
             except Exception as e:
                 logger.warning(f"Graph store search failed: {e}")
 

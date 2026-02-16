@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import type {
   GraphData,
@@ -94,7 +95,8 @@ const defaultFilters: FilterState = {
   entityTypes: [
     'Paper', 'Author',  // Hybrid Mode entities
     'Concept', 'Method', 'Finding',  // Primary concept-centric
-    'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation'  // Secondary
+    'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation',  // Secondary
+    'Result', 'Claim'  // Phase 0-3: Additional types
   ] as EntityType[],
   yearRange: null,
   searchQuery: '',
@@ -116,7 +118,9 @@ function inferViewModeFromIntent(intent?: string | null): ViewMode {
   return '3d';
 }
 
-export const useGraphStore = create<GraphStore>((set, get) => ({
+export const useGraphStore = create<GraphStore>()(
+  persist(
+  (set, get) => ({
   // Initial state
   graphData: null,
   selectedNode: null,
@@ -351,4 +355,13 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
 
   // Phase 11F: SAME_AS Edge Filter Actions
   toggleSameAsEdges: () => set((state) => ({ showSameAsEdges: !state.showSameAsEdges })),
-}));
+}),
+  {
+    name: 'scholarag-graph-settings',
+    partialize: (state) => ({
+      viewMode: state.viewMode,
+      filters: { entityTypes: state.filters?.entityTypes },
+    }),
+  }
+  )
+);

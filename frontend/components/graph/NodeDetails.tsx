@@ -94,6 +94,15 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#0891B2', // Cyan
     icon: <Hexagon className="w-4 h-4" strokeWidth={1.5} />
   },
+  // Phase 0-3: Additional entity types
+  Result: {
+    color: '#EF4444', // Red
+    icon: <Pentagon className="w-4 h-4" strokeWidth={1.5} />
+  },
+  Claim: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-4 h-4" strokeWidth={1.5} />
+  },
 };
 
 export function NodeDetails({
@@ -423,6 +432,13 @@ export function NodeDetails({
             <h3 className="font-display text-lg text-ink dark:text-paper truncate" title={node.name}>
               {node.name}
             </h3>
+            {/* Phase 0-3: Paper count badge */}
+            {(node.properties as Record<string, unknown>)?.paper_count != null &&
+              Number((node.properties as Record<string, unknown>).paper_count) > 1 && (
+              <span className="inline-flex items-center gap-1 mt-1 font-mono text-xs px-2 py-0.5 border border-accent-teal/30 text-accent-teal">
+                {String((node.properties as Record<string, unknown>).paper_count)} papers
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}

@@ -27,6 +27,11 @@ interface Message {
   // Phase 11B: Search strategy metadata
   searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
   hopCount?: number;
+  // Phase 0-3: Retrieval trace
+  retrievalTrace?: {
+    strategy: string;
+    steps: Array<{ step_index: number; action: string; node_ids: string[]; thought: string; duration_ms: number }>;
+  };
 }
 
 interface ChatInterfaceProps {
@@ -39,6 +44,8 @@ interface ChatInterfaceProps {
     // Phase 11B: Search strategy metadata
     searchStrategy?: 'vector' | 'graph_traversal' | 'hybrid';
     hopCount?: number;
+    // Phase 0-3: Retrieval trace
+    retrievalTrace?: Message['retrievalTrace'];
   }>;
   onCitationClick?: (citation: string) => void;
   initialMessages?: Message[];
@@ -63,6 +70,7 @@ export function ChatInterface({
   const [isLoading, setIsLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [hoveredCitation, setHoveredCitation] = useState<number | null>(null);
+  const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -100,6 +108,8 @@ export function ChatInterface({
         // Phase 11B: Search strategy metadata
         searchStrategy: response.searchStrategy,
         hopCount: response.hopCount,
+        // Phase 0-3: Retrieval trace
+        retrievalTrace: response.retrievalTrace,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -293,6 +303,44 @@ export function ChatInterface({
                     </>
                   )}
                 </span>
+              </div>
+            )}
+
+            {/* Phase 0-3: Retrieval Trace Indicator */}
+            {message.role === 'assistant' && message.retrievalTrace && (
+              <div className="mt-3">
+                <button
+                  onClick={() => setExpandedTrace(
+                    expandedTrace === message.id ? null : message.id
+                  )}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 transition-colors"
+                >
+                  <span>🔎</span>
+                  <span>{message.retrievalTrace.strategy}</span>
+                  <span className="text-amber-500/60">
+                    ({message.retrievalTrace.steps.length} steps)
+                  </span>
+                </button>
+                {expandedTrace === message.id && (
+                  <div className="mt-2 pl-3 border-l-2 border-amber-500/30 space-y-1.5">
+                    {message.retrievalTrace.steps.map((step, idx) => (
+                      <div key={idx} className="text-xs text-muted">
+                        <span className="font-mono text-amber-600 dark:text-amber-400">
+                          [{step.step_index}]
+                        </span>{' '}
+                        <span className="font-medium text-ink dark:text-paper">
+                          {step.action}
+                        </span>
+                        {step.thought && (
+                          <span className="text-muted"> - {step.thought}</span>
+                        )}
+                        <span className="font-mono text-muted ml-1">
+                          {step.duration_ms}ms
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     # Can be overridden with RATE_LIMIT_ENABLED environment variable
     rate_limit_enabled: bool = True  # Enable API rate limiting
 
+    # Feature Flags
+    lexical_graph_v1: bool = False
+    hybrid_trace_v1: bool = False
+    topic_lod_default: bool = False
+
     # Security: Trusted Proxy Configuration
     # Controls whether to trust X-Forwarded-For header for client IP detection
     # - "auto": Trust in production (behind Render LB), don't trust in development

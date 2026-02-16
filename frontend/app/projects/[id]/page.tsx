@@ -30,7 +30,7 @@ import {
   ChatMessageSkeleton,
   ResizeHandle,
 } from '@/components/ui';
-import type { GraphEntity, EntityType, SearchResult, Citation } from '@/types';
+import type { GraphEntity, EntityType, SearchResult, Citation, RetrievalTrace } from '@/types';
 
 /* ============================================================
    ScholaRAG Graph - Project Detail Page
@@ -56,6 +56,9 @@ export default function ProjectDetailPage() {
   const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
   const [chatInput, setChatInput] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+
+  // Phase 0-3: Trace node IDs from retrieval trace
+  const [traceNodeIds, setTraceNodeIds] = useState<string[]>([]);
 
   // Chat panel resize and collapse state
   const [chatPanelWidth, setChatPanelWidth] = useState(480);
@@ -171,6 +174,14 @@ export default function ProjectDetailPage() {
         setHighlightedEdges(data.highlighted_edges);
       }
       applyRecommendedViewMode(data.intent);
+
+      // Phase 0-3: Extract trace node IDs from retrieval_trace
+      if (data.retrieval_trace?.steps) {
+        const nodeIds = data.retrieval_trace.steps.flatMap((s: { node_ids?: string[] }) => s.node_ids || []);
+        setTraceNodeIds(Array.from(new Set(nodeIds)));
+      } else {
+        setTraceNodeIds([]);
+      }
     },
   });
 
@@ -196,6 +207,8 @@ export default function ProjectDetailPage() {
       License: 0,
       Grant: 0,
       Department: 0,
+      Result: 0,
+      Claim: 0,
     };
 
     for (const node of graphData.nodes) {
@@ -388,6 +401,20 @@ export default function ProjectDetailPage() {
                 placeholder="Search papers, concepts..."
               />
             </div>
+
+            {/* Phase 0-3: Show Path button when trace available */}
+            {traceNodeIds.length > 0 && (
+              <button
+                onClick={() => {
+                  setHighlightedNodes(traceNodeIds);
+                  setMobileView('graph');
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-mono text-xs uppercase tracking-wider hover:bg-amber-500/20 transition-colors"
+              >
+                <Network className="w-4 h-4" />
+                Show path ({traceNodeIds.length})
+              </button>
+            )}
 
             {/* Right: View Mode Toggle + Theme */}
             <div className="flex items-center gap-3">

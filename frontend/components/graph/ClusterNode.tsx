@@ -10,19 +10,33 @@ interface ClusterNodeData {
   label: string;
   entityType: 'Cluster';
   nodeCount: number;
-  entityTypes: Record<EntityType, number>;
+  entityTypes: Partial<Record<EntityType, number>>;
   dominantType: EntityType;
   baseColor: string;
   nodeIds: string[];
   isHighlighted?: boolean;
 }
 
-const entityColors: Record<EntityType, string> = {
+const entityColors: Partial<Record<EntityType, string>> = {
   Paper: '#3b82f6',
   Author: '#10b981',
   Concept: '#8b5cf6',
   Method: '#f59e0b',
   Finding: '#ef4444',
+  Problem: '#EF4444',
+  Dataset: '#3B82F6',
+  Metric: '#EC4899',
+  Innovation: '#14B8A6',
+  Limitation: '#F97316',
+  Invention: '#7C3AED',
+  Patent: '#2563EB',
+  Inventor: '#DB2777',
+  Technology: '#059669',
+  License: '#D97706',
+  Grant: '#4F46E5',
+  Department: '#0891B2',
+  Result: '#EF4444',
+  Claim: '#EC4899',
 };
 
 function ClusterNodeComponent({ data, selected }: NodeProps<ClusterNodeData>) {
@@ -93,7 +107,7 @@ function ClusterNodeComponent({ data, selected }: NodeProps<ClusterNodeData>) {
               <path
                 key={type}
                 d={path}
-                fill={entityColors[type]}
+                fill={entityColors[type] || '#64748B'}
                 opacity={0.8}
                 stroke="white"
                 strokeWidth={1}

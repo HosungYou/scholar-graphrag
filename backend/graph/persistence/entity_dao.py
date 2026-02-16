@@ -89,7 +89,7 @@ class EntityDAO:
         """
         Add an entity to the graph.
 
-        Returns the entity ID.
+        Returns the entity ID (may differ from generated UUID if name-based upsert matched).
         """
         entity_id = str(uuid4())
         node = Node(
@@ -102,7 +102,9 @@ class EntityDAO:
         )
 
         if self.db:
-            await self._db_add_entity(node)
+            # _db_add_entity returns the actual ID (may differ on upsert)
+            actual_id = await self._db_add_entity(node)
+            return actual_id
         else:
             self._nodes[entity_id] = node
 
@@ -341,30 +343,64 @@ class EntityDAO:
     # Private DB Methods
     # =========================================================================
 
-    async def _db_add_entity(self, node: Node) -> None:
-        """Add entity to PostgreSQL."""
-        query = """
-            INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
-            VALUES ($1, $2, $3::entity_type, $4, $5, $6)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                properties = EXCLUDED.properties,
-                embedding = EXCLUDED.embedding,
-                updated_at = NOW()
+    async def _db_add_entity(self, node: Node) -> str:
+        """
+        Add entity to PostgreSQL with name-based upsert.
+
+        Uses ON CONFLICT on (project_id, entity_type, LOWER(TRIM(name))) to merge
+        duplicate entities by name within the same project and type.
+        Returns the actual entity ID (which may differ from node.id on conflict).
         """
         embedding_str = None
         if node.embedding:
             embedding_str = f"[{','.join(map(str, node.embedding))}]"
 
-        await self.db.execute(
-            query,
-            node.id,
-            node.project_id,
-            node.entity_type,
-            node.name,
-            json.dumps(node.properties),
-            embedding_str,
-        )
+        properties_json = json.dumps(node.properties)
+
+        # Try name-based upsert first
+        try:
+            row = await self.db.fetchrow(
+                """
+                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
+                VALUES ($1, $2, $3::entity_type, $4, $5, $6)
+                ON CONFLICT (project_id, entity_type, LOWER(TRIM(name)))
+                DO UPDATE SET
+                    properties = entities.properties || EXCLUDED.properties,
+                    embedding = COALESCE(EXCLUDED.embedding, entities.embedding),
+                    updated_at = NOW()
+                RETURNING id
+                """,
+                node.id,
+                node.project_id,
+                node.entity_type,
+                node.name,
+                properties_json,
+                embedding_str,
+            )
+            if row:
+                return str(row["id"])
+        except Exception as e:
+            # Fallback to id-based upsert if name-based constraint doesn't exist
+            logger.debug(f"Name-based upsert failed, falling back to id-based: {e}")
+            await self.db.execute(
+                """
+                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
+                VALUES ($1, $2, $3::entity_type, $4, $5, $6)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    properties = EXCLUDED.properties,
+                    embedding = EXCLUDED.embedding,
+                    updated_at = NOW()
+                """,
+                node.id,
+                node.project_id,
+                node.entity_type,
+                node.name,
+                properties_json,
+                embedding_str,
+            )
+
+        return node.id
 
     async def _db_add_relationship(self, edge: Edge) -> None:
         """Add relationship to PostgreSQL."""

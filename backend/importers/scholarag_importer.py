@@ -796,7 +796,8 @@ class ConceptCentricScholarAGImporter:
         """
         Store concept entities (these ARE graph nodes).
 
-        Returns mapping from entity_id to database UUID.
+        Uses name-based upsert to merge duplicates within the same project/type.
+        Returns mapping from original entity_id to actual database UUID.
         """
         if not self.db:
             return {}
@@ -806,7 +807,6 @@ class ConceptCentricScholarAGImporter:
 
         for entity in entities:
             entity_id = entity["id"]
-            id_mapping[entity_id] = entity_id
 
             try:
                 # Get paper UUIDs for source_paper_ids
@@ -816,15 +816,20 @@ class ConceptCentricScholarAGImporter:
                     if pid in self._paper_metadata
                 ]
 
-                await self.db.execute(
+                # Use name-based upsert: merge by (project_id, entity_type, name)
+                row = await self.db.fetchrow(
                     """
                     INSERT INTO entities (
                         id, project_id, entity_type, name, properties,
                         is_visualized, source_paper_ids, definition
                     ) VALUES ($1, $2, $3::entity_type, $4, $5, $6, $7, $8)
-                    ON CONFLICT (id) DO UPDATE SET
-                        source_paper_ids = EXCLUDED.source_paper_ids,
-                        definition = EXCLUDED.definition
+                    ON CONFLICT (project_id, entity_type, LOWER(TRIM(name)))
+                    DO UPDATE SET
+                        source_paper_ids = array_cat(entities.source_paper_ids, EXCLUDED.source_paper_ids),
+                        properties = entities.properties || EXCLUDED.properties,
+                        definition = COALESCE(NULLIF(EXCLUDED.definition, ''), entities.definition),
+                        updated_at = NOW()
+                    RETURNING id
                     """,
                     entity_id,
                     project_id,
@@ -836,18 +841,62 @@ class ConceptCentricScholarAGImporter:
                     entity.get("definition", ""),
                 )
 
+                # Use the returned ID (may differ from entity_id on conflict)
+                actual_id = str(row["id"]) if row else entity_id
+                id_mapping[entity_id] = actual_id
+
+                # Update entity dict with actual ID for downstream use
+                entity["id"] = actual_id
+
                 # Store embedding if available
                 if entity.get("embedding"):
                     await self.db.execute(
                         """
-                        UPDATE entities SET embedding = $1 WHERE id = $2
+                        UPDATE entities SET embedding = COALESCE($1, entities.embedding)
+                        WHERE id = $2
                         """,
                         entity["embedding"],
-                        entity_id,
+                        actual_id,
                     )
 
             except Exception as e:
-                logger.warning(f"Failed to store entity {entity['name'][:30]}: {e}")
+                # Fallback: try id-based upsert if name-based constraint missing
+                logger.warning(f"Name-based upsert failed for {entity['name'][:30]}, trying id-based: {e}")
+                try:
+                    source_paper_uuids = [
+                        self._paper_metadata[pid]["uuid"]
+                        for pid in entity.get("source_paper_ids", [])
+                        if pid in self._paper_metadata
+                    ]
+                    await self.db.execute(
+                        """
+                        INSERT INTO entities (
+                            id, project_id, entity_type, name, properties,
+                            is_visualized, source_paper_ids, definition
+                        ) VALUES ($1, $2, $3::entity_type, $4, $5, $6, $7, $8)
+                        ON CONFLICT (id) DO UPDATE SET
+                            source_paper_ids = EXCLUDED.source_paper_ids,
+                            definition = EXCLUDED.definition
+                        """,
+                        entity_id,
+                        project_id,
+                        entity["entity_type"],
+                        entity["name"][:500],
+                        json.dumps({"confidence": entity.get("confidence", 0.8)}),
+                        True,
+                        source_paper_uuids,
+                        entity.get("definition", ""),
+                    )
+                    id_mapping[entity_id] = entity_id
+                    if entity.get("embedding"):
+                        await self.db.execute(
+                            "UPDATE entities SET embedding = $1 WHERE id = $2",
+                            entity["embedding"],
+                            entity_id,
+                        )
+                except Exception as e2:
+                    logger.warning(f"Failed to store entity {entity['name'][:30]}: {e2}")
+                    id_mapping[entity_id] = entity_id
 
         return id_mapping
 

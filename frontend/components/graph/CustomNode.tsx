@@ -96,8 +96,13 @@ function CustomNodeComponent({ data, selected }: NodeProps<CustomNodeData>) {
   const colors = colorMap[data.entityType] || colorMap.Paper;
   const icon = iconMap[data.entityType] || iconMap.Paper;
 
+  // Phase 0-3: Frequency-based node sizing from paper_count
+  const paperCount = data.properties?.paper_count || 1;
+  const frequencyScale = Math.min(1 + Math.log2(paperCount as number) * 0.15, 1.6);
+
   return (
     <div
+      style={{ transform: `scale(${frequencyScale})` }}
       className={clsx(
         'px-4 py-3 rounded-lg border-2 shadow-sm transition-all duration-200 min-w-[120px] max-w-[200px]',
         colors.bg,

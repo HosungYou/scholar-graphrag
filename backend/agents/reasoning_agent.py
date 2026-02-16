@@ -40,6 +40,8 @@ class ReasoningResult(BaseModel):
     # New: Gap-based suggestions
     research_gaps: list[ResearchGapSuggestion] = []
     hidden_connections: list[str] = []
+    # Retrieval trace steps (Phase 0-3)
+    trace_steps: list = []
 
 
 class ReasoningAgent:
@@ -273,6 +275,7 @@ Data: {results_summary[:3]}"""
                 supporting_edges=execution_result.edges_traversed,
                 research_gaps=research_gaps,
                 hidden_connections=data.get("hidden_connections", []),
+                trace_steps=getattr(execution_result, 'trace_steps', []),
             )
         except Exception as e:
             logger.warning(f"JSON parsing failed: {e}")
@@ -401,6 +404,7 @@ Data: {results_summary[:3]}"""
             supporting_edges=execution_result.edges_traversed,
             research_gaps=research_gaps,
             hidden_connections=[],
+            trace_steps=getattr(execution_result, 'trace_steps', []),
         )
 
     async def analyze_gaps_for_query(

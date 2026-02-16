@@ -92,6 +92,14 @@ const entityTypeConfig: Record<EntityType, { color: string; icon: React.ReactNod
     color: '#0891B2', // Cyan
     icon: <Hexagon className="w-3 h-3" strokeWidth={2} />
   },
+  Result: {
+    color: '#EF4444', // Red
+    icon: <Pentagon className="w-3 h-3" strokeWidth={2} />
+  },
+  Claim: {
+    color: '#EC4899', // Pink
+    icon: <Diamond className="w-3 h-3" strokeWidth={2} />
+  },
 };
 
 export function SearchBar({

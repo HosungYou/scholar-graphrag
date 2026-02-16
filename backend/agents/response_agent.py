@@ -23,6 +23,7 @@ class ResponseResult(BaseModel):
     highlighted_nodes: list[str] = []
     highlighted_edges: list[str] = []
     suggested_follow_ups: list[str] = []
+    retrieval_trace: dict | None = None
 
 
 class ResponseAgent:
@@ -42,6 +43,29 @@ Respond with JSON:
 
     def __init__(self, llm_provider=None):
         self.llm = llm_provider
+
+    @staticmethod
+    def _build_retrieval_trace(reasoning_result) -> dict | None:
+        """Build a retrieval trace dict from reasoning_result trace_steps."""
+        trace_steps = getattr(reasoning_result, 'trace_steps', [])
+        if not trace_steps:
+            return None
+        steps = []
+        for s in trace_steps:
+            steps.append({
+                "step_index": getattr(s, 'step_index', 0),
+                "action": getattr(s, 'action', ''),
+                "node_ids": getattr(s, 'node_ids', []),
+                "thought": getattr(s, 'thought', ''),
+                "duration_ms": getattr(s, 'duration_ms', 0.0),
+            })
+        reasoning_path = [nid for s in trace_steps for nid in getattr(s, 'node_ids', [])]
+        return {
+            "strategy": "hybrid",
+            "steps": steps,
+            "reasoning_path": reasoning_path,
+            "metrics": {"total_steps": len(trace_steps)},
+        }
 
     async def generate(self, query: str, reasoning_result, intent) -> ResponseResult:
         """Generate response. Uses LLM if available."""
@@ -100,6 +124,7 @@ Confidence: {reasoning_result.confidence}"""
                 highlighted_nodes=reasoning_result.supporting_nodes,
                 highlighted_edges=reasoning_result.supporting_edges,
                 suggested_follow_ups=data.get("suggested_follow_ups", self._default_follow_ups(intent)),
+                retrieval_trace=self._build_retrieval_trace(reasoning_result),
             )
         except Exception:
             return self._generate_fallback(query, reasoning_result, intent)
@@ -134,6 +159,7 @@ Confidence: {reasoning_result.confidence}"""
             highlighted_nodes=reasoning_result.supporting_nodes,
             highlighted_edges=reasoning_result.supporting_edges,
             suggested_follow_ups=self._default_follow_ups(intent),
+            retrieval_trace=self._build_retrieval_trace(reasoning_result),
         )
 
     def _default_follow_ups(self, intent) -> list[str]:

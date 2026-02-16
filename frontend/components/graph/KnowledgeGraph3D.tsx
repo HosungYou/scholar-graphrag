@@ -19,6 +19,7 @@ import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship 
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
+import { useGraphKeyboard, KEYBOARD_SHORTCUTS } from '@/hooks/useGraphKeyboard';
 import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
 import {
   Hexagon,
@@ -252,6 +253,12 @@ export function KnowledgeGraph3D({
     graph3DRef.current?.resetCamera();
     onDebugCameraReset?.();
   }, [onDebugCameraReset]);
+
+  // Phase 0-3: Keyboard shortcuts
+  const { showShortcuts, setShowShortcuts } = useGraphKeyboard({
+    enabled: true,
+    onFitView: handleResetCamera,
+  });
 
   // Handle background click
   const handleBackgroundClick = useCallback(() => {
@@ -849,6 +856,33 @@ export function KnowledgeGraph3D({
           onClose={handleCloseNodeDetails}
           onNodeNavigate={handleNodeNavigate}
         />
+      )}
+
+      {/* Phase 0-3: Keyboard Shortcuts Overlay */}
+      {showShortcuts && (
+        <div className="absolute bottom-4 left-4 z-50 bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-4 w-56">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-mono text-xs uppercase tracking-wider text-muted">
+              Keyboard Shortcuts
+            </span>
+            <button
+              onClick={() => setShowShortcuts(false)}
+              className="text-muted hover:text-ink dark:hover:text-paper text-xs"
+            >
+              ESC
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {KEYBOARD_SHORTCUTS.map((shortcut) => (
+              <div key={shortcut.key} className="flex items-center justify-between">
+                <span className="text-xs text-muted">{shortcut.description}</span>
+                <kbd className="font-mono text-xs px-1.5 py-0.5 bg-ink/5 dark:bg-paper/5 border border-ink/10 dark:border-paper/10 text-ink dark:text-paper">
+                  {shortcut.key}
+                </kbd>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* UI-011: Edge Context Modal - Relationship Evidence */}

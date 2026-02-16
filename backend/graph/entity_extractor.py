@@ -50,6 +50,8 @@ ENTITY_TYPE_CONFIDENCE_THRESHOLDS = {
     "Metric": 0.7,        # Must be explicitly mentioned
     "Innovation": 0.65,   # Novel contributions can be subtle
     "Limitation": 0.6,    # Often acknowledged briefly
+    "Result": 0.7,        # Phase 0-3: Empirical results from results sections
+    "Claim": 0.65,        # Phase 0-3: Claims from discussion sections
 }
 
 
@@ -70,6 +72,10 @@ class EntityType(str, Enum):
     METRIC = "Metric"
     INNOVATION = "Innovation"
     LIMITATION = "Limitation"
+
+    # Phase 0-3: Section-aware types
+    RESULT = "Result"
+    CLAIM = "Claim"
 
     # Legacy types
     INSTITUTION = "Institution"
@@ -375,9 +381,12 @@ Focus on:
 - Key findings and discoveries
 - Statistical results and effect sizes
 - Metrics and their values
+- Concrete experimental results
 
 Return JSON with:
 - findings: [{{"name": "...", "effect_type": "positive|negative|neutral", "description": "..."}}] (max 5)
+- results: [{{"name": "...", "description": "...", "confidence": 0.7}}] (max 3)
+- metrics: [{{"name": "...", "description": "...", "confidence": 0.7}}] (max 3)
 - concepts: [{{"name": "...", "definition": "...", "confidence": 0.8}}] (max 3)
 
 Rules: lowercase names, 1-4 words each, only JSON output.
@@ -393,10 +402,12 @@ Focus on:
 - Limitations of the study
 - Future research directions
 - Novel innovations or insights
+- Theoretical claims and interpretations
 
 Return JSON with:
 - innovations: [{{"name": "...", "novelty": "..."}}] (max 3)
 - limitations: [{{"name": "...", "impact": "..."}}] (max 3)
+- claims: [{{"name": "...", "description": "...", "confidence": 0.65}}] (max 3)
 - concepts: [{{"name": "...", "definition": "...", "confidence": 0.7}}] (max 3)
 
 Rules: lowercase names, 1-4 words each, only JSON output.
@@ -756,7 +767,7 @@ class EntityExtractor:
             return result
 
         # v0.6.0: Validate all expected keys are present
-        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets', 'metrics'}
+        expected_keys = {'concepts', 'methods', 'findings', 'problems', 'innovations', 'limitations', 'datasets', 'metrics', 'results', 'claims'}
         missing_keys = expected_keys - set(data.keys())
         if missing_keys:
             logger.warning(f"Entity extraction missing categories: {missing_keys}")
@@ -884,6 +895,34 @@ class EntityExtractor:
                         name=mt.get("name", ""),
                         description=mt.get("description", ""),
                         confidence=float(mt.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # Phase 0-3: Parse results (from results sections)
+            for r in data.get("results", [])[:3]:
+                if not r.get("name"):
+                    continue
+                result["results"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.RESULT,
+                        name=r.get("name", ""),
+                        description=r.get("description", ""),
+                        confidence=float(r.get("confidence", 0.7)),
+                        source_paper_id=paper_id,
+                    )
+                )
+
+            # Phase 0-3: Parse claims (from discussion sections)
+            for cl in data.get("claims", [])[:3]:
+                if not cl.get("name"):
+                    continue
+                result["claims"].append(
+                    ExtractedEntity(
+                        entity_type=EntityType.CLAIM,
+                        name=cl.get("name", ""),
+                        description=cl.get("description", ""),
+                        confidence=float(cl.get("confidence", 0.65)),
                         source_paper_id=paper_id,
                     )
                 )
@@ -1046,6 +1085,8 @@ class EntityExtractor:
             "limitations": [],
             "datasets": [],
             "metrics": [],
+            "results": [],
+            "claims": [],
         }
 
     async def batch_extract(
