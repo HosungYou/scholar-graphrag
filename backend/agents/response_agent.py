@@ -23,6 +23,7 @@ class ResponseResult(BaseModel):
     highlighted_nodes: list[str] = []
     highlighted_edges: list[str] = []
     suggested_follow_ups: list[str] = []
+    retrieval_trace: dict | None = None
 
 
 class ResponseAgent:
@@ -74,12 +75,37 @@ Confidence: {reasoning_result.confidence}"""
             json_str = response.strip().replace("```json", "").replace("```", "").strip()
             data = json.loads(json_str)
 
+            # Build retrieval trace
+            trace = None
+            if hasattr(reasoning_result, 'trace_steps') and reasoning_result.trace_steps:
+                trace = {
+                    "strategy": "hybrid",
+                    "steps": [
+                        {
+                            "step_index": s.step_index,
+                            "action": s.action,
+                            "node_ids": s.node_ids,
+                            "thought": s.thought,
+                            "duration_ms": s.duration_ms,
+                        } if hasattr(s, 'step_index') else s
+                        for s in reasoning_result.trace_steps
+                    ],
+                    "reasoning_path": reasoning_result.supporting_nodes[:20],
+                    "metrics": {
+                        "total_steps": len(reasoning_result.trace_steps),
+                        "total_latency_ms": sum(
+                            getattr(s, 'duration_ms', 0) for s in reasoning_result.trace_steps
+                        ),
+                    },
+                }
+
             return ResponseResult(
                 answer=data.get("answer", reasoning_result.final_conclusion),
                 citations=[],
                 highlighted_nodes=reasoning_result.supporting_nodes,
                 highlighted_edges=reasoning_result.supporting_edges,
                 suggested_follow_ups=data.get("suggested_follow_ups", self._default_follow_ups(intent)),
+                retrieval_trace=trace,
             )
         except Exception:
             return self._generate_fallback(query, reasoning_result, intent)
@@ -100,6 +126,7 @@ Confidence: {reasoning_result.confidence}"""
             highlighted_nodes=reasoning_result.supporting_nodes,
             highlighted_edges=reasoning_result.supporting_edges,
             suggested_follow_ups=self._default_follow_ups(intent),
+            retrieval_trace=None,
         )
 
     def _default_follow_ups(self, intent) -> list[str]:

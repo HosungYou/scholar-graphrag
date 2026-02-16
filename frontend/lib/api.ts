@@ -164,6 +164,32 @@ class ApiClient {
     return this.request<ImportJob>(`/api/import/status/${jobId}`);
   }
 
+  async getImportJobs(params?: { status?: string; limit?: number }): Promise<ImportJob[]> {
+    const searchParams = new URLSearchParams();
+    if (params?.status) searchParams.set('status', params.status);
+    if (params?.limit) searchParams.set('limit', params.limit.toString());
+    const query = searchParams.toString();
+    return this.request<ImportJob[]>(query ? `/api/import/jobs?${query}` : '/api/import/jobs');
+  }
+
+  async importPDF(projectId: string, file: File): Promise<{ job_id: string; status: string; message: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = `${this.baseUrl}/api/import/pdf?project_id=${projectId}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `API Error: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
   // Folder Browser
   async browseFolder(path?: string): Promise<BrowseResponse> {
     const searchParams = new URLSearchParams();

@@ -104,14 +104,14 @@ function ClusterNodeComponent({ data, selected }: NodeProps<ClusterNodeData>) {
           
           <circle
             r={size / 4}
-            fill="white"
-            className="dark:fill-slate-800"
+            fill="#0f1419"
+            className="fill-surface-0"
           />
-          
+
           <text
             textAnchor="middle"
             dominantBaseline="central"
-            className="fill-slate-700 dark:fill-slate-200 font-bold"
+            className="fill-text-primary font-medium"
             style={{ fontSize: Math.max(10, size / 5) }}
           >
             {nodeCount}
@@ -125,12 +125,12 @@ function ClusterNodeComponent({ data, selected }: NodeProps<ClusterNodeData>) {
           animate={{ opacity: 1, y: 0 }}
           className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap"
         >
-          <div className="glass-panel !py-1 !px-2 text-xs">
-            <span className="font-medium text-slate-700 dark:text-slate-300">
+          <div className="bg-surface-2 py-1 px-2 text-xs rounded border border-border">
+            <span className="font-medium text-text-primary">
               {nodeCount} nodes
             </span>
-            <span className="text-slate-400 mx-1">•</span>
-            <span className="text-slate-500 dark:text-slate-400">
+            <span className="text-text-tertiary mx-1">•</span>
+            <span className="text-text-secondary">
               Click to expand
             </span>
           </div>

@@ -392,33 +392,56 @@ async def validate_scholarag_folder(request: ScholaRAGImportRequest):
     if not validation.scholarag_metadata_found:
         validation.warnings.append(".scholarag metadata not found (optional)")
 
-    # Check papers CSV
-    papers_csv = folder / "data" / "02_screening" / "relevant_papers.csv"
-    validation.papers_csv_found = papers_csv.exists()
-    if validation.papers_csv_found:
+    # Check papers CSV - try multiple possible locations
+    csv_candidates = [
+        ("data/02_screening/relevant_papers.csv", "relevant_papers.csv"),
+        ("data/02_screening/all_screened_papers.csv", "all_screened_papers.csv"),
+        ("data/02_screening/screened_papers.csv", "screened_papers.csv"),
+        ("data/01_identification/papers.csv", "papers.csv in identification"),
+        ("data/papers.csv", "papers.csv in data root"),
+    ]
+
+    found_csv_path = None
+    for csv_rel_path, csv_name in csv_candidates:
+        csv_path = folder / csv_rel_path
+        if csv_path.exists():
+            found_csv_path = csv_path
+            validation.papers_csv_found = True
+            if csv_name != "relevant_papers.csv":
+                validation.warnings.append(f"Using {csv_name} instead of relevant_papers.csv")
+            break
+
+    if found_csv_path:
         # Count rows (excluding header)
         try:
-            with open(papers_csv, "r", encoding="utf-8") as f:
-                validation.papers_count = sum(1 for _ in f) - 1
+            with open(found_csv_path, "r", encoding="utf-8") as f:
+                validation.papers_count = max(0, sum(1 for _ in f) - 1)
         except Exception as e:
             validation.warnings.append(f"Could not count papers: {e}")
-    else:
-        # Try alternative path
-        alt_csv = folder / "data" / "02_screening" / "all_screened_papers.csv"
-        if alt_csv.exists():
-            validation.papers_csv_found = True
-            validation.warnings.append("Using all_screened_papers.csv instead")
 
     if not validation.papers_csv_found:
-        validation.errors.append("No papers CSV found in data/02_screening/")
+        validation.errors.append(
+            "이 프로젝트에는 아직 논문 데이터가 없습니다. "
+            "ScholaRAG에서 논문을 수집한 후 다시 시도해주세요. "
+            "(필요: data/02_screening/relevant_papers.csv)"
+        )
         validation.valid = False
 
-    # Check PDFs
-    pdfs_dir = folder / "data" / "03_pdfs"
-    if pdfs_dir.exists():
-        validation.pdfs_count = len(list(pdfs_dir.rglob("*.pdf")))
-    else:
-        validation.warnings.append("No PDFs directory found")
+    # Check PDFs - try multiple possible locations
+    pdf_dirs = [
+        folder / "data" / "03_pdfs",
+        folder / "data" / "pdfs",
+        folder / "data" / "03_full_text",
+        folder / "pdfs",
+    ]
+
+    for pdfs_dir in pdf_dirs:
+        if pdfs_dir.exists():
+            validation.pdfs_count = len(list(pdfs_dir.rglob("*.pdf")))
+            break
+
+    if validation.pdfs_count == 0:
+        validation.warnings.append("PDF 파일을 찾을 수 없습니다 (선택사항)")
 
     # Check ChromaDB
     chroma_dir = folder / "data" / "04_rag" / "chroma_db"
@@ -562,27 +585,127 @@ async def get_import_status(job_id: str):
     return ImportJobResponse(**job)
 
 
-@router.post("/pdf")
+@router.get("/jobs", response_model=List[ImportJobResponse])
+async def get_all_import_jobs(
+    status: Optional[ImportStatus] = Query(None, description="필터할 상태"),
+    limit: int = Query(20, ge=1, le=100, description="최대 반환 개수"),
+):
+    """
+    모든 import job 목록을 반환합니다.
+
+    진행 중인 작업은 맨 위에, 완료/실패된 작업은 최신순으로 정렬됩니다.
+    """
+    jobs = list(_import_jobs.values())
+
+    # Filter by status if provided
+    if status:
+        jobs = [j for j in jobs if j["status"] == status]
+
+    # Sort: in-progress first, then by updated_at descending
+    def sort_key(job):
+        is_in_progress = job["status"] not in [ImportStatus.COMPLETED, ImportStatus.FAILED]
+        return (-int(is_in_progress), -job["updated_at"].timestamp())
+
+    jobs.sort(key=sort_key)
+
+    return [ImportJobResponse(**j) for j in jobs[:limit]]
+
+
+class PDFImportResponse(BaseModel):
+    """PDF import response."""
+    job_id: str
+    status: str
+    filename: str
+    message: str
+    paper_id: Optional[str] = None
+    stats: Optional[dict] = None
+
+
+@router.post("/pdf", response_model=PDFImportResponse)
 async def import_pdf(
     project_id: UUID,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
-    """Import a single PDF file."""
+    """
+    Import a single PDF file into a project.
+
+    Extracts text, metadata, and creates Paper/Author entities.
+    """
     from uuid import uuid4
+    from importers.pdf_importer import import_pdf_from_upload
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다")
 
     job_id = str(uuid4())
+    now = datetime.now()
 
-    # TODO: Implement PDF import
-    return {
+    # Create import job
+    job = {
         "job_id": job_id,
-        "status": "pending",
-        "filename": file.filename,
-        "message": "PDF import not yet implemented",
+        "status": ImportStatus.PROCESSING,
+        "progress": 0.0,
+        "message": f"PDF 파일 처리 중: {file.filename}",
+        "project_id": project_id,
+        "stats": None,
+        "created_at": now,
+        "updated_at": now,
     }
+    _import_jobs[job_id] = job
+
+    # Read file content
+    try:
+        file_content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"파일을 읽을 수 없습니다: {e}")
+
+    # Run import in background
+    async def run_pdf_import():
+        def progress_callback(progress):
+            _import_jobs[job_id]["status"] = ImportStatus.PROCESSING if progress.status == "processing" else (
+                ImportStatus.COMPLETED if progress.status == "completed" else ImportStatus.FAILED
+            )
+            _import_jobs[job_id]["progress"] = progress.progress
+            _import_jobs[job_id]["message"] = progress.message
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        try:
+            graph_store = GraphStore(db=db)
+            result = await import_pdf_from_upload(
+                file_content=file_content,
+                filename=file.filename,
+                project_id=str(project_id),
+                db_connection=db,
+                graph_store=graph_store,
+                progress_callback=progress_callback,
+            )
+
+            if result["success"]:
+                _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
+                _import_jobs[job_id]["progress"] = 1.0
+                _import_jobs[job_id]["message"] = f"Import 완료: {result.get('title', file.filename)}"
+                _import_jobs[job_id]["stats"] = result.get("stats", {})
+            else:
+                _import_jobs[job_id]["status"] = ImportStatus.FAILED
+                _import_jobs[job_id]["message"] = f"Import 실패: {result.get('error', 'Unknown error')}"
+
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        except Exception as e:
+            logger.exception(f"PDF import failed: {e}")
+            _import_jobs[job_id]["status"] = ImportStatus.FAILED
+            _import_jobs[job_id]["message"] = f"Import 실패: {str(e)}"
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+    background_tasks.add_task(run_pdf_import)
+
+    return PDFImportResponse(
+        job_id=job_id,
+        status="processing",
+        filename=file.filename,
+        message=f"PDF import 시작: {file.filename}",
+    )
 
 
 @router.post("/csv")

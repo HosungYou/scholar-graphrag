@@ -130,12 +130,16 @@ export function forceDirectedLayout(
   edges: GraphEdge[],
   options: LayoutOptions = {}
 ): { nodes: Node[]; edges: Edge[] } {
+  // Dynamic iterations based on node count for performance
+  const nodeCount = nodes.length;
+  const dynamicIterations = nodeCount > 300 ? 30 : nodeCount > 100 ? 50 : nodeCount > 50 ? 70 : 100;
+
   const {
     width = 1200,
     height = 800,
-    chargeStrength = -300,
+    chargeStrength = nodeCount > 200 ? -150 : -300, // Weaker repulsion for large graphs
     linkStrength = 0.3,
-    iterations = 100,
+    iterations = dynamicIterations,
   } = options;
 
   const centerX = width / 2;
@@ -544,7 +548,158 @@ export function updateEdgeHighlights(
   }));
 }
 
-export type LayoutType = 'force' | 'hierarchical' | 'radial';
+export type LayoutType = 'force' | 'hierarchical' | 'radial' | 'conceptCentric';
+
+/**
+ * Concept-centric layout - Concepts in center, Papers/Authors radiate out
+ * This is the key differentiator for ScholaRAG_Graph
+ */
+export function conceptCentricLayout(
+  nodes: GraphEntity[],
+  edges: GraphEdge[],
+  options: LayoutOptions = {}
+): { nodes: Node[]; edges: Edge[] } {
+  const { width = 1200, height = 800 } = options;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  // Separate nodes by category
+  const conceptTypes = ['Concept', 'Method', 'Finding'];
+  const conceptNodes = nodes.filter(n => conceptTypes.includes(n.entity_type));
+  const paperNodes = nodes.filter(n => n.entity_type === 'Paper');
+  const authorNodes = nodes.filter(n => n.entity_type === 'Author');
+
+  // Build adjacency for concept connections
+  const conceptConnections = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.relationship_type === 'DISCUSSES_CONCEPT' ||
+        edge.relationship_type === 'USES_METHOD' ||
+        edge.relationship_type === 'SUPPORTS') {
+      conceptConnections.set(edge.target, (conceptConnections.get(edge.target) || 0) + 1);
+    }
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+
+  // Sort concepts by connection count (most connected in center)
+  const sortedConcepts = [...conceptNodes].sort((a, b) =>
+    (conceptConnections.get(b.id) || 0) - (conceptConnections.get(a.id) || 0)
+  );
+
+  // Layout concepts in center with radial arrangement
+  const conceptCount = sortedConcepts.length;
+  const conceptRadius = Math.min(width, height) * 0.25;
+
+  sortedConcepts.forEach((concept, i) => {
+    if (i === 0 && conceptCount > 1) {
+      // Most connected concept in exact center
+      positions.set(concept.id, { x: centerX, y: centerY });
+    } else {
+      const angle = ((i - 1) / Math.max(conceptCount - 1, 1)) * 2 * Math.PI - Math.PI / 2;
+      const radius = conceptRadius * (1 + (i / conceptCount) * 0.3);
+      positions.set(concept.id, {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius,
+      });
+    }
+  });
+
+  // Build concept-paper adjacency
+  const paperToConceptsMap = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.relationship_type === 'DISCUSSES_CONCEPT' ||
+        edge.relationship_type === 'USES_METHOD' ||
+        edge.relationship_type === 'SUPPORTS') {
+      const concepts = paperToConceptsMap.get(edge.source) || [];
+      concepts.push(edge.target);
+      paperToConceptsMap.set(edge.source, concepts);
+    }
+  }
+
+  // Layout papers around their connected concepts
+  const outerRadius = Math.min(width, height) * 0.4;
+  paperNodes.forEach((paper, i) => {
+    const connectedConcepts = paperToConceptsMap.get(paper.id) || [];
+
+    if (connectedConcepts.length > 0) {
+      // Position near the average of connected concepts
+      let avgX = 0, avgY = 0;
+      for (const conceptId of connectedConcepts) {
+        const pos = positions.get(conceptId);
+        if (pos) {
+          avgX += pos.x;
+          avgY += pos.y;
+        }
+      }
+      avgX /= connectedConcepts.length;
+      avgY /= connectedConcepts.length;
+
+      // Push outward from center
+      const dx = avgX - centerX;
+      const dy = avgY - centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const pushFactor = outerRadius / dist;
+
+      positions.set(paper.id, {
+        x: centerX + dx * pushFactor + (Math.random() - 0.5) * 50,
+        y: centerY + dy * pushFactor + (Math.random() - 0.5) * 50,
+      });
+    } else {
+      // Orphan papers go to outer ring
+      const angle = (i / paperNodes.length) * 2 * Math.PI;
+      positions.set(paper.id, {
+        x: centerX + Math.cos(angle) * outerRadius * 1.2,
+        y: centerY + Math.sin(angle) * outerRadius * 1.2,
+      });
+    }
+  });
+
+  // Layout authors at outermost ring
+  const authorRadius = Math.min(width, height) * 0.45;
+  authorNodes.forEach((author, i) => {
+    const angle = (i / authorNodes.length) * 2 * Math.PI + Math.PI / 4;
+    positions.set(author.id, {
+      x: centerX + Math.cos(angle) * authorRadius,
+      y: centerY + Math.sin(angle) * authorRadius,
+    });
+  });
+
+  // Convert to React Flow format
+  const flowNodes: Node[] = nodes.map((node) => ({
+    id: node.id,
+    type: node.entity_type.toLowerCase(),
+    position: positions.get(node.id) || { x: centerX, y: centerY },
+    data: {
+      label: node.name,
+      entityType: node.entity_type,
+      properties: node.properties,
+      isHighlighted: false,
+      importance: calculateImportance(node, edges),
+      // Mark concepts as primary in this layout
+      isPrimary: conceptTypes.includes(node.entity_type),
+    },
+  }));
+
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const style = relationshipStyles[edge.relationship_type] || defaultEdgeStyle;
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep',
+      animated: style.animated || false,
+      style: getEdgeStyle(edge.relationship_type),
+      markerEnd: style.markerEnd ? {
+        type: MarkerType.ArrowClosed,
+        color: style.stroke,
+        width: 12,
+        height: 12,
+      } : undefined,
+    };
+  });
+
+  return { nodes: flowNodes, edges: flowEdges };
+}
 
 export function applyLayout(
   nodes: GraphEntity[],
@@ -557,6 +712,8 @@ export function applyLayout(
       return hierarchicalLayout(nodes, edges, options);
     case 'radial':
       return radialLayout(nodes, edges, options);
+    case 'conceptCentric':
+      return conceptCentricLayout(nodes, edges, options);
     case 'force':
     default:
       return forceDirectedLayout(nodes, edges, options);

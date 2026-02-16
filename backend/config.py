@@ -23,9 +23,14 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["anthropic", "openai", "google"] = "anthropic"
     default_llm_model: str = "claude-3-5-haiku-20241022"
 
+    # Azure OpenAI (Embedding)
+    azure_openai_endpoint: str = ""
+    azure_openai_api_key: str = ""
+    azure_openai_embedding_deployment: str = "scholarag-text-embedding-3-large"
+
     # Embedding Configuration
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimension: int = 3072
 
     # CORS - comma-separated list of allowed origins
     cors_origins: str = "http://localhost:3000,https://scholarag-graph.vercel.app"
@@ -37,6 +42,11 @@ class Settings(BaseSettings):
 
     # Debug
     debug: bool = False
+
+    # Feature Flags
+    lexical_graph_v1: bool = False
+    hybrid_trace_v1: bool = False
+    topic_lod_default: bool = False
 
     class Config:
         env_file = ".env"

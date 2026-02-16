@@ -64,13 +64,13 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
 
   if (timelineData.years.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 glass rounded-xl">
+      <div className="flex items-center justify-center h-64 bg-surface-1 rounded">
         <div className="text-center">
-          <Calendar className="w-12 h-12 mx-auto mb-3 text-slate-400" />
-          <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+          <Calendar className="w-12 h-12 mx-auto mb-3 text-text-tertiary" />
+          <p className="text-sm font-medium text-text-secondary">
             No timeline data available
           </p>
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+          <p className="text-xs text-text-ghost mt-1">
             Papers need year information to display timeline
           </p>
         </div>
@@ -81,42 +81,42 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
   const yearWidth = 80 * zoomLevel;
 
   return (
-    <div className="glass rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+    <div className="bg-surface-1 rounded overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-primary-500" />
-          <span className="font-semibold text-slate-900 dark:text-white">
+          <Calendar className="w-4 h-4 text-teal" />
+          <span className="font-medium text-text-primary">
             Publication Timeline
           </span>
-          <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
+          <span className="text-xs text-text-secondary ml-2">
             {timelineData.minYear} — {timelineData.maxYear}
           </span>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleScrollLeft}
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded hover:bg-surface-2 transition-colors"
           >
-            <ChevronLeft className="w-4 h-4 text-slate-500" />
+            <ChevronLeft className="w-4 h-4 text-text-ghost" />
           </button>
           <button
             onClick={handleScrollRight}
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded hover:bg-surface-2 transition-colors"
           >
-            <ChevronRight className="w-4 h-4 text-slate-500" />
+            <ChevronRight className="w-4 h-4 text-text-ghost" />
           </button>
-          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1" />
+          <div className="w-px h-4 bg-border mx-1" />
           <button
             onClick={handleZoomOut}
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded hover:bg-surface-2 transition-colors"
           >
-            <ZoomOut className="w-4 h-4 text-slate-500" />
+            <ZoomOut className="w-4 h-4 text-text-ghost" />
           </button>
           <button
             onClick={handleZoomIn}
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded hover:bg-surface-2 transition-colors"
           >
-            <ZoomIn className="w-4 h-4 text-slate-500" />
+            <ZoomIn className="w-4 h-4 text-text-ghost" />
           </button>
         </div>
       </div>
@@ -154,9 +154,8 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
                       <motion.div
                         whileHover={{ scale: 1.05 }}
                         className={clsx(
-                          "absolute inset-0 rounded-t-lg",
-                          "bg-gradient-to-t from-primary-600 to-primary-400",
-                          "shadow-lg shadow-primary-500/20"
+                          "absolute inset-0 rounded-t",
+                          "bg-gradient-to-t from-teal to-teal-dim"
                         )}
                         onClick={() => {
                           if (yearData.papers[0] && onNodeClick) {
@@ -164,30 +163,30 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
                           }
                         }}
                       />
-                      
+
                       <motion.div
                         initial={{ opacity: 0, y: 10 }}
                         whileHover={{ opacity: 1, y: 0 }}
                         className={clsx(
                           "absolute -top-16 left-1/2 -translate-x-1/2",
-                          "glass-panel !p-2 !rounded-lg whitespace-nowrap z-10",
+                          "bg-surface-2 p-2 rounded whitespace-nowrap z-10 border border-border",
                           "opacity-0 group-hover:opacity-100 transition-opacity"
                         )}
                       >
-                        <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                        <p className="text-xs font-medium text-text-primary">
                           {yearData.count} paper{yearData.count !== 1 ? 's' : ''}
                         </p>
                         <div className="mt-1 max-h-20 overflow-y-auto">
                           {yearData.papers.slice(0, 3).map((paper) => (
-                            <p 
+                            <p
                               key={paper.id}
-                              className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[150px]"
+                              className="text-xs text-text-secondary truncate max-w-[150px]"
                             >
                               {paper.name}
                             </p>
                           ))}
                           {yearData.papers.length > 3 && (
-                            <p className="text-xs text-slate-400 dark:text-slate-500">
+                            <p className="text-xs text-text-ghost">
                               +{yearData.papers.length - 3} more
                             </p>
                           )}
@@ -198,9 +197,9 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
                         "absolute -top-6 left-1/2 -translate-x-1/2",
                         "flex items-center justify-center",
                         "w-6 h-6 rounded-full",
-                        "bg-primary-100 dark:bg-primary-900/50",
-                        "text-primary-600 dark:text-primary-400",
-                        "text-xs font-bold"
+                        "bg-teal-dim",
+                        "text-teal",
+                        "text-xs font-medium"
                       )}>
                         {yearData.count}
                       </div>
@@ -210,16 +209,16 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
 
                 <div className={clsx(
                   "h-px w-full my-2",
-                  hasItems 
-                    ? "bg-primary-300 dark:bg-primary-700" 
-                    : "bg-slate-200 dark:bg-slate-700"
+                  hasItems
+                    ? "bg-teal"
+                    : "bg-border"
                 )} />
 
                 <span className={clsx(
                   "text-xs font-mono",
-                  hasItems 
-                    ? "text-slate-700 dark:text-slate-300 font-semibold" 
-                    : "text-slate-400 dark:text-slate-600"
+                  hasItems
+                    ? "text-text-primary font-medium"
+                    : "text-text-ghost"
                 )}>
                   {yearData.year}
                 </span>
@@ -229,14 +228,14 @@ export function TimelineView({ nodes, onNodeClick, selectedNodeId }: TimelineVie
         </motion.div>
       </div>
 
-      <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+      <div className="px-4 py-3 border-t border-border flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-sm bg-gradient-to-t from-primary-600 to-primary-400" />
-            <span className="text-xs text-slate-500 dark:text-slate-400">Papers</span>
+            <div className="w-3 h-3 rounded-sm bg-gradient-to-t from-teal to-teal-dim" />
+            <span className="text-xs text-text-secondary">Papers</span>
           </div>
         </div>
-        <p className="text-xs text-slate-400 dark:text-slate-500">
+        <p className="text-xs text-text-ghost">
           Total: {nodes.filter(n => n.entity_type === 'Paper').length} papers
         </p>
       </div>

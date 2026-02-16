@@ -25,6 +25,14 @@ from uuid import uuid4
 
 import yaml
 
+from graph.entity_extractor import EntityExtractor
+
+try:
+    from config import settings
+except ImportError:
+    # Fallback if settings module is not available
+    settings = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,9 +118,17 @@ class ScholarAGImporter:
         self.progress_callback = progress_callback
         self.progress = ImportProgress()
 
+        # Entity extractor for LLM-based Concept/Method/Finding extraction
+        self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
+
         # Entity deduplication cache: maps name -> entity_id (UUID)
         self._author_cache: dict[str, str] = {}
         self._concept_cache: dict[str, str] = {}
+        self._method_cache: dict[str, str] = {}
+        self._finding_cache: dict[str, str] = {}
+        self._result_cache: dict[str, str] = {}
+        self._claim_cache: dict[str, str] = {}
+        self._dataset_cache: dict[str, str] = {}
         self._paper_id_map: dict[str, str] = {}  # paper_id (from CSV) -> entity_id (UUID)
 
     def _update_progress(
@@ -385,6 +401,11 @@ class ScholarAGImporter:
                     "papers_imported": len(papers),
                     "authors_extracted": len(self._author_cache),
                     "concepts_extracted": len(self._concept_cache),
+                    "methods_extracted": len(self._method_cache),
+                    "findings_extracted": len(self._finding_cache),
+                    "results_extracted": len(self._result_cache),
+                    "claims_extracted": len(self._claim_cache),
+                    "datasets_extracted": len(self._dataset_cache),
                     "total_entities": len(all_entities),
                     "total_relationships": len(all_relationships),
                 },
@@ -559,16 +580,205 @@ class ScholarAGImporter:
     ) -> list[ExtractedEntity]:
         """
         Use LLM to extract Concepts, Methods, and Findings from paper abstract.
+        Uses EntityExtractor for LLM-based extraction with fallback to keyword extraction.
+        When lexical_graph_v1 flag is enabled and full text is available, extracts additional
+        entity types (Results, Claims, Datasets).
         """
-        if not self.llm or not paper.abstract:
+        if not paper.abstract:
             return []
-
-        # TODO: Implement LLM-based extraction
-        # For now, use simple keyword extraction
 
         entities = []
 
-        # Extract concepts from title and abstract
+        try:
+            # Check if lexical_graph_v1 is enabled and we have sufficient text
+            use_full_text = (
+                settings
+                and hasattr(settings, 'lexical_graph_v1')
+                and settings.lexical_graph_v1
+                and len(paper.abstract) > 500
+            )
+
+            if use_full_text:
+                # Use full-text extraction (abstract as proxy for full text)
+                extraction_result = await self.entity_extractor.extract_from_full_text(
+                    title=paper.title,
+                    full_text=paper.abstract,
+                )
+                logger.debug(f"Using full-text extraction for '{paper.title[:50]}...'")
+            else:
+                # Use standard abstract-only extraction
+                extraction_result = await self.entity_extractor.extract_from_paper(
+                    title=paper.title,
+                    abstract=paper.abstract,
+                    use_accurate_model=False,  # Use fast model for bulk import
+                )
+
+            # Process extracted Concepts
+            for extracted in extraction_result.get("concepts", []):
+                concept_name = extracted.name.strip().lower()
+                if concept_name and concept_name not in self._concept_cache:
+                    concept_id = f"concept_{len(self._concept_cache)}"
+                    properties = {
+                        "description": extracted.description,
+                        "confidence": extracted.confidence,
+                        "extracted_from": "llm" if self.llm else "keyword",
+                    }
+                    if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                        properties["extraction_section"] = extracted.extraction_section
+                    if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                        properties["evidence_spans"] = extracted.evidence_spans
+
+                    entities.append(
+                        ExtractedEntity(
+                            entity_type="Concept",
+                            name=extracted.name,
+                            properties=properties,
+                        )
+                    )
+                    self._concept_cache[concept_name] = concept_id
+
+            # Process extracted Methods
+            for extracted in extraction_result.get("methods", []):
+                method_name = extracted.name.strip().lower()
+                if method_name and method_name not in self._method_cache:
+                    method_id = f"method_{len(self._method_cache)}"
+                    properties = {
+                        "description": extracted.description,
+                        "confidence": extracted.confidence,
+                        "extracted_from": "llm" if self.llm else "keyword",
+                    }
+                    if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                        properties["extraction_section"] = extracted.extraction_section
+                    if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                        properties["evidence_spans"] = extracted.evidence_spans
+
+                    entities.append(
+                        ExtractedEntity(
+                            entity_type="Method",
+                            name=extracted.name,
+                            properties=properties,
+                        )
+                    )
+                    self._method_cache[method_name] = method_id
+
+            # Process extracted Findings
+            for extracted in extraction_result.get("findings", []):
+                finding_name = extracted.name.strip().lower()
+                if finding_name and finding_name not in self._finding_cache:
+                    finding_id = f"finding_{len(self._finding_cache)}"
+                    properties = {
+                        "description": extracted.description,
+                        "confidence": extracted.confidence,
+                        "extracted_from": "llm" if self.llm else "keyword",
+                    }
+                    if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                        properties["extraction_section"] = extracted.extraction_section
+                    if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                        properties["evidence_spans"] = extracted.evidence_spans
+
+                    entities.append(
+                        ExtractedEntity(
+                            entity_type="Finding",
+                            name=extracted.name,
+                            properties=properties,
+                        )
+                    )
+                    self._finding_cache[finding_name] = finding_id
+
+            # Process additional entity types if full-text extraction was used
+            if use_full_text:
+                # Process extracted Results
+                for extracted in extraction_result.get("results", []):
+                    result_name = extracted.name.strip().lower()
+                    if result_name and result_name not in self._result_cache:
+                        result_id = f"result_{len(self._result_cache)}"
+                        properties = {
+                            "description": extracted.description,
+                            "confidence": extracted.confidence,
+                            "extracted_from": "llm_full_text",
+                        }
+                        if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                            properties["extraction_section"] = extracted.extraction_section
+                        if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                            properties["evidence_spans"] = extracted.evidence_spans
+
+                        entities.append(
+                            ExtractedEntity(
+                                entity_type="Result",
+                                name=extracted.name,
+                                properties=properties,
+                            )
+                        )
+                        self._result_cache[result_name] = result_id
+
+                # Process extracted Claims
+                for extracted in extraction_result.get("claims", []):
+                    claim_name = extracted.name.strip().lower()
+                    if claim_name and claim_name not in self._claim_cache:
+                        claim_id = f"claim_{len(self._claim_cache)}"
+                        properties = {
+                            "description": extracted.description,
+                            "confidence": extracted.confidence,
+                            "extracted_from": "llm_full_text",
+                        }
+                        if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                            properties["extraction_section"] = extracted.extraction_section
+                        if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                            properties["evidence_spans"] = extracted.evidence_spans
+
+                        entities.append(
+                            ExtractedEntity(
+                                entity_type="Claim",
+                                name=extracted.name,
+                                properties=properties,
+                            )
+                        )
+                        self._claim_cache[claim_name] = claim_id
+
+                # Process extracted Datasets
+                for extracted in extraction_result.get("datasets", []):
+                    dataset_name = extracted.name.strip().lower()
+                    if dataset_name and dataset_name not in self._dataset_cache:
+                        dataset_id = f"dataset_{len(self._dataset_cache)}"
+                        properties = {
+                            "description": extracted.description,
+                            "confidence": extracted.confidence,
+                            "extracted_from": "llm_full_text",
+                        }
+                        if hasattr(extracted, 'extraction_section') and extracted.extraction_section:
+                            properties["extraction_section"] = extracted.extraction_section
+                        if hasattr(extracted, 'evidence_spans') and extracted.evidence_spans:
+                            properties["evidence_spans"] = extracted.evidence_spans
+
+                        entities.append(
+                            ExtractedEntity(
+                                entity_type="Dataset",
+                                name=extracted.name,
+                                properties=properties,
+                            )
+                        )
+                        self._dataset_cache[dataset_name] = dataset_id
+
+            logger.debug(
+                f"Extracted from '{paper.title[:50]}...': "
+                f"{len(extraction_result.get('concepts', []))} concepts, "
+                f"{len(extraction_result.get('methods', []))} methods, "
+                f"{len(extraction_result.get('findings', []))} findings"
+                + (f", {len(extraction_result.get('results', []))} results, "
+                   f"{len(extraction_result.get('claims', []))} claims, "
+                   f"{len(extraction_result.get('datasets', []))} datasets" if use_full_text else "")
+            )
+
+        except Exception as e:
+            logger.warning(f"Entity extraction failed for paper '{paper.title[:50]}...': {e}")
+            # Fallback to keyword extraction
+            entities = self._fallback_keyword_extraction(paper)
+
+        return entities
+
+    def _fallback_keyword_extraction(self, paper: PaperData) -> list[ExtractedEntity]:
+        """Fallback keyword-based extraction when LLM is unavailable."""
+        entities = []
         text = f"{paper.title} {paper.abstract}".lower()
         keywords = self._extract_keywords(text)
 
@@ -614,6 +824,8 @@ class ScholarAGImporter:
             "Concept": "DISCUSSES_CONCEPT",
             "Method": "USES_METHOD",
             "Finding": "SUPPORTS",
+            "Result": "REPORTS",
+            "Claim": "REPORTS",
             "Dataset": "USES_DATASET",
         }
         return mapping.get(entity_type)
@@ -667,6 +879,11 @@ class ScholarAGImporter:
         id_mapping: dict[str, str] = {}  # local_id -> database_uuid
         author_name_to_uuid: dict[str, str] = {}  # author_name.lower() -> uuid
         concept_name_to_uuid: dict[str, str] = {}  # concept_name.lower() -> uuid
+        method_name_to_uuid: dict[str, str] = {}  # method_name.lower() -> uuid
+        finding_name_to_uuid: dict[str, str] = {}  # finding_name.lower() -> uuid
+        result_name_to_uuid: dict[str, str] = {}  # result_name.lower() -> uuid
+        claim_name_to_uuid: dict[str, str] = {}  # claim_name.lower() -> uuid
+        dataset_name_to_uuid: dict[str, str] = {}  # dataset_name.lower() -> uuid
 
         if not self.db:
             logger.warning("No database connection - skipping entity storage")
@@ -687,37 +904,69 @@ class ScholarAGImporter:
                 if entity.entity_type == "Paper":
                     paper_id = entity.properties.get("paper_id", str(i))
                     local_id = f"paper_{paper_id}"
-                    # Also store in paper_id_map
-                    self._paper_id_map[paper_id] = entity_uuid
 
                 elif entity.entity_type == "Author":
                     normalized_name = entity.name.strip().lower()
-                    # Check if we already stored this author
+                    # Check if we already stored this author in this session
                     if normalized_name in author_name_to_uuid:
                         continue  # Skip duplicate author
                     local_id = self._author_cache.get(normalized_name, f"author_{normalized_name}")
-                    author_name_to_uuid[normalized_name] = entity_uuid
 
                 elif entity.entity_type == "Concept":
                     normalized_name = entity.name.strip().lower()
-                    # Check if we already stored this concept
+                    # Check if we already stored this concept in this session
                     if normalized_name in concept_name_to_uuid:
                         continue  # Skip duplicate concept
                     local_id = self._concept_cache.get(normalized_name, f"concept_{entity.name[:50]}")
-                    concept_name_to_uuid[normalized_name] = entity_uuid
+
+                elif entity.entity_type == "Method":
+                    normalized_name = entity.name.strip().lower()
+                    # Check if we already stored this method in this session
+                    if normalized_name in method_name_to_uuid:
+                        continue  # Skip duplicate method
+                    local_id = self._method_cache.get(normalized_name, f"method_{entity.name[:50]}")
+
+                elif entity.entity_type == "Finding":
+                    normalized_name = entity.name.strip().lower()
+                    # Check if we already stored this finding in this session
+                    if normalized_name in finding_name_to_uuid:
+                        continue  # Skip duplicate finding
+                    local_id = self._finding_cache.get(normalized_name, f"finding_{entity.name[:50]}")
+
+                elif entity.entity_type == "Result":
+                    normalized_name = entity.name.strip().lower()
+                    # Check if we already stored this result in this session
+                    if normalized_name in result_name_to_uuid:
+                        continue  # Skip duplicate result
+                    local_id = self._result_cache.get(normalized_name, f"result_{entity.name[:50]}")
+
+                elif entity.entity_type == "Claim":
+                    normalized_name = entity.name.strip().lower()
+                    # Check if we already stored this claim in this session
+                    if normalized_name in claim_name_to_uuid:
+                        continue  # Skip duplicate claim
+                    local_id = self._claim_cache.get(normalized_name, f"claim_{entity.name[:50]}")
+
+                elif entity.entity_type == "Dataset":
+                    normalized_name = entity.name.strip().lower()
+                    # Check if we already stored this dataset in this session
+                    if normalized_name in dataset_name_to_uuid:
+                        continue  # Skip duplicate dataset
+                    local_id = self._dataset_cache.get(normalized_name, f"dataset_{entity.name[:50]}")
 
                 else:
                     local_id = f"{entity.entity_type.lower()}_{i}"
 
-                # Store mapping
-                id_mapping[local_id] = entity_uuid
-
-                # Insert into database
-                await self.db.execute(
+                # Insert into database with name-based upsert
+                actual_id = await self.db.fetchval(
                     """
                     INSERT INTO entities (id, project_id, entity_type, name, properties)
                     VALUES ($1, $2, $3::entity_type, $4, $5)
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (project_id, entity_type, LOWER(TRIM(name)))
+                    DO UPDATE SET
+                        properties = entities.properties || EXCLUDED.properties,
+                        updated_at = NOW()
+                    RETURNING id
                     """,
                     entity_uuid,
                     project_id,
@@ -725,6 +974,27 @@ class ScholarAGImporter:
                     entity.name[:500],  # Truncate name to fit VARCHAR(500)
                     json.dumps(entity.properties),
                 )
+                # Use the actual DB ID (may differ from entity_uuid if entity already existed)
+                entity_uuid = str(actual_id)
+
+                # Store mappings AFTER upsert so they use the actual DB ID
+                id_mapping[local_id] = entity_uuid
+                if entity.entity_type == "Paper":
+                    self._paper_id_map[paper_id] = entity_uuid
+                elif entity.entity_type == "Author":
+                    author_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Concept":
+                    concept_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Method":
+                    method_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Finding":
+                    finding_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Result":
+                    result_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Claim":
+                    claim_name_to_uuid[normalized_name] = entity_uuid
+                elif entity.entity_type == "Dataset":
+                    dataset_name_to_uuid[normalized_name] = entity_uuid
 
                 if (i + 1) % 100 == 0:
                     logger.info(f"  Stored {i + 1}/{len(entities)} entities...")
@@ -746,6 +1016,26 @@ class ScholarAGImporter:
         for name, local_id in self._concept_cache.items():
             if name in concept_name_to_uuid:
                 id_mapping[local_id] = concept_name_to_uuid[name]
+
+        for name, local_id in self._method_cache.items():
+            if name in method_name_to_uuid:
+                id_mapping[local_id] = method_name_to_uuid[name]
+
+        for name, local_id in self._finding_cache.items():
+            if name in finding_name_to_uuid:
+                id_mapping[local_id] = finding_name_to_uuid[name]
+
+        for name, local_id in self._result_cache.items():
+            if name in result_name_to_uuid:
+                id_mapping[local_id] = result_name_to_uuid[name]
+
+        for name, local_id in self._claim_cache.items():
+            if name in claim_name_to_uuid:
+                id_mapping[local_id] = claim_name_to_uuid[name]
+
+        for name, local_id in self._dataset_cache.items():
+            if name in dataset_name_to_uuid:
+                id_mapping[local_id] = dataset_name_to_uuid[name]
 
         logger.info(f"Stored entities successfully: {type_counts}")
         return id_mapping

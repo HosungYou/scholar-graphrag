@@ -18,41 +18,45 @@ interface FilterPanelProps {
   nodeCountsByType?: Record<EntityType, number>;
 }
 
-const entityTypeConfig: Record<EntityType, { 
+const entityTypeConfig: Record<EntityType, {
   color: string;
-  bg: string; 
-  darkBg: string;
+  bg: string;
   gradient: string;
 }> = {
-  Paper: { 
-    color: '#3b82f6',
-    bg: 'bg-blue-100', 
-    darkBg: 'dark:bg-blue-900/30',
-    gradient: 'from-blue-500 to-blue-600'
+  Paper: {
+    color: '#14b8a6',
+    bg: 'bg-teal-dim',
+    gradient: 'from-teal to-teal-dim'
   },
-  Author: { 
+  Author: {
     color: '#10b981',
-    bg: 'bg-emerald-100', 
-    darkBg: 'dark:bg-emerald-900/30',
-    gradient: 'from-emerald-500 to-emerald-600'
+    bg: 'bg-surface-3',
+    gradient: 'from-node-author to-node-author'
   },
-  Concept: { 
+  Concept: {
     color: '#8b5cf6',
-    bg: 'bg-violet-100', 
-    darkBg: 'dark:bg-violet-900/30',
-    gradient: 'from-violet-500 to-violet-600'
+    bg: 'bg-surface-3',
+    gradient: 'from-node-concept to-node-concept'
   },
-  Method: { 
-    color: '#f59e0b',
-    bg: 'bg-amber-100', 
-    darkBg: 'dark:bg-amber-900/30',
-    gradient: 'from-amber-500 to-amber-600'
+  Method: {
+    color: '#d97706',
+    bg: 'bg-surface-3',
+    gradient: 'from-copper to-copper'
   },
-  Finding: { 
+  Finding: {
     color: '#ef4444',
-    bg: 'bg-rose-100', 
-    darkBg: 'dark:bg-rose-900/30',
-    gradient: 'from-rose-500 to-rose-600'
+    bg: 'bg-surface-3',
+    gradient: 'from-node-finding to-node-finding'
+  },
+  Result: {
+    color: '#ef4444',
+    bg: 'bg-surface-3',
+    gradient: 'from-red-500 to-red-600'
+  },
+  Claim: {
+    color: '#ec4899',
+    bg: 'bg-surface-3',
+    gradient: 'from-pink-500 to-pink-600'
   },
 };
 
@@ -128,13 +132,13 @@ export function FilterPanel({
     : 0;
 
   return (
-    <motion.div 
+    <motion.div
       variants={panelVariants}
       animate={isExpanded ? 'expanded' : 'collapsed'}
       className={clsx(
         "absolute top-4 right-4 w-80 z-10",
-        "glass rounded-xl shadow-xl overflow-hidden",
-        "border border-white/20 dark:border-slate-700/50"
+        "bg-surface-1 rounded overflow-hidden",
+        "border border-border"
       )}
     >
       <motion.button
@@ -147,33 +151,33 @@ export function FilterPanel({
       >
         <div className="flex items-center gap-3">
           <div className={clsx(
-            "p-2 rounded-lg",
-            hasActiveFilters 
-              ? "bg-primary-100 dark:bg-primary-900/30" 
-              : "bg-slate-100 dark:bg-slate-800"
+            "p-2 rounded",
+            hasActiveFilters
+              ? "bg-teal-dim"
+              : "bg-surface-2"
           )}>
             <Sliders className={clsx(
               "w-4 h-4",
-              hasActiveFilters 
-                ? "text-primary-600 dark:text-primary-400" 
-                : "text-slate-500 dark:text-slate-400"
+              hasActiveFilters
+                ? "text-teal"
+                : "text-text-tertiary"
             )} />
           </div>
           <div className="text-left">
-            <span className="font-semibold text-slate-900 dark:text-white block">
+            <span className="font-medium text-text-primary block">
               Filters
             </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
+            <span className="text-xs text-text-secondary">
               {filteredNodes.toLocaleString()} / {totalNodes.toLocaleString()} nodes
             </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {hasActiveFilters && (
-            <motion.span 
+            <motion.span
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
-              className="px-2 py-0.5 bg-primary-500 text-white text-xs font-medium rounded-full"
+              className="px-2 py-0.5 bg-teal text-text-primary text-xs font-medium rounded-full"
             >
               Active
             </motion.span>
@@ -182,7 +186,7 @@ export function FilterPanel({
             animate={{ rotate: isExpanded ? 180 : 0 }}
             transition={{ duration: 0.2 }}
           >
-            <ChevronDown className="w-5 h-5 text-slate-400" />
+            <ChevronDown className="w-5 h-5 text-text-tertiary" />
           </motion.div>
         </div>
       </motion.button>
@@ -199,23 +203,44 @@ export function FilterPanel({
             <div className="p-4 pt-0 space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <span className="text-sm font-medium text-text-primary">
                     Node Types
                   </span>
                   <div className="flex gap-3">
                     <button
                       onClick={selectAll}
-                      className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 transition-colors"
+                      className="text-xs font-medium text-teal hover:text-teal transition-colors"
                     >
                       Select all
                     </button>
                     <button
                       onClick={clearAll}
-                      className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                      className="text-xs font-medium text-text-ghost hover:text-text-secondary transition-colors"
                     >
                       Clear
                     </button>
                   </div>
+                </div>
+                {/* Quick Filter Presets */}
+                <div className="flex gap-1.5 mb-3">
+                  <button
+                    onClick={() => onTypeChange(['Concept', 'Method', 'Finding', 'Result', 'Claim'] as EntityType[])}
+                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
+                  >
+                    Concepts
+                  </button>
+                  <button
+                    onClick={() => onTypeChange(['Paper', 'Author'] as EntityType[])}
+                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
+                  >
+                    Papers
+                  </button>
+                  <button
+                    onClick={selectAll}
+                    className="px-2 py-1 text-[10px] font-medium bg-surface-2 hover:bg-surface-3 text-text-tertiary rounded border border-border transition-colors"
+                  >
+                    All
+                  </button>
                 </div>
                 <div className="space-y-2">
                   {entityTypes.map((type, index) => {
@@ -234,10 +259,10 @@ export function FilterPanel({
                         whileTap={{ scale: 0.99 }}
                         onClick={() => toggleType(type)}
                         className={clsx(
-                          "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all",
+                          "w-full flex items-center justify-between px-3 py-2.5 rounded text-sm transition-all",
                           isSelected
-                            ? `${config.bg} ${config.darkBg} border-2`
-                            : "bg-slate-50 dark:bg-slate-800/50 border-2 border-transparent hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                            ? `${config.bg} border-2`
+                            : "bg-surface-2 border-2 border-transparent hover:bg-surface-3"
                         )}
                         style={{
                           borderColor: isSelected ? config.color : 'transparent'
@@ -245,7 +270,7 @@ export function FilterPanel({
                       >
                         <div className="flex items-center gap-3">
                           <motion.div
-                            animate={{ 
+                            animate={{
                               scale: isSelected ? 1 : 0.8,
                               opacity: isSelected ? 1 : 0.5
                             }}
@@ -257,9 +282,9 @@ export function FilterPanel({
                           />
                           <span className={clsx(
                             "font-medium",
-                            isSelected 
-                              ? "text-slate-900 dark:text-white" 
-                              : "text-slate-500 dark:text-slate-400"
+                            isSelected
+                              ? "text-text-primary"
+                              : "text-text-ghost"
                           )}>
                             {type}
                           </span>
@@ -267,15 +292,15 @@ export function FilterPanel({
                         <div className="flex items-center gap-2">
                           <span className={clsx(
                             "text-xs font-mono",
-                            isSelected 
-                              ? "text-slate-600 dark:text-slate-300" 
-                              : "text-slate-400 dark:text-slate-500"
+                            isSelected
+                              ? "text-text-secondary"
+                              : "text-text-ghost"
                           )}>
                             {count.toLocaleString()}
                           </span>
                           <motion.div
                             initial={false}
-                            animate={{ 
+                            animate={{
                               scale: isSelected ? 1 : 0,
                               opacity: isSelected ? 1 : 0
                             }}
@@ -285,7 +310,7 @@ export function FilterPanel({
                               config.gradient
                             )}
                           >
-                            <Check className="w-3 h-3 text-white" />
+                            <Check className="w-3 h-3 text-text-primary" />
                           </motion.div>
                         </div>
                       </motion.button>
@@ -300,7 +325,7 @@ export function FilterPanel({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
                 >
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300 block mb-3">
+                  <span className="text-sm font-medium text-text-primary block mb-3">
                     Year Range
                   </span>
                   <div className="flex items-center gap-3">
@@ -314,19 +339,19 @@ export function FilterPanel({
                           onYearRangeChange([parseInt(e.target.value), yearRange[1]])
                         }
                         className={clsx(
-                          "w-full px-3 py-2 rounded-lg text-sm font-mono",
-                          "bg-slate-50 dark:bg-slate-800",
-                          "border border-slate-200 dark:border-slate-700",
-                          "focus:ring-2 focus:ring-primary-500 focus:border-transparent",
-                          "text-slate-900 dark:text-white",
+                          "w-full px-3 py-2 rounded text-sm font-mono",
+                          "bg-surface-2",
+                          "border border-border",
+                          "focus:ring-2 focus:ring-teal focus:border-transparent",
+                          "text-text-primary",
                           "transition-all"
                         )}
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-tertiary">
                         from
                       </span>
                     </div>
-                    <div className="text-slate-400">—</div>
+                    <div className="text-text-tertiary">—</div>
                     <div className="relative flex-1">
                       <input
                         type="number"
@@ -337,15 +362,15 @@ export function FilterPanel({
                           onYearRangeChange([yearRange[0], parseInt(e.target.value)])
                         }
                         className={clsx(
-                          "w-full px-3 py-2 rounded-lg text-sm font-mono",
-                          "bg-slate-50 dark:bg-slate-800",
-                          "border border-slate-200 dark:border-slate-700",
-                          "focus:ring-2 focus:ring-primary-500 focus:border-transparent",
-                          "text-slate-900 dark:text-white",
+                          "w-full px-3 py-2 rounded text-sm font-mono",
+                          "bg-surface-2",
+                          "border border-border",
+                          "focus:ring-2 focus:ring-teal focus:border-transparent",
+                          "text-text-primary",
                           "transition-all"
                         )}
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-tertiary">
                         to
                       </span>
                     </div>
@@ -354,13 +379,13 @@ export function FilterPanel({
               )}
 
               {hasActiveFilters && onReset && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="pt-3 border-t border-slate-200 dark:border-slate-700"
+                  className="pt-3 border-t border-border"
                 >
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                    <p className="text-xs text-text-secondary">
                       {selectedTypes.length} of {entityTypes.length} types selected
                     </p>
                     <motion.button
@@ -368,11 +393,11 @@ export function FilterPanel({
                       whileTap={{ scale: 0.98 }}
                       onClick={onReset}
                       className={clsx(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg",
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded",
                         "text-xs font-medium",
-                        "bg-slate-100 dark:bg-slate-800",
-                        "text-slate-600 dark:text-slate-400",
-                        "hover:bg-slate-200 dark:hover:bg-slate-700",
+                        "bg-surface-2",
+                        "text-text-tertiary",
+                        "hover:bg-surface-3",
                         "transition-colors"
                       )}
                     >

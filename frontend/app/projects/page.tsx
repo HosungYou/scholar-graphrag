@@ -17,30 +17,30 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 shadow-sm hover:shadow-md transition-all p-5 sm:p-6 touch-target"
+      className="group bg-surface-1 border border-border rounded hover:border-border-hover transition-colors p-5 sm:p-6 touch-target"
     >
       <div className="flex items-start justify-between mb-4">
-        <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg group-hover:bg-blue-200 dark:group-hover:bg-blue-900/50 transition-colors">
-          <Network className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+        <div className="p-3 bg-teal-dim rounded">
+          <Network className="w-6 h-6 text-teal" />
         </div>
-        <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
+        <span className="text-xs text-text-ghost font-mono flex items-center gap-1">
           <Calendar className="w-4 h-4" />
           {new Date(project.created_at).toLocaleDateString('ko-KR')}
         </span>
       </div>
 
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
+      <h3 className="text-sm font-medium text-text-primary mb-2 group-hover:text-teal transition-colors line-clamp-1">
         {project.name}
       </h3>
 
       {project.research_question && (
-        <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">
+        <p className="text-sm text-text-tertiary mb-4 line-clamp-2">
           {project.research_question}
         </p>
       )}
 
       {project.stats && (
-        <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+        <div className="flex items-center gap-4 text-xs text-text-ghost font-mono">
           {project.stats.total_papers !== undefined && (
             <span className="flex items-center gap-1">
               <FileText className="w-4 h-4" />
@@ -82,17 +82,17 @@ function ProjectsContent() {
 
   if (!projects || projects.length === 0) {
     return (
-      <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700">
-        <Network className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+      <div className="text-center py-12 bg-surface-1 rounded border border-border">
+        <Network className="w-16 h-16 text-text-ghost mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-text-primary mb-2">
           프로젝트가 없습니다
         </h3>
-        <p className="text-gray-600 dark:text-gray-300 mb-6">
+        <p className="text-text-secondary mb-6">
           ScholaRAG 폴더를 Import하여 첫 번째 Knowledge Graph를 만들어보세요.
         </p>
         <Link
           href="/import"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors touch-target"
+          className="btn-primary inline-flex items-center gap-2 touch-target"
         >
           <Plus className="w-5 h-5" />
           Import ScholaRAG Project
@@ -112,7 +112,7 @@ function ProjectsContent() {
 
 export default function ProjectsPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-surface-0 flex flex-col">
       <a href="#main-content" className="skip-link">
         메인 콘텐츠로 건너뛰기
       </a>
@@ -121,22 +121,27 @@ export default function ProjectsPage() {
         breadcrumbs={[{ label: 'Projects' }]}
         rightContent={
           <div className="flex items-center gap-2">
-            <ThemeToggle />
+            <ThemeToggle variant="dropdown" />
             <Link
               href="/import"
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors touch-target"
+              className="btn-primary flex items-center gap-2 touch-target"
             >
-              <Plus className="w-5 h-5" />
-              <span className="hidden sm:inline">Import Project</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Import</span>
             </Link>
           </div>
         }
       />
 
-      <main id="main-content" className="flex-1 max-w-7xl mx-auto px-4 py-6 sm:py-8 w-full">
-        <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-6">
-          Your Projects
-        </h2>
+      <main id="main-content" className="flex-1 max-w-4xl mx-auto px-4 py-6 sm:py-8 w-full">
+        <div className="mb-6">
+          <div className="font-mono text-[11px] text-copper tracking-[0.15em] uppercase mb-2">
+            Projects
+          </div>
+          <h2 className="text-lg font-medium text-text-primary">
+            Your Projects
+          </h2>
+        </div>
 
         <ErrorBoundary>
           <ProjectsContent />

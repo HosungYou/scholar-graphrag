@@ -73,7 +73,7 @@ class GraphStore:
         """
         Add an entity to the graph.
 
-        Returns the entity ID.
+        Returns the entity ID (existing if deduplicated, new otherwise).
         """
         entity_id = str(uuid4())
         node = Node(
@@ -86,11 +86,11 @@ class GraphStore:
         )
 
         if self.db:
-            await self._db_add_entity(node)
+            actual_id = await self._db_add_entity(node)
+            return str(actual_id)
         else:
             self._nodes[entity_id] = node
-
-        return entity_id
+            return entity_id
 
     async def add_relationship(
         self,
@@ -432,22 +432,23 @@ class GraphStore:
     # Database methods (asyncpg implementation)
     # =========================================================================
 
-    async def _db_add_entity(self, node: Node) -> None:
-        """Add entity to PostgreSQL."""
+    async def _db_add_entity(self, node: Node) -> str:
+        """Add entity to PostgreSQL. Returns the actual entity ID (existing or new)."""
         query = """
             INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
             VALUES ($1, $2, $3::entity_type, $4, $5, $6)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                properties = EXCLUDED.properties,
-                embedding = EXCLUDED.embedding,
+            ON CONFLICT (project_id, entity_type, LOWER(TRIM(name)))
+            DO UPDATE SET
+                properties = entities.properties || EXCLUDED.properties,
+                embedding = COALESCE(EXCLUDED.embedding, entities.embedding),
                 updated_at = NOW()
+            RETURNING id
         """
         embedding_str = None
         if node.embedding:
             embedding_str = f"[{','.join(map(str, node.embedding))}]"
 
-        await self.db.execute(
+        result = await self.db.fetchval(
             query,
             node.id,
             node.project_id,
@@ -456,6 +457,7 @@ class GraphStore:
             json.dumps(node.properties),
             embedding_str,
         )
+        return str(result)
 
     async def _db_add_relationship(self, edge: Edge) -> None:
         """Add relationship to PostgreSQL."""

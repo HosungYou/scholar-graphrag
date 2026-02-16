@@ -42,6 +42,7 @@ class ChatResponse(BaseModel):
     conversation_id: str
     message: ChatMessage
     agent_trace: Optional[dict] = None
+    retrieval_trace: Optional[dict] = None
 
 
 class ConversationHistory(BaseModel):
@@ -120,6 +121,10 @@ async def chat_query(request: ChatRequest):
                 "processing_steps": result.processing_steps,
             }
 
+        retrieval_trace = None
+        if request.include_trace and hasattr(result, 'retrieval_trace'):
+            retrieval_trace = result.retrieval_trace
+
     except Exception as e:
         logger.error(f"Chat query failed: {e}")
         assistant_message = ChatMessage(
@@ -150,6 +155,7 @@ async def chat_query(request: ChatRequest):
         conversation_id=conversation_id,
         message=assistant_message,
         agent_trace=agent_trace,
+        retrieval_trace=retrieval_trace,
     )
 
 

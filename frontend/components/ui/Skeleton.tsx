@@ -15,13 +15,13 @@ export function Skeleton({
   variant = 'text',
   animation = 'pulse',
 }: SkeletonProps) {
-  const baseClasses = 'bg-gray-200';
+  const baseClasses = 'bg-surface-2';
 
   const variantClasses = {
     text: 'rounded h-4',
     circular: 'rounded-full',
     rectangular: '',
-    rounded: 'rounded-lg',
+    rounded: 'rounded',
   };
 
   const animationClasses = {
@@ -46,7 +46,7 @@ export function Skeleton({
 // Project Card Skeleton
 export function ProjectCardSkeleton() {
   return (
-    <div className="bg-white rounded-xl border shadow-sm p-6 animate-pulse">
+    <div className="bg-surface-1 rounded border border-border p-6 animate-pulse">
       <div className="flex items-start justify-between mb-4">
         <Skeleton variant="rounded" width={48} height={48} />
         <Skeleton variant="text" width={100} height={16} />
@@ -77,8 +77,8 @@ export function ProjectListSkeleton({ count = 6 }: { count?: number }) {
 export function ChatMessageSkeleton({ isUser = false }: { isUser?: boolean }) {
   return (
     <div
-      className={`p-4 rounded-lg animate-pulse ${
-        isUser ? 'bg-blue-50 ml-12' : 'bg-gray-50 mr-12'
+      className={`p-4 rounded animate-pulse ${
+        isUser ? 'bg-surface-2 ml-12' : 'bg-surface-1 mr-12'
       }`}
     >
       <Skeleton variant="text" width={60} height={12} className="mb-3" />
@@ -114,7 +114,7 @@ export function NodeDetailsSkeleton() {
 // Graph Skeleton (for initial load)
 export function GraphSkeleton() {
   return (
-    <div className="w-full h-full bg-gray-50 flex items-center justify-center animate-pulse">
+    <div className="w-full h-full bg-surface-0 flex items-center justify-center animate-pulse">
       <div className="relative">
         {/* Central node */}
         <Skeleton variant="circular" width={60} height={60} className="mb-4" />
@@ -132,7 +132,7 @@ export function GraphSkeleton() {
           <Skeleton variant="circular" width={40} height={40} />
         </div>
       </div>
-      <p className="absolute bottom-8 text-gray-400 text-sm">그래프 로딩 중...</p>
+      <p className="absolute bottom-8 text-text-tertiary text-sm">그래프 로딩 중...</p>
     </div>
   );
 }

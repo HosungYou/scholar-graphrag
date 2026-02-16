@@ -2,121 +2,226 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Neural Nexus Font Imports */
-@import '@fontsource/outfit/400.css';
-@import '@fontsource/outfit/500.css';
-@import '@fontsource/outfit/600.css';
-@import '@fontsource/outfit/700.css';
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/500.css';
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 @import '@fontsource/jetbrains-mono/400.css';
 @import '@fontsource/jetbrains-mono/500.css';
 
-:root {
-  --nexus-bg: #020617;
-  --glass-bg: rgba(15, 23, 42, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --node-paper-rgb: 59, 130, 246;
-  --node-author-rgb: 16, 185, 129;
-  --node-concept-rgb: 139, 92, 246;
-  --node-method-rgb: 245, 158, 11;
-  --node-finding-rgb: 239, 68, 68;
-}
-
 @layer base {
-  body {
-    @apply bg-nexus-950 text-slate-200 antialiased font-sans transition-colors duration-500;
-    background-image: 
-      radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.15) 0, transparent 50%),
-      radial-gradient(circle at 100% 0%, rgba(139, 92, 246, 0.15) 0, transparent 50%),
-      radial-gradient(circle at 50% 100%, rgba(34, 211, 238, 0.1) 0, transparent 50%);
-    background-attachment: fixed;
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Scanline effect for that cybernetic feel */
-  body::after {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.05) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
-    z-index: 9999;
-    pointer-events: none;
-    background-size: 100% 4px, 3px 100%;
-    opacity: 0.3;
+  body {
+    @apply bg-surface-0 text-text-primary font-sans;
+  }
+
+  ::selection {
+    background: rgba(91, 154, 139, 0.25);
+    color: #d4dae8;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(212, 218, 232, 0.08);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(212, 218, 232, 0.15);
   }
 }
 
 @layer components {
-  /* Premium Glassmorphism */
-  .glass-nexus {
-    @apply backdrop-blur-nexus bg-nexus-900/60 border border-white/10 shadow-2xl;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  /* Primary button — teal border, no fill */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2 text-sm font-mono font-medium rounded transition-colors duration-150;
+    color: #5b9a8b;
+    border: 1px solid rgba(91, 154, 139, 0.3);
+  }
+  .btn-primary:hover {
+    background: rgba(91, 154, 139, 0.08);
+    border-color: rgba(91, 154, 139, 0.5);
   }
 
-  .glass-card-nexus {
-    @apply glass-nexus rounded-3xl p-6 transition-all duration-300;
+  /* Ghost button — text only with arrow */
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors duration-150;
+    @apply text-text-tertiary;
+  }
+  .btn-ghost:hover {
+    @apply text-text-primary;
   }
 
-  .glass-card-nexus:hover {
-    @apply bg-nexus-800/70 border-white/20 -translate-y-1;
-    box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.2);
+  /* Divider — thin solid line */
+  .divider {
+    @apply h-px w-full;
+    background: rgba(212, 218, 232, 0.06);
   }
 
-  /* Interactive Graph Nodes */
-  .nexus-node {
-    @apply relative flex items-center justify-center rounded-2xl transition-all duration-500;
-    background: rgba(15, 23, 42, 0.8);
-    border: 1.5px solid var(--node-color);
+  /* Dotted divider — chart auxiliary line */
+  .divider-dotted {
+    @apply w-full;
+    height: 1px;
+    background-image: linear-gradient(to right, rgba(212, 218, 232, 0.1) 2px, transparent 2px);
+    background-size: 6px 1px;
   }
 
-  .nexus-node::before {
-    content: '';
-    @apply absolute inset-0 rounded-2xl opacity-0 transition-opacity duration-500;
-    box-shadow: 0 0 25px var(--node-color);
+  /* Grid pattern background — observatory chart grid */
+  .chart-grid {
+    background-image:
+      linear-gradient(rgba(91, 154, 139, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(91, 154, 139, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
   }
 
-  .nexus-node:hover::before, .nexus-node.highlighted::before {
-    @apply opacity-60;
+  /* Skip link */
+  .skip-link {
+    @apply absolute -translate-y-full focus:translate-y-0 px-4 py-2 z-[100] text-sm font-medium rounded-b;
+    background: #5b9a8b;
+    color: #080c16;
+    transition: transform 0.2s;
   }
 
-  /* Animated HUD Widget */
-  .hud-container {
-    @apply fixed top-4 right-4 flex flex-col gap-3 z-50;
-  }
-
-  .hud-stat {
-    @apply glass-nexus rounded-xl px-4 py-2 flex items-center gap-3 animate-slide-left;
+  /* Touch target */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
   }
 }
 
-/* React Flow Theming */
+/* React Flow — matches star chart aesthetic */
 .react-flow__background {
-  @apply bg-nexus-950;
+  background: #080c16 !important;
 }
-
 .react-flow__edge-path {
-  stroke-width: 2;
-  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+  stroke: rgba(212, 218, 232, 0.06);
   transition: all 0.3s;
 }
-
 .react-flow__edge.highlighted .react-flow__edge-path {
-  stroke: var(--edge-color, #6366f1);
-  stroke-width: 3;
-  filter: drop-shadow(0 0 8px var(--edge-color, #6366f1));
+  stroke: #5b9a8b;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
   animation: flowLine 2s linear infinite;
-  stroke-dasharray: 10, 5;
+}
+.react-flow__controls {
+  background: #0c1120;
+  border: 1px solid rgba(212, 218, 232, 0.06);
+  border-radius: 4px;
+}
+.react-flow__controls-button {
+  background: #111729;
+  border-color: rgba(212, 218, 232, 0.06);
+}
+.react-flow__controls-button:hover {
+  background: rgba(91, 154, 139, 0.08);
 }
 
 @keyframes flowLine {
-  from { stroke-dashoffset: 30; }
+  from { stroke-dashoffset: 18; }
   to { stroke-dashoffset: 0; }
 }
 
-/* Typography Enhancements */
-.text-nexus-gradient {
-  @apply bg-clip-text text-transparent bg-gradient-to-r from-nexus-indigo via-nexus-violet to-nexus-cyan;
+/* ==========================================================================
+   Celestial Chart Visual Elements
+   Geometric structures from 18th-19th century celestial cartography:
+   concentric coordinate circles, radial lines, tick marks, legend boxes,
+   and double-line borders.
+   ========================================================================== */
+
+/* Celestial Grid — Hero background with concentric arcs and radial lines
+   Recreates a star chart coordinate system centered at top-right (85% 15%).
+   Four concentric ring arcs at different radii + conic radial spokes + grid. */
+.celestial-grid {
+  background:
+    radial-gradient(circle at 85% 15%, transparent 498px, rgba(91,154,139,0.07) 499px, rgba(91,154,139,0.07) 501px, transparent 502px),
+    radial-gradient(circle at 85% 15%, transparent 348px, rgba(91,154,139,0.05) 349px, rgba(91,154,139,0.05) 351px, transparent 352px),
+    radial-gradient(circle at 85% 15%, transparent 648px, rgba(91,154,139,0.05) 649px, rgba(91,154,139,0.05) 651px, transparent 652px),
+    radial-gradient(circle at 85% 15%, transparent 198px, rgba(91,154,139,0.04) 199px, rgba(91,154,139,0.04) 201px, transparent 202px),
+    conic-gradient(
+      from 0deg at 85% 15%,
+      rgba(91,154,139,0.02) 0deg, transparent 2deg,
+      transparent 28deg, rgba(91,154,139,0.02) 30deg, transparent 32deg,
+      transparent 58deg, rgba(91,154,139,0.02) 60deg, transparent 62deg,
+      transparent 88deg, rgba(91,154,139,0.02) 90deg, transparent 92deg,
+      transparent 118deg, rgba(91,154,139,0.02) 120deg, transparent 122deg,
+      transparent 148deg, rgba(91,154,139,0.02) 150deg, transparent 152deg,
+      transparent 178deg, rgba(91,154,139,0.02) 180deg, transparent 182deg,
+      transparent 208deg, rgba(91,154,139,0.02) 210deg, transparent 212deg,
+      transparent 238deg, rgba(91,154,139,0.02) 240deg, transparent 242deg,
+      transparent 268deg, rgba(91,154,139,0.02) 270deg, transparent 272deg,
+      transparent 298deg, rgba(91,154,139,0.02) 300deg, transparent 302deg,
+      transparent 328deg, rgba(91,154,139,0.02) 330deg, transparent 332deg,
+      transparent 360deg
+    ),
+    linear-gradient(rgba(91,154,139,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91,154,139,0.025) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 80px 80px, 80px 80px;
+}
+
+/* Legend Box — Double-border cartouche from printed star charts.
+   Outer border + inner inset border via ::before pseudo-element. */
+.legend-box {
+  border: 1px solid rgba(91,154,139,0.12);
+  position: relative;
+  padding: 2rem;
+}
+.legend-box::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(91,154,139,0.06);
+  pointer-events: none;
+}
+
+/* Legend Title — Small uppercase header for legend/cartouche sections */
+.legend-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: #a07d5a;
+  text-transform: uppercase;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid rgba(212,218,232,0.06);
+}
+
+/* Catalogue Marker — Star magnitude dots for feature list items */
+.catalogue-marker {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 7px;
+}
+
+/* Coordinate Label — Small labels on celestial grid arcs (RA/Dec style) */
+.coordinate-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: rgba(91,154,139,0.25);
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Stat Cell — Individual readout cell for observatory instrument panels */
+.stat-cell {
+  border: 1px solid rgba(212,218,232,0.06);
+  padding: 1rem 1.25rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Double Rule — Classic double-line horizontal rule from printed charts */
+.double-rule {
+  height: 3px;
+  width: 100%;
+  border-top: 1px solid rgba(212,218,232,0.08);
+  border-bottom: 1px solid rgba(212,218,232,0.08);
 }

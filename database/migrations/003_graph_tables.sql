@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS entities (
     entity_type entity_type NOT NULL,
     name VARCHAR(500) NOT NULL,
     properties JSONB DEFAULT '{}',
-    embedding vector(1536),  -- OpenAI text-embedding-3-small dimension
+    embedding vector(3072),  -- Azure OpenAI text-embedding-3-large dimension
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -181,7 +181,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function: Vector similarity search
 CREATE OR REPLACE FUNCTION search_similar_entities(
-    query_embedding vector(1536),
+    query_embedding vector(3072),
     target_project_id UUID,
     target_entity_type entity_type DEFAULT NULL,
     limit_count INT DEFAULT 10

@@ -17,9 +17,9 @@ interface ErrorDisplayProps {
   className?: string;
 }
 
-const errorConfig: Record<ErrorType, { 
-  icon: typeof AlertCircle; 
-  defaultTitle: string; 
+const errorConfig: Record<ErrorType, {
+  icon: typeof AlertCircle;
+  defaultTitle: string;
   defaultMessage: string;
   colors: {
     bg: string;
@@ -35,12 +35,12 @@ const errorConfig: Record<ErrorType, {
     defaultTitle: 'Connection Error',
     defaultMessage: 'Unable to connect to the server. Please check your internet connection and try again.',
     colors: {
-      bg: 'bg-rose-50 dark:bg-rose-950/30',
-      border: 'border-rose-200 dark:border-rose-800/50',
-      icon: 'text-rose-500 dark:text-rose-400',
-      title: 'text-rose-900 dark:text-rose-100',
-      text: 'text-rose-700 dark:text-rose-300',
-      button: 'bg-rose-600 hover:bg-rose-700',
+      bg: 'bg-node-finding/10',
+      border: 'border-border',
+      icon: 'text-node-finding',
+      title: 'text-text-primary',
+      text: 'text-text-secondary',
+      button: 'bg-node-finding hover:bg-node-finding/80',
     },
   },
   server: {
@@ -48,12 +48,12 @@ const errorConfig: Record<ErrorType, {
     defaultTitle: 'Server Error',
     defaultMessage: 'Something went wrong on our end. Please try again in a few moments.',
     colors: {
-      bg: 'bg-orange-50 dark:bg-orange-950/30',
-      border: 'border-orange-200 dark:border-orange-800/50',
-      icon: 'text-orange-500 dark:text-orange-400',
-      title: 'text-orange-900 dark:text-orange-100',
-      text: 'text-orange-700 dark:text-orange-300',
-      button: 'bg-orange-600 hover:bg-orange-700',
+      bg: 'bg-node-finding/10',
+      border: 'border-border',
+      icon: 'text-node-finding',
+      title: 'text-text-primary',
+      text: 'text-text-secondary',
+      button: 'bg-node-finding hover:bg-node-finding/80',
     },
   },
   notFound: {
@@ -61,12 +61,12 @@ const errorConfig: Record<ErrorType, {
     defaultTitle: 'Not Found',
     defaultMessage: 'The requested resource could not be found.',
     colors: {
-      bg: 'bg-slate-50 dark:bg-slate-900/50',
-      border: 'border-slate-200 dark:border-slate-700',
-      icon: 'text-slate-500 dark:text-slate-400',
-      title: 'text-slate-900 dark:text-slate-100',
-      text: 'text-slate-600 dark:text-slate-400',
-      button: 'bg-slate-600 hover:bg-slate-700',
+      bg: 'bg-surface-2',
+      border: 'border-border',
+      icon: 'text-text-ghost',
+      title: 'text-text-primary',
+      text: 'text-text-secondary',
+      button: 'bg-surface-4 hover:bg-surface-5',
     },
   },
   warning: {
@@ -74,12 +74,12 @@ const errorConfig: Record<ErrorType, {
     defaultTitle: 'Warning',
     defaultMessage: 'Please review the information and try again.',
     colors: {
-      bg: 'bg-amber-50 dark:bg-amber-950/30',
-      border: 'border-amber-200 dark:border-amber-800/50',
-      icon: 'text-amber-500 dark:text-amber-400',
-      title: 'text-amber-900 dark:text-amber-100',
-      text: 'text-amber-700 dark:text-amber-300',
-      button: 'bg-amber-600 hover:bg-amber-700',
+      bg: 'bg-node-method/10',
+      border: 'border-border',
+      icon: 'text-node-method',
+      title: 'text-text-primary',
+      text: 'text-text-secondary',
+      button: 'bg-node-method hover:bg-node-method/80',
     },
   },
   generic: {
@@ -87,12 +87,12 @@ const errorConfig: Record<ErrorType, {
     defaultTitle: 'Something Went Wrong',
     defaultMessage: 'An unexpected error occurred. Please try again.',
     colors: {
-      bg: 'bg-red-50 dark:bg-red-950/30',
-      border: 'border-red-200 dark:border-red-800/50',
-      icon: 'text-red-500 dark:text-red-400',
-      title: 'text-red-900 dark:text-red-100',
-      text: 'text-red-700 dark:text-red-300',
-      button: 'bg-red-600 hover:bg-red-700',
+      bg: 'bg-node-finding/10',
+      border: 'border-border',
+      icon: 'text-node-finding',
+      title: 'text-text-primary',
+      text: 'text-text-secondary',
+      button: 'bg-node-finding hover:bg-node-finding/80',
     },
   },
 };
@@ -140,18 +140,18 @@ export function ErrorDisplay({
 
   if (compact) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}
         className={clsx(
-          "flex items-center gap-3 p-4 rounded-xl border",
+          "flex items-center gap-3 p-4 rounded border",
           colors.bg,
           colors.border,
           className
         )}
       >
-        <div className={clsx("p-2 rounded-lg", colors.bg)}>
+        <div className={clsx("p-2 rounded", colors.bg)}>
           <Icon className={clsx("w-5 h-5", colors.icon)} />
         </div>
         <div className="flex-1 min-w-0">
@@ -164,9 +164,9 @@ export function ErrorDisplay({
             whileTap={{ scale: 0.95 }}
             onClick={handleRetry}
             className={clsx(
-              "flex-shrink-0 p-2 rounded-lg transition-colors",
+              "flex-shrink-0 p-2 rounded transition-colors",
               colors.icon,
-              "hover:bg-white/50 dark:hover:bg-slate-800/50"
+              "hover:bg-surface-3"
             )}
             aria-label="Retry"
           >
@@ -178,35 +178,35 @@ export function ErrorDisplay({
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       className={clsx(
         "flex flex-col items-center justify-center p-8 text-center",
-        "glass rounded-2xl",
+        "bg-surface-1 rounded",
         className
       )}
     >
-      <motion.div 
+      <motion.div
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
         transition={{ type: 'spring' as const, stiffness: 300, damping: 20, delay: 0.1 }}
         className={clsx(
-          "p-4 rounded-2xl mb-4",
+          "p-4 rounded mb-4",
           colors.bg
         )}
       >
         <Icon className={clsx("w-10 h-10", colors.icon)} />
       </motion.div>
-      <motion.h3 
+      <motion.h3
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className={clsx("text-xl font-semibold mb-2", colors.title)}
+        className={clsx("text-xl font-medium mb-2", colors.title)}
       >
         {displayTitle}
       </motion.h3>
-      <motion.p 
+      <motion.p
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
@@ -223,8 +223,8 @@ export function ErrorDisplay({
           whileTap={{ scale: 0.98 }}
           onClick={handleRetry}
           className={clsx(
-            "flex items-center gap-2 px-6 py-3 rounded-xl text-white font-medium",
-            "shadow-lg transition-all",
+            "flex items-center gap-2 px-6 py-3 rounded text-text-primary font-medium",
+            "transition-all",
             colors.button
           )}
         >
@@ -257,20 +257,15 @@ export function LoadingSpinner({ size = 'md', text, className }: LoadingSpinnerP
           transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
           className={clsx(
             sizeClasses[size],
-            "rounded-full border-4 border-primary-200 dark:border-primary-900 border-t-primary-500"
+            "rounded-full border-4 border-surface-3 border-t-teal"
           )}
         />
-        <div className={clsx(
-          "absolute inset-0 rounded-full",
-          "bg-gradient-to-r from-primary-500/20 to-transparent",
-          "animate-pulse"
-        )} />
       </div>
       {text && (
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="text-sm font-medium text-slate-600 dark:text-slate-400"
+          className="text-sm font-medium text-text-secondary"
         >
           {text}
         </motion.p>
@@ -294,23 +289,23 @@ export function ProgressBar({ progress, showPercentage = true, className, label 
       {(label || showPercentage) && (
         <div className="flex justify-between items-center mb-2">
           {label && (
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            <span className="text-sm font-medium text-text-primary">
               {label}
             </span>
           )}
           {showPercentage && (
-            <span className="text-sm font-mono text-slate-500 dark:text-slate-400">
+            <span className="text-sm font-mono text-text-secondary">
               {Math.round(clampedProgress)}%
             </span>
           )}
         </div>
       )}
-      <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+      <div className="h-2 rounded-full bg-surface-3 overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${clampedProgress}%` }}
           transition={{ duration: 0.3 }}
-          className="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-600"
+          className="h-full rounded-full bg-teal"
         />
       </div>
     </div>

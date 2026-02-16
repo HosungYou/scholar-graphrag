@@ -26,6 +26,7 @@ class ReasoningResult(BaseModel):
     confidence: float
     supporting_nodes: list[str] = []
     supporting_edges: list[str] = []
+    trace_steps: list = []
 
 
 class ReasoningAgent:
@@ -97,6 +98,7 @@ Data: {results_summary[:3]}"""
                 confidence=float(data.get("confidence", 0.7)),
                 supporting_nodes=execution_result.nodes_accessed,
                 supporting_edges=execution_result.edges_traversed,
+                trace_steps=getattr(execution_result, 'trace_steps', []),
             )
         except Exception:
             return self._reason_with_fallback(query, execution_result)
@@ -133,4 +135,5 @@ Data: {results_summary[:3]}"""
             confidence=0.6,
             supporting_nodes=execution_result.nodes_accessed,
             supporting_edges=execution_result.edges_traversed,
+            trace_steps=getattr(execution_result, 'trace_steps', []),
         )

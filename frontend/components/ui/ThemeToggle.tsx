@@ -31,7 +31,7 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
     return (
       <button
         onClick={toggleTheme}
-        className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        className="p-2 rounded text-text-secondary hover:bg-surface-2 transition-colors"
         aria-label={isDark ? '라이트 모드로 전환' : '다크 모드로 전환'}
       >
         {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -49,7 +49,7 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        className="flex items-center gap-2 px-3 py-2 rounded text-text-secondary hover:bg-surface-2 transition-colors"
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         aria-label="테마 선택"
@@ -62,7 +62,7 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
 
       {isOpen && (
         <div
-          className="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-lg shadow-lg border dark:border-gray-700 py-1 z-50"
+          className="absolute right-0 mt-2 w-40 bg-surface-1 rounded border border-border py-1 z-50"
           role="listbox"
         >
           {options.map((option) => {
@@ -78,8 +78,8 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
                 className={`
                   w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors
                   ${isSelected
-                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                    : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700'
+                    ? 'bg-teal-dim text-teal'
+                    : 'text-text-primary hover:bg-surface-2'
                   }
                 `}
                 role="option"
@@ -88,7 +88,7 @@ export function ThemeToggle({ variant = 'icon' }: ThemeToggleProps) {
                 <Icon className="w-4 h-4" />
                 {option.label}
                 {isSelected && (
-                  <span className="ml-auto text-blue-600 dark:text-blue-400">✓</span>
+                  <span className="ml-auto text-teal">✓</span>
                 )}
               </button>
             );

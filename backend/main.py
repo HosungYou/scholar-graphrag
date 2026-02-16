@@ -17,6 +17,7 @@ from routers.graph import router as graph_router
 from routers.chat import router as chat_router
 from routers.import_ import router as import_router
 from routers.metrics import router as metrics_router
+from routers.settings import router as settings_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ app.include_router(graph_router, prefix="/api/graph", tags=["Graph"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(import_router, prefix="/api/import", tags=["Import"])
 app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
+app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
 
 @app.get("/")

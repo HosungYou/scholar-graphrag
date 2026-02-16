@@ -3,7 +3,7 @@
  */
 
 // Entity Types
-export type EntityType = 'Paper' | 'Author' | 'Concept' | 'Method' | 'Finding';
+export type EntityType = 'Paper' | 'Author' | 'Concept' | 'Method' | 'Finding' | 'Result' | 'Claim';
 
 // Relationship Types
 export type RelationshipType =
@@ -13,7 +13,10 @@ export type RelationshipType =
   | 'USES_METHOD'
   | 'SUPPORTS'
   | 'CONTRADICTS'
-  | 'RELATED_TO';
+  | 'RELATED_TO'
+  | 'USED_IN'
+  | 'EVALUATED_ON'
+  | 'REPORTS';
 
 // Property types
 export interface PaperProperties {
@@ -62,12 +65,31 @@ export interface FindingProperties {
   [key: string]: unknown;
 }
 
+export interface ResultProperties {
+  statement?: string;
+  metrics?: string;
+  significance?: string;
+  confidence?: number;
+  paper_count?: number;
+  extraction_section?: string;
+  [key: string]: unknown;
+}
+
+export interface ClaimProperties {
+  statement?: string;
+  evidence?: string;
+  confidence?: number;
+  paper_count?: number;
+  extraction_section?: string;
+  [key: string]: unknown;
+}
+
 // Base Entity interface
 export interface GraphEntity {
   id: string;
   entity_type: EntityType;
   name: string;
-  properties: PaperProperties | AuthorProperties | ConceptProperties | MethodProperties | FindingProperties;
+  properties: PaperProperties | AuthorProperties | ConceptProperties | MethodProperties | FindingProperties | ResultProperties | ClaimProperties;
   created_at?: string;
   updated_at?: string;
 }
@@ -130,12 +152,34 @@ export interface Citation {
   relevance_score?: number;
 }
 
+// Retrieval Trace
+export interface TraceStep {
+  step_index: number;
+  action: 'vector_search' | 'keyword_search' | 'graph_traverse' | 'gap_analysis' | 'aggregate' | string;
+  node_ids: string[];
+  edge_ids?: string[];
+  thought: string;
+  duration_ms: number;
+}
+
+export interface RetrievalTrace {
+  strategy: 'vector' | 'graph_traversal' | 'hybrid' | string;
+  steps: TraceStep[];
+  reasoning_path: string[];
+  metrics: {
+    total_steps: number;
+    total_latency_ms: number;
+    rerank_applied?: boolean;
+  };
+}
+
 export interface ChatResponse {
   answer: string;
   citations: Citation[];
   highlighted_nodes: string[];
   highlighted_edges: string[];
   conversation_id: string;
+  retrieval_trace?: RetrievalTrace;
 }
 
 // Import
@@ -165,6 +209,8 @@ export interface ImportJob {
     total_entities: number;
     total_relationships: number;
   };
+  created_at?: string;
+  updated_at?: string;
 }
 
 // Search

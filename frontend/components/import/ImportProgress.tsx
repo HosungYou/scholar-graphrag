@@ -79,19 +79,19 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+      <div className="bg-surface-2 border border-node-finding/30 rounded p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-red-100 rounded-full">
-            <XCircle className="w-6 h-6 text-red-600" />
+          <div className="p-2 bg-surface-2 rounded-full">
+            <XCircle className="w-6 h-6 text-node-finding" />
           </div>
           <div>
-            <h3 className="font-semibold text-red-700">Import Failed</h3>
-            <p className="text-sm text-red-600">{error}</p>
+            <h3 className="font-medium text-node-finding">Import Failed</h3>
+            <p className="text-sm text-node-finding">{error}</p>
           </div>
         </div>
         <button
           onClick={() => router.back()}
-          className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium"
+          className="px-4 py-2 bg-surface-2 text-node-finding rounded hover:bg-surface-3 transition-colors text-sm font-medium"
         >
           Try Again
         </button>
@@ -101,10 +101,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
   if (!job) {
     return (
-      <div className="bg-white border rounded-xl p-6">
+      <div className="bg-surface-1 border border-border rounded p-6">
         <div className="flex items-center justify-center gap-3">
-          <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-          <span className="text-gray-600">Initializing import...</span>
+          <Loader2 className="w-5 h-5 animate-spin text-teal" />
+          <span className="text-text-secondary">Initializing import...</span>
         </div>
       </div>
     );
@@ -114,29 +114,29 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
   const isComplete = job.status === 'completed';
 
   return (
-    <div className="bg-white border rounded-xl overflow-hidden">
+    <div className="bg-surface-1 border border-border rounded overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4">
+      <div className="bg-teal px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">
+            <h3 className="text-lg font-medium text-white">
               {isComplete ? 'Import Complete!' : 'Importing Project...'}
             </h3>
-            <p className="text-blue-100 text-sm">
+            <p className="text-white/80 text-sm">
               {isComplete
                 ? `Created ${job.stats?.total_entities || 0} entities and ${job.stats?.total_relationships || 0} relationships`
                 : job.message || `Step ${currentStepIndex + 1} of ${IMPORT_STEPS.length}`}
             </p>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold text-white">
+            <div className="text-3xl font-medium text-white">
               {Math.round(job.progress)}%
             </div>
           </div>
         </div>
 
         {/* Progress bar */}
-        <div className="mt-4 h-2 bg-blue-900/30 rounded-full overflow-hidden">
+        <div className="mt-4 h-2 bg-surface-2 rounded-full overflow-hidden">
           <div
             className="h-full bg-white transition-all duration-500 ease-out rounded-full"
             style={{ width: `${job.progress}%` }}
@@ -155,27 +155,27 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
             return (
               <div
                 key={step.id}
-                className={`flex items-center gap-4 p-3 rounded-lg transition-all ${
+                className={`flex items-center gap-4 p-3 rounded transition-all ${
                   isCurrentStep
-                    ? 'bg-blue-50 border border-blue-200'
+                    ? 'bg-teal-dim border border-teal/30'
                     : isPastStep
-                    ? 'bg-green-50/50'
+                    ? 'bg-teal-dim/50'
                     : 'opacity-50'
                 }`}
               >
                 {/* Icon */}
                 <div className="flex-shrink-0">
                   {isPastStep ? (
-                    <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    <div className="w-8 h-8 bg-teal-dim rounded-full flex items-center justify-center">
+                      <CheckCircle className="w-5 h-5 text-teal" />
                     </div>
                   ) : isCurrentStep ? (
-                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                      <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                    <div className="w-8 h-8 bg-teal-dim rounded-full flex items-center justify-center">
+                      <Loader2 className="w-5 h-5 text-teal animate-spin" />
                     </div>
                   ) : (
-                    <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-                      <Circle className="w-5 h-5 text-gray-400" />
+                    <div className="w-8 h-8 bg-surface-2 rounded-full flex items-center justify-center">
+                      <Circle className="w-5 h-5 text-text-tertiary" />
                     </div>
                   )}
                 </div>
@@ -185,10 +185,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
                   <p
                     className={`font-medium ${
                       isPastStep
-                        ? 'text-green-700'
+                        ? 'text-teal'
                         : isCurrentStep
-                        ? 'text-blue-700'
-                        : 'text-gray-500'
+                        ? 'text-teal'
+                        : 'text-text-tertiary'
                     }`}
                   >
                     {step.label}
@@ -196,10 +196,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
                   <p
                     className={`text-sm ${
                       isPastStep
-                        ? 'text-green-600'
+                        ? 'text-teal'
                         : isCurrentStep
-                        ? 'text-blue-600'
-                        : 'text-gray-400'
+                        ? 'text-teal'
+                        : 'text-text-tertiary'
                     }`}
                   >
                     {step.description}
@@ -209,8 +209,8 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
                 {/* Status indicator */}
                 {isCurrentStep && (
                   <div className="flex-shrink-0">
-                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                      <span className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-pulse" />
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-teal-dim text-teal text-xs rounded-full">
+                      <span className="w-1.5 h-1.5 bg-teal rounded-full animate-pulse" />
                       In Progress
                     </span>
                   </div>
@@ -222,10 +222,10 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
         {/* Complete action */}
         {isComplete && job.project_id && (
-          <div className="mt-6 pt-4 border-t">
+          <div className="mt-6 pt-4 border-t border-border">
             <button
               onClick={() => router.push(`/projects/${job.project_id}`)}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all font-medium"
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-teal text-white rounded hover:bg-teal/90 transition-all font-medium"
             >
               Open Project
               <ArrowRight className="w-5 h-5" />
