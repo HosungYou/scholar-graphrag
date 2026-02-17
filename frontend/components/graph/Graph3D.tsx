@@ -184,6 +184,9 @@ export interface Graph3DProps {
   // v0.19.0: Cluster overlay props
   showClusterOverlay?: boolean;
   gaps?: import('@/types').StructuralGap[];
+  // Gap cluster A/B distinction
+  clusterANodes?: string[];
+  clusterBNodes?: string[];
 }
 
 export interface Graph3DRef {
@@ -222,6 +225,8 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // v0.19.0: Cluster overlay
   showClusterOverlay = false,
   gaps: gapsProp = [],
+  clusterANodes = [],
+  clusterBNodes = [],
 }, ref) => {
   // All hooks must be called unconditionally at the top (React rules)
   const fgRef = useRef<any>(null);
@@ -398,6 +403,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
   // v0.7.0: Pinned nodes set for O(1) lookup
   const pinnedNodeSet = useMemo(() => new Set(pinnedNodes), [pinnedNodes]);
 
+  // Gap cluster A/B sets for O(1) lookup
+  const clusterASet = useMemo(() => new Set(clusterANodes), [clusterANodes]);
+  const clusterBSet = useMemo(() => new Set(clusterBNodes), [clusterBNodes]);
+
   // Build node -> cluster mapping for edge coloring
   const nodeClusterMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -563,17 +572,22 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
   // UI-010 FIX: Separate style maps for highlighting (changes without triggering graph rebuild)
   const nodeStyleMap = useMemo(() => {
-    const styleMap = new Map<string, { isHighlighted: boolean; isPinned: boolean; baseColor: string }>();
+    const styleMap = new Map<string, { isHighlighted: boolean; isPinned: boolean; baseColor: string; clusterRole: 'a' | 'b' | null }>();
     // Pre-populate with all nodes to ensure consistent lookup
     baseGraphData.nodes.forEach(node => {
+      let clusterRole: 'a' | 'b' | null = null;
+      if (clusterASet.has(node.id)) clusterRole = 'a';
+      else if (clusterBSet.has(node.id)) clusterRole = 'b';
+
       styleMap.set(node.id, {
         isHighlighted: highlightedNodeSet.has(node.id),
         isPinned: pinnedNodeSet.has(node.id),
         baseColor: node.color,
+        clusterRole,
       });
     });
     return styleMap;
-  }, [baseGraphData.nodes, highlightedNodeSet, pinnedNodeSet]);
+  }, [baseGraphData.nodes, highlightedNodeSet, pinnedNodeSet, clusterASet, clusterBSet]);
 
   const edgeStyleMap = useMemo(() => {
     const styleMap = new Map<string, { isHighlighted: boolean; isPinnedEdge: boolean; isLowTrust: boolean }>();
@@ -645,11 +659,17 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     const nodeStyle = nodeStyleMap.get(node.id);
     const isHighlighted = nodeStyle?.isHighlighted || false;
     const isPinned = nodeStyle?.isPinned || false;
+    const clusterRole = nodeStyle?.clusterRole || null;
 
     // v0.7.0: Color priority: highlighted > pinned > normal
+    // Gap cluster A/B distinction: coral for A, teal for B, gold for bridge/other
     let displayColor: string;
-    if (isHighlighted) {
-      displayColor = '#FFD700'; // Gold for highlighted
+    if (isHighlighted && clusterRole === 'a') {
+      displayColor = '#E63946'; // Coral for cluster A
+    } else if (isHighlighted && clusterRole === 'b') {
+      displayColor = '#2EC4B6'; // Teal for cluster B
+    } else if (isHighlighted) {
+      displayColor = '#FFD700'; // Gold for bridge/other highlighted
     } else if (isPinned) {
       displayColor = '#00E5FF'; // Cyan for pinned
     } else {
@@ -751,11 +771,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
     // Highlight ring for selected nodes
     if (isHighlighted) {
+      const ringColor = clusterRole === 'a' ? '#E63946' : clusterRole === 'b' ? '#2EC4B6' : '#FFD700';
       const ringSize = bloomEnabled ? nodeSize * glowSize * 0.95 : nodeSize * 1.3;
       const ringGeometry = new THREE.RingGeometry(ringSize, ringSize + nodeSize * 0.2, 32);
       const ringOpacity = bloomEnabled ? 0.4 + bloomIntensity * 0.3 : 0.6;
       const ringMaterial = new THREE.MeshBasicMaterial({
-        color: '#FFD700',
+        color: ringColor,
         transparent: true,
         opacity: ringOpacity,
         side: THREE.DoubleSide,
@@ -809,8 +830,10 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         (LABEL_CONFIG.maxOpacity - LABEL_CONFIG.minOpacity) * nodePercentile;
 
       // InfraNodus style: Label color matches cluster color
-      // Highlighted nodes get gold, pinned nodes get cyan
-      const labelColor = isHighlighted ? '#FFD700' : isPinned ? '#00E5FF' : (node.color || '#FFFFFF');
+      // Highlighted nodes get cluster-role color (coral/teal/gold), pinned nodes get cyan
+      const labelColor = isHighlighted
+        ? (clusterRole === 'a' ? '#E63946' : clusterRole === 'b' ? '#2EC4B6' : '#FFD700')
+        : isPinned ? '#00E5FF' : (node.color || '#FFFFFF');
       const labelSprite = createTextSprite(displayName, labelColor, fontSize, labelOpacity);
 
       if (labelSprite) {
@@ -851,6 +874,12 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
 
         let targetColor: string;
         if (isSelected) {
+          targetColor = '#FFD700';
+        } else if (isConnected && style.clusterRole === 'a') {
+          targetColor = '#E63946';
+        } else if (isConnected && style.clusterRole === 'b') {
+          targetColor = '#2EC4B6';
+        } else if (isConnected) {
           targetColor = '#FFD700';
         } else if (style.isPinned) {
           targetColor = '#00E5FF';

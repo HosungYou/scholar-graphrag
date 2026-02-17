@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 import { Download } from 'lucide-react';
 import type { ConceptCluster, StructuralGap, GraphEdge, TopicNode, TopicLink, TopicViewData } from '@/types';
@@ -105,7 +105,14 @@ export function TopicViewMode({
 }: TopicViewModeProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<TopicNode, TopicLink> | null>(null);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const hoveredNodeIdRef = useRef<string | null>(null);
+
+  // Callback refs so D3 closures always call the latest prop without needing to
+  // be in the D3 useEffect dependency array (which would fully recreate the graph).
+  const onClusterHoverRef = useRef(onClusterHover);
+  const onClusterClickRef = useRef(onClusterClick);
+  useEffect(() => { onClusterHoverRef.current = onClusterHover; }, [onClusterHover]);
+  useEffect(() => { onClusterClickRef.current = onClusterClick; }, [onClusterClick]);
 
   // -----------------------------------------------------------------------
   // Convert clusters + gaps + edges --> TopicViewData
@@ -586,11 +593,11 @@ export function TopicViewMode({
     node
       .on('click', (event, d) => {
         event.stopPropagation();
-        onClusterClick?.(d.clusterId);
+        onClusterClickRef.current?.(d.clusterId);
       })
       .on('mouseenter', function (_event, d) {
-        onClusterHover?.(d.clusterId);
-        setHoveredNodeId(d.id);
+        onClusterHoverRef.current?.(d.clusterId);
+        hoveredNodeIdRef.current = d.id;
 
         const connected = adjacencyMap.get(d.id) || new Set<string>();
 
@@ -684,8 +691,8 @@ export function TopicViewMode({
         }
       })
       .on('mouseleave', function () {
-        onClusterHover?.(null);
-        setHoveredNodeId(null);
+        onClusterHoverRef.current?.(null);
+        hoveredNodeIdRef.current = null;
 
         // Reset all nodes
         nodeGroup.selectAll<SVGGElement, TopicNode>('.topic-node').each(function (nd) {
@@ -757,7 +764,10 @@ export function TopicViewMode({
           return ((s.y ?? 0) + (t.y ?? 0)) / 2 - 6;
         });
 
-      node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      node.attr('transform', (d) => {
+        const scale = d.id === hoveredNodeIdRef.current ? 1.05 : 1;
+        return `translate(${d.x ?? 0},${d.y ?? 0}) scale(${scale})`;
+      });
 
       // Position edge badges at midpoints
       edgeBadge.attr('transform', (d) => {
@@ -806,7 +816,7 @@ export function TopicViewMode({
     return () => {
       simulation.stop();
     };
-  }, [topicData, width, height, onClusterClick, onClusterHover, adjacencyMap]);
+  }, [topicData, width, height, adjacencyMap]);
 
   // -----------------------------------------------------------------------
   // External highlight from parent

@@ -260,8 +260,8 @@ class GapDetector:
                     cluster.name = await self._generate_cluster_label(cluster.keywords)
                 except Exception as e:
                     logger.warning(f"LLM label generation failed for cluster {cluster_id}: {e}")
-                    filtered = [k for k in cluster.keywords[:3] if k and k.strip()]
-                    cluster.name = " / ".join(filtered) if filtered else f"Cluster {cluster_id + 1}"
+                    from graph.cluster_labeler import fallback_label
+                    cluster.name = fallback_label(cluster.keywords[:5]) if cluster.keywords else f"Cluster {cluster_id + 1}"
             else:
                 cluster.name = f"Cluster {cluster_id + 1}"
 
@@ -980,30 +980,6 @@ Return ONLY the research questions, one per line, without numbering or bullets.
         return "\n".join(lines)
 
     async def _generate_cluster_label(self, keywords: list[str]) -> str:
-        """Summarize cluster keywords into a 3-5 word topic label using LLM."""
-        filtered = [k for k in keywords[:5] if k and k.strip()]
-        if not self.llm or not filtered:
-            return " / ".join(filtered[:3]) if filtered else "Unnamed Cluster"
-
-        for attempt in range(2):  # 1 retry
-            try:
-                prompt = (
-                    "Summarize these academic concepts into a concise 3-5 word topic label:\n"
-                    f"{', '.join(filtered[:10])}\n\n"
-                    "Respond with ONLY the label, nothing else."
-                )
-                label = await asyncio.wait_for(
-                    self.llm.generate(prompt=prompt, max_tokens=20, temperature=0.0),
-                    timeout=15.0
-                )
-                result = label.strip().strip('"').strip("'")
-                if 3 <= len(result) <= 60:
-                    return result
-            except Exception as e:
-                if attempt == 0:
-                    logger.warning(f"LLM label attempt {attempt+1} failed: {e}, retrying...")
-                    await asyncio.sleep(1)
-                else:
-                    logger.error(f"LLM label generation failed after 2 attempts: {e}")
-
-        return " / ".join(filtered[:3]) if filtered else "Unnamed Cluster"
+        """Summarize cluster keywords into a 2-4 word topic label using LLM."""
+        from graph.cluster_labeler import generate_cluster_label, fallback_label
+        return await generate_cluster_label(self.llm, keywords)

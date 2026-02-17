@@ -365,6 +365,18 @@ export function KnowledgeGraph3D({
     graph3DRef.current?.focusOnCluster(clusterId);
   }, []);
 
+  // Handle cluster hover from TopicViewMode — stable reference via useCallback
+  const handleClusterHover = useCallback((clusterId: number | null) => {
+    if (clusterId !== null) {
+      const cluster = clusters.find((c) => c.cluster_id === clusterId);
+      if (cluster) {
+        setHighlightedNodes(cluster.concepts);
+      }
+    } else {
+      clearHighlights();
+    }
+  }, [clusters, setHighlightedNodes, clearHighlights]);
+
   // Handle slicing applied - refresh graph view
   const handleSlicingApplied = useCallback(() => {
     // The graph will automatically update through the store
@@ -477,16 +489,7 @@ export function KnowledgeGraph3D({
           gaps={gaps}
           edges={displayData.edges}
           onClusterClick={handleFocusCluster}
-          onClusterHover={(clusterId) => {
-            if (clusterId !== null) {
-              const cluster = clusters.find((c) => c.cluster_id === clusterId);
-              if (cluster) {
-                setHighlightedNodes(cluster.concepts);
-              }
-            } else {
-              clearHighlights();
-            }
-          }}
+          onClusterHover={handleClusterHover}
         />
       )}
       {viewMode === 'gaps' && (

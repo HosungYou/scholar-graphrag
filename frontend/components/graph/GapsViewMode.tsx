@@ -217,6 +217,9 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
     return Array.from(nodes);
   }, [selectedGap]);
 
+  const clusterANodes = useMemo(() => selectedGap?.cluster_a_concepts || [], [selectedGap]);
+  const clusterBNodes = useMemo(() => selectedGap?.cluster_b_concepts || [], [selectedGap]);
+
   // Compute highlighted edges based on selected gap
   const highlightedEdges = useMemo(() => {
     if (!selectedGap) return [];
@@ -285,6 +288,8 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
         highlightedNodes={highlightedNodes}
         highlightedEdges={highlightedEdges}
         selectedGap={selectedGap}
+        clusterANodes={clusterANodes}
+        clusterBNodes={clusterBNodes}
         onNodeClick={onNodeClick}
         onBackgroundClick={onBackgroundClick}
         onEdgeClick={onEdgeClick}
@@ -331,8 +336,12 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
                   <span className="text-xs text-amber-400 font-mono">
                     Gap {currentGapIndex + 1} of {gaps.length}
                   </span>
-                  <span className="text-sm text-white truncate" title={`${getClusterName(selectedGap.cluster_a_id)} ↔ ${getClusterName(selectedGap.cluster_b_id)}`}>
-                    {getClusterName(selectedGap.cluster_a_id)} ↔ {getClusterName(selectedGap.cluster_b_id)}
+                  <span className="text-sm text-white truncate flex items-center gap-1 justify-center" title={`${getClusterName(selectedGap.cluster_a_id)} ↔ ${getClusterName(selectedGap.cluster_b_id)}`}>
+                    <span className="w-2 h-2 rounded-full flex-shrink-0 inline-block" style={{ backgroundColor: '#E63946' }} />
+                    {getClusterName(selectedGap.cluster_a_id)}
+                    <span className="text-white/50">↔</span>
+                    <span className="w-2 h-2 rounded-full flex-shrink-0 inline-block" style={{ backgroundColor: '#2EC4B6' }} />
+                    {getClusterName(selectedGap.cluster_b_id)}
                   </span>
                 </div>
               ) : (
@@ -460,14 +469,31 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
       <div className="absolute bottom-4 right-[188px] bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg p-3">
         <div className="text-xs font-mono text-muted mb-2">Gaps View Legend</div>
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-500" />
-            <span className="text-xs text-white/70">Highlighted nodes</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-500 ring-2 ring-amber-500/50 ring-offset-1 ring-offset-[#161b22]" />
-            <span className="text-xs text-white/70">Bridge candidates</span>
-          </div>
+          {selectedGap ? (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#E63946' }} />
+                <span className="text-xs text-white/70 truncate" title={getClusterName(selectedGap.cluster_a_id)}>
+                  {getClusterName(selectedGap.cluster_a_id)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#2EC4B6' }} />
+                <span className="text-xs text-white/70 truncate" title={getClusterName(selectedGap.cluster_b_id)}>
+                  {getClusterName(selectedGap.cluster_b_id)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-amber-500" />
+                <span className="text-xs text-white/70">Bridge candidates</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-amber-500" />
+              <span className="text-xs text-white/70">Highlighted nodes</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
             <span className="text-xs text-white/70">Potential connections</span>

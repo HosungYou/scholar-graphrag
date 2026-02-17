@@ -32,8 +32,9 @@ class CommunityDetector:
     otherwise falls back to simple connected components via SQL.
     """
 
-    def __init__(self, db_connection=None):
+    def __init__(self, db_connection=None, llm_provider=None):
         self.db = db_connection
+        self.llm = llm_provider
         self._has_leiden = self._check_leiden_available()
 
     def _check_leiden_available(self) -> bool:
@@ -140,8 +141,9 @@ class CommunityDetector:
             entity_ids = [entities[idx]["id"] for idx in members]
             # Use most common entity type as label hint
             types = [entities[idx]["entity_type"] for idx in members]
-            top_names = [entities[idx]["name"] for idx in members[:3]]
-            label = f"{', '.join(top_names)}"
+            top_names = [entities[idx]["name"] for idx in members[:10]]
+            from graph.cluster_labeler import fallback_label
+            label = fallback_label(top_names)
 
             communities.append(Community(
                 community_id=comm_id,
@@ -237,11 +239,12 @@ class CommunityDetector:
             if len(members) < min_community_size:
                 continue
 
-            top_names = [entity_map[m]["name"] for m in members[:3]]
+            top_names = [entity_map[m]["name"] for m in members[:10]]
+            from graph.cluster_labeler import fallback_label
             communities.append(Community(
                 community_id=comm_id,
                 entity_ids=members,
-                label=f"{', '.join(top_names)}",
+                label=fallback_label(top_names),
                 size=len(members),
                 detection_method="connected_components",
                 level=0,
