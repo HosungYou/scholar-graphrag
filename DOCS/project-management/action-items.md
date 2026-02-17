@@ -11,10 +11,10 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 22 | 21 | 0 | 1 |
+| 🔴 High | 23 | 22 | 1 | 0 |
 | 🟡 Medium | 26 | 26 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **53** | **52** | **0** | **1** |
+| **Total** | **54** | **53** | **1** | **0** |
 
 ---
 
@@ -22,7 +22,7 @@
 
 ### INFRA-015: Render DATABASE_URL 프로젝트 ref 확인/수정 필요
 - **Source**: Migration 022-025 실행 중 발견 (2026-02-16)
-- **Status**: ⏳ Pending (수동 확인 필요)
+- **Status**: ✅ Completed
 - **Priority**: 🔴 High
 - **Description**: Supabase 프로젝트 ref가 2개 존재하며, 잘못된 ref 사용 시 "Tenant or user not found" 에러 발생
 - **발견 경위**:
@@ -40,8 +40,31 @@
   ```
 - **체크리스트**:
   - [x] 로컬 `backend/.env` 수정 완료
-  - [ ] Render Dashboard `DATABASE_URL` 확인 및 필요 시 수정
-  - [ ] Render 서비스 재시작 후 `/health` 정상 응답 확인
+  - [x] Render Dashboard `DATABASE_URL` 확인 완료
+  - [x] Render 서비스 재시작 후 `/health` 정상 응답 확인
+- **Completed**: 2026-02-16
+- **Note**: Render logs confirmed correct DATABASE_URL (aws-0-us-west-2)
+
+---
+
+## 🔴 High Priority (Immediate Action Required)
+
+### PERF-012: Render Memory Limit — 498 PDF Import
+- **Priority**: 🔴 High
+- **Status**: In Progress
+- **Date**: 2026-02-16
+- **Description**: Web Service scholarag-graph-docker exceeded memory limit during 498 PDF Zotero import. Root cause: all PDF bytes held in memory at endpoint level.
+- **Fix**: MEM-002 — Stream-to-disk pattern + batch GC every 3 papers + concept cache trimming every 25 papers
+- **Tasks**:
+  - [x] Stream-to-disk in import endpoint (coded)
+  - [x] Batch memory management in importer (coded)
+  - [x] Path validation fix for filenames with consecutive dots (coded)
+  - [ ] Deploy and verify 498 PDF import succeeds
+- **Details**:
+  - Stream-to-disk: PDF bytes streamed to temp files instead of buffered in memory
+  - Batch GC: `gc.collect()` called every 3 papers to free unreferenced objects
+  - Concept cache trimming: Every 25 papers, trim concept cache to 500 items
+  - Path validation: Handle filenames with `..` (consecutive dots) safely
 
 ---
 

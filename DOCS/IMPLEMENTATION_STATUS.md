@@ -96,8 +96,8 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M2-1 | Batch split import (50/batch) | v0.25/2-1 | `frontend/components/import/`, `backend/routers/import_.py` | `[PLANNED]` |
-| M2-2 | Import stability (skip-on-fail, GC, resume) | v0.25/2-2 | `backend/importers/pdf_importer.py`, `backend/importers/zotero_rdf_importer.py` | `[PLANNED]` |
+| M2-1 | Batch split import (50/batch) + Stream-to-disk (MEM-002) | v0.25/2-1 | `frontend/components/import/`, `backend/routers/import_.py` | `[CODED]` |
+| M2-2 | Import stability (skip-on-fail exists, GC every 3 papers) | v0.25/2-2 | `backend/importers/pdf_importer.py`, `backend/importers/zotero_rdf_importer.py` | `[CODED]` |
 | M2-3 | Full 498 PDF import verification | v0.25/2-3 | N/A (operational) | `[PLANNED]` |
 
 ---
@@ -140,8 +140,8 @@
 
 | Status | Count |
 |--------|-------|
-| `[PLANNED]` | 8 |
-| `[CODED]` | 1 |
+| `[PLANNED]` | 6 |
+| `[CODED]` | 3 |
 | `[DEPLOYED]` | 21 |
 | `[VERIFIED]` | 19 |
 | `[DEFERRED]` | 1 |
@@ -157,3 +157,4 @@
 | 2026-02-16 | M0 (8 tasks), M3-4/5, M4 (4 components), M5-1/2 all coded. 16/16 tasks completed. | Claude Code v0.25 |
 | 2026-02-16 | v0.25.0 deployed to production (render + origin). 13 items [CODED]→[DEPLOYED]. GitHub Release + tag created. | Claude Code v0.25 |
 | 2026-02-16 | Migrations 022-025 applied via psql. 13 items [CODED]→[VERIFIED], 2 items [PLANNED]→[VERIFIED]. All schema verified. | Claude Code v0.25 |
+| 2026-02-16 | M2-1/M2-2 coded: stream-to-disk MEM-002, batch GC every 3 papers, path validation fix for filenames with consecutive dots. Memory limit fix for 498 PDF import. | Claude Code v0.25 |

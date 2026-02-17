@@ -1056,8 +1056,8 @@ class ZoteroRDFImporter:
                 self.progress.errors.append(error_msg)
                 results["errors"].append(error_msg)
 
-            # MEM-001: Periodic memory cleanup every 5 papers
-            if (i + 1) % 5 == 0:
+            # MEM-002: Aggressive memory cleanup every 3 papers
+            if (i + 1) % 3 == 0:
                 # Clear entity extractor cache
                 self.entity_extractor.clear_cache()
 
@@ -1067,7 +1067,18 @@ class ZoteroRDFImporter:
 
                 # Force garbage collection
                 gc.collect()
-                logger.info(f"MEM-001: Memory cleanup after paper {i+1}/{len(items)}")
+                logger.info(f"MEM-002: Memory cleanup after paper {i+1}/{len(items)}")
+
+            # MEM-002: Every 25 papers, do aggressive cache trimming
+            if (i + 1) % 25 == 0:
+                # Trim paper_entities for already-built co-occurrence pairs
+                # Keep only the last 25 papers' entity tracking
+                if len(self._paper_entities) > 50:
+                    old_keys = list(self._paper_entities.keys())[:-25]
+                    for key in old_keys:
+                        del self._paper_entities[key]
+                    gc.collect()
+                    logger.info(f"MEM-002: Trimmed paper_entities cache, kept last 25 of {len(self._paper_entities) + len(old_keys)}")
 
         # Create embeddings (optional - may fail if Cohere API unavailable)
         embeddings_created = 0
@@ -1652,7 +1663,7 @@ class ZoteroRDFImporter:
             # This maintains Zotero's folder structure: files/<item_key>/paper.pdf
             for filename, content in files:
                 # Security: Validate path (no absolute paths or path traversal)
-                if not filename or filename.startswith("/") or ".." in filename:
+                if not filename or filename.startswith("/") or ("../" in filename) or ("..\\" in filename) or filename.startswith(".."):
                     logger.warning(f"Rejected unsafe path: {filename}")
                     continue
 

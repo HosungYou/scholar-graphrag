@@ -1657,7 +1657,7 @@ async def validate_zotero_folder(
 
             # Security: Validate path (no absolute paths or path traversal)
             filename = file.filename or ""
-            if filename.startswith("/") or ".." in filename:
+            if filename.startswith("/") or ("../" in filename) or ("..\\" in filename) or filename.startswith(".."):
                 logger.warning(f"Rejected unsafe path: {filename}")
                 continue
 
@@ -1745,32 +1745,55 @@ async def import_zotero_folder(
             detail="RDF file required. Please export from Zotero in RDF format."
         )
 
-    # Read all file contents
+    # Stream files to temp dir to avoid holding all PDFs in memory (MEM-002)
+    import tempfile
+    temp_dir = tempfile.mkdtemp(prefix="zotero_import_")
     MAX_TOTAL_SIZE = 500 * 1024 * 1024  # 500MB total
-    uploaded_files = []
+    pdf_count = 0
     total_size = 0
 
     for file in files:
         content = await file.read()
         total_size += len(content)
         if total_size > MAX_TOTAL_SIZE:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
             raise HTTPException(
                 status_code=400,
                 detail=f"Total file size exceeds {MAX_TOTAL_SIZE // (1024*1024)}MB limit."
             )
-        uploaded_files.append((file.filename, content))
+
+        filename = file.filename or ""
+        # Security: validate path - check for path traversal (../ or ..\) not just consecutive dots
+        if not filename or filename.startswith("/") or ("../" in filename) or ("..\\" in filename) or filename.startswith(".."):
+            logger.warning(f"Rejected unsafe path: {filename}")
+            continue
+
+        target_path = Path(temp_dir) / filename
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, 'wb') as f:
+            f.write(content)
+
+        if filename.lower().endswith('.pdf'):
+            pdf_count += 1
+
+        # Free memory immediately after writing to disk (MEM-002)
+        del content
 
     # Count items (basic RDF parsing to get count)
-    rdf_content = next((c for f, c in uploaded_files if f and f.lower().endswith('.rdf')), None)
+    rdf_path = next((Path(temp_dir) / f for f in os.listdir(temp_dir) if f.lower().endswith('.rdf')), None)
     items_count = 0
-    if rdf_content:
+    if rdf_path:
         try:
             import xml.etree.ElementTree as ET
+            with open(rdf_path, 'rb') as f:
+                rdf_content = f.read()
             root = ET.fromstring(rdf_content)
             # Count bibliographic items
             for item_type in ['Article', 'Book', 'BookSection', 'ConferencePaper',
                              'JournalArticle', 'Report', 'Thesis', 'Document']:
                 items_count += len(root.findall(f'.//{{{NAMESPACES_FOR_COUNT["bib"]}}}{item_type}', NAMESPACES_FOR_COUNT))
+            del rdf_content  # Free memory
         except:
             pass
 
@@ -1779,7 +1802,7 @@ async def import_zotero_folder(
     job = await job_store.create_job(
         job_type="zotero_import",
         metadata={
-            "file_count": len(uploaded_files),
+            "file_count": len(os.listdir(temp_dir)),
             "total_size": total_size,
             "items_count": items_count,
             "project_name": project_name,
@@ -1802,9 +1825,9 @@ async def import_zotero_folder(
 
     # Start background import task
     background_tasks.add_task(
-        _run_zotero_import,
+        _run_zotero_import_from_dir,
         job_id=job.id,
-        uploaded_files=uploaded_files,
+        temp_dir=temp_dir,
         project_name=project_name,
         research_question=research_question,
         extract_concepts=extract_concepts,
@@ -1813,7 +1836,7 @@ async def import_zotero_folder(
     return ZoteroImportResponse(
         job_id=job.id,
         status=ImportStatus.PENDING,
-        message=f"Zotero import starting: {items_count} items, {len([f for f, _ in uploaded_files if f.endswith('.pdf')])} PDFs",
+        message=f"Zotero import starting: {items_count} items, {pdf_count} PDFs",
         items_count=items_count,
     )
 
@@ -2061,6 +2084,243 @@ async def _run_zotero_import(
             message=f"Import failed: {sanitized_error}",
             error=sanitized_error,
         )
+
+
+async def _run_zotero_import_from_dir(
+    job_id: str,
+    temp_dir: str,
+    project_name: Optional[str],
+    research_question: Optional[str],
+    extract_concepts: bool,
+    resume_checkpoint: Optional[dict] = None,
+):
+    """Background task to run Zotero import from temp directory.
+
+    MEM-002: This function takes temp_dir path instead of uploaded_files list,
+    allowing memory to be freed after files are written to disk.
+    """
+    from importers.zotero_rdf_importer import ZoteroRDFImporter
+
+    # BUG-028 Extension: Extract resume info from checkpoint
+    skip_paper_ids = set()
+    existing_project_id = None
+    if resume_checkpoint:
+        skip_paper_ids = set(resume_checkpoint.get("processed_paper_ids", []))
+        existing_project_id = resume_checkpoint.get("project_id")
+        logger.info(f"[Zotero Import {job_id}] Resuming: skipping {len(skip_paper_ids)} already processed papers")
+
+    logger.info(f"[Zotero Import {job_id}] Starting import from temp_dir: {temp_dir}")
+
+    # Get job store for persistent updates
+    job_store = await get_job_store()
+    progress_updater = _CoalescedJobProgressUpdater(
+        job_store=job_store,
+        job_id=job_id,
+        log_prefix="Zotero Import",
+    )
+    checkpoint_saver = _QueuedCheckpointSaver(job_store=job_store, job_id=job_id)
+
+    # BUG-028 Extension: Track processed papers for checkpoint
+    processed_paper_ids = list(skip_paper_ids)  # Start with already processed
+    current_project_id = existing_project_id
+
+    def progress_callback(progress):
+        """Update job status from importer progress."""
+        nonlocal current_project_id
+
+        status_map = {
+            "validating": ImportStatus.VALIDATING,
+            "parsing": ImportStatus.EXTRACTING,
+            "scanning": ImportStatus.EXTRACTING,
+            "creating_project": ImportStatus.PROCESSING,
+            "importing": ImportStatus.PROCESSING,
+            "building_relationships": ImportStatus.BUILDING_GRAPH,
+            "embeddings": ImportStatus.BUILDING_GRAPH,
+            "complete": ImportStatus.COMPLETED,
+        }
+        import_status = status_map.get(progress.status, ImportStatus.PROCESSING)
+
+        # Update legacy in-memory store
+        _import_jobs[job_id]["status"] = import_status
+        _import_jobs[job_id]["progress"] = progress.progress
+        _import_jobs[job_id]["message"] = progress.message
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # BUG-028 Extension: Save checkpoint when a paper is processed
+        if (hasattr(progress, 'current_paper_id') and
+            progress.current_paper_id and
+            progress.current_paper_id not in processed_paper_ids):
+
+            processed_paper_ids.append(progress.current_paper_id)
+
+            checkpoint_saver.enqueue(
+                paper_id=progress.current_paper_id,
+                index=(
+                    progress.current_paper_index
+                    if hasattr(progress, "current_paper_index")
+                    else len(processed_paper_ids) - 1
+                ),
+                total_papers=progress.papers_total,
+                project_id=current_project_id or "",
+                stage=progress.status,
+            )
+
+        # BUG-027/PERF: Coalesced JobStore updates
+        progress_updater.enqueue(progress=progress.progress, message=progress.message)
+
+        logger.info(f"[Zotero Import {job_id}] {progress.status}: {progress.progress:.0%} - {progress.message}")
+
+    try:
+        # Mark job as running in JobStore
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.RUNNING,
+            progress=0.0,
+            message="Starting Zotero import...",
+        )
+
+        # Create importer with database connection and GraphStore
+        graph_store = GraphStore(db=db)
+
+        # Get actual LLM provider object (not string) for concept extraction
+        llm_provider = get_llm_provider() if extract_concepts else None
+        if extract_concepts and llm_provider is None:
+            logger.warning("Concept extraction requested but LLM provider not configured, using fallback extraction")
+
+        importer = ZoteroRDFImporter(
+            llm_provider=llm_provider,
+            llm_model=settings.default_llm_model,
+            db_connection=db,
+            graph_store=graph_store,
+            progress_callback=progress_callback,
+        )
+
+        # Run the import from folder (MEM-002)
+        result = await importer.import_folder(
+            folder_path=temp_dir,
+            project_name=project_name,
+            research_question=research_question,
+            skip_paper_ids=skip_paper_ids if skip_paper_ids else None,
+            existing_project_id=existing_project_id,
+        )
+
+        # BUG-028 Extension: Update current_project_id for checkpoint
+        if result.get("project_id"):
+            current_project_id = str(result.get("project_id"))
+
+            # BUG-035 FIX: Update checkpoint with project_id immediately
+            try:
+                existing_job = await job_store.get_job(job_id)
+                if existing_job and existing_job.metadata.get("checkpoint"):
+                    checkpoint = existing_job.metadata["checkpoint"]
+                    checkpoint["project_id"] = current_project_id
+                    await job_store.update_job(
+                        job_id=job_id,
+                        metadata={"checkpoint": checkpoint},
+                    )
+                    logger.debug(f"[Zotero Import {job_id}] Updated checkpoint with project_id: {current_project_id}")
+            except Exception as e:
+                logger.warning(f"[Zotero Import {job_id}] Failed to update checkpoint with project_id: {e}")
+
+        if result.get("success"):
+            concepts_count = result.get("concepts_extracted", 0)
+            relationships_count = result.get("relationships_created", 0)
+            reliability_summary = _build_reliability_summary(result)
+
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
+
+            _import_jobs[job_id]["status"] = ImportStatus.COMPLETED
+            _import_jobs[job_id]["progress"] = 1.0
+            _import_jobs[job_id]["message"] = f"Zotero import completed: {result.get('papers_imported', 0)} papers"
+            _import_jobs[job_id]["project_id"] = result.get("project_id")
+            _import_jobs[job_id]["stats"] = {
+                "papers_imported": result.get("papers_imported", 0),
+                "pdfs_processed": result.get("pdfs_processed", 0),
+                "concepts_extracted": concepts_count,
+                "relationships_created": relationships_count,
+                "raw_entities_extracted": result.get("raw_entities_extracted", 0),
+                "entities_after_resolution": result.get("entities_after_resolution", 0),
+                "entities_stored_unique": result.get("entities_stored_unique", 0),
+                "merges_applied": result.get("merges_applied", 0),
+                "canonicalization_rate": result.get("canonicalization_rate", 0.0),
+                # Frontend-compatible field names
+                "nodes_created": concepts_count,
+                "edges_created": relationships_count,
+            }
+            _import_jobs[job_id]["reliability_summary"] = reliability_summary
+            _import_jobs[job_id]["result"] = {
+                "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                "nodes_created": concepts_count,
+                "edges_created": relationships_count,
+                "reliability_summary": reliability_summary,
+            }
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            # Update JobStore with completion status and result
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.COMPLETED,
+                progress=1.0,
+                message=f"Zotero import completed: {result.get('papers_imported', 0)} papers",
+                result={
+                    "project_id": str(result.get("project_id")) if result.get("project_id") else None,
+                    "stats": _import_jobs[job_id]["stats"],
+                    "nodes_created": concepts_count,
+                    "edges_created": relationships_count,
+                    "reliability_summary": reliability_summary,
+                },
+            )
+
+            logger.info(f"[Zotero Import {job_id}] Completed: {_import_jobs[job_id]['stats']}")
+        else:
+            errors = result.get("errors", ["Unknown error"])
+            error_msg = "; ".join(errors[:3])  # Limit error message length
+            sanitized_error = _sanitize_error_message(error_msg)
+
+            await checkpoint_saver.flush_and_close()
+            await progress_updater.flush_and_close()
+
+            _import_jobs[job_id]["status"] = ImportStatus.FAILED
+            _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+            _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+            _import_jobs[job_id]["updated_at"] = datetime.now()
+
+            # Update JobStore with failure
+            await job_store.update_job(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                message=f"Import failed: {sanitized_error}",
+                error=sanitized_error,
+            )
+
+            logger.error(f"[Zotero Import {job_id}] Failed: {sanitized_error}")
+
+    except Exception as e:
+        logger.exception(f"[Zotero Import {job_id}] Exception during import")
+        sanitized_error = _sanitize_error_message(str(e))
+
+        await checkpoint_saver.flush_and_close()
+        await progress_updater.flush_and_close()
+
+        _import_jobs[job_id]["status"] = ImportStatus.FAILED
+        _import_jobs[job_id]["message"] = f"Import failed: {sanitized_error}"
+        _import_jobs[job_id]["reliability_summary"] = _build_reliability_summary({})
+        _import_jobs[job_id]["updated_at"] = datetime.now()
+
+        # Update JobStore with exception
+        await job_store.update_job(
+            job_id=job_id,
+            status=JobStatus.FAILED,
+            message=f"Import failed: {sanitized_error}",
+            error=sanitized_error,
+        )
+
+    finally:
+        # MEM-002: Cleanup temp directory
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        logger.info(f"[Zotero Import {job_id}] Cleaned up temp_dir: {temp_dir}")
 
 
 # =============================================================================
