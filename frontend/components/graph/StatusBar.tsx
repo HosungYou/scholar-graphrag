@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 // Import the centralized API_URL which has enforceHttps applied
 import { API_URL } from '@/lib/api';
+import { getSession } from '@/lib/supabase';
 
 /* ============================================================
    StatusBar - VS Design Diverge Style
@@ -52,7 +53,14 @@ export function StatusBar({ projectId }: StatusBarProps) {
   const fetchStatus = useCallback(async () => {
     try {
       setIsLoading(true);
-      const response = await fetch(`${API_URL}/api/system/status?project_id=${projectId}`);
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      try {
+        const session = await getSession();
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+      } catch { /* proceed without auth */ }
+      const response = await fetch(`${API_URL}/api/system/status?project_id=${projectId}`, { headers });
       if (!response.ok) throw new Error('Failed to fetch status');
       const data = await response.json();
       setStatus(data);
