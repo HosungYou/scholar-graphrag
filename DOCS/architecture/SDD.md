@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.24.0
-**Last Updated**: 2026-02-16
+**Version**: 0.29.0
+**Last Updated**: 2026-02-17
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 1.9.0 |
-| **Project Version** | 0.24.0 |
+| **Document Version** | 2.0.0 |
+| **Project Version** | 0.29.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -81,6 +81,8 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **Topic View SVG Export** | Download Topic View as SVG file with inlined styles | ✅ v0.17.0 |
 | **Deterministic Cluster Colors** | Hash-based color assignment stable across refreshes | ✅ v0.17.0 |
 | **Chatbot Full RAG Pipeline** | All queries flow through 6-agent pipeline, no early-return | ✅ v0.17.0 |
+| **Auth Enforcement** | All endpoints return 401 when `current_user is None` — no unauthenticated data leakage | ✅ v0.29.0 |
+| **Find Papers UUID Filter** | Bridge candidate UUID regex filter with cluster name fallback | ✅ v0.29.0 |
 
 ### 1.4 Success Metrics
 
@@ -1279,6 +1281,15 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### v0.29.0 — Auth Enforcement, Settings Fix, Graph Stability & Find Papers (2026-02-17)
+- **Security (SEC-005)**: All endpoints now return HTTP 401 when `current_user is None` — prevents unauthenticated data access across `verify_project_access()`, all project CRUD, and `search_nodes`
+- **Settings (BUG-045)**: `db.fetch_one()` → `db.fetchrow()` in `settings.py` (3x) and `user_provider.py` (1x) — fixes API key save/load and per-user LLM provider selection
+- **Graph3D (BUG-046)**: Removed 3 `computeLineDistances()` calls on empty `BufferGeometry` in `linkThreeObject` callbacks (SAME_AS, BRIDGES_GAP, ghost edges) — fixes console TypeError
+- **Find Papers (BUG-047)**: `_build_gap_recommendation_query()` UUID regex filter + gap INSERT resolves bridge concept UUIDs to names — fixes intermittent 0-result searches
+- **Auth Exception Handling**: `list_projects` `except HTTPException: raise` added before generic catch; `delete_project` auth check moved before DB query (fail-fast pattern)
+- **Config**: `extra = "ignore"` in Settings Config class to handle unknown env vars (e.g., AZURE_OPENAI_*)
+- **Tests**: 23 TDD tests in `test_v029_fixes.py` — UUID regex (5), gap query builder (9), settings fetchrow (3), project auth enforcement (5), graph auth enforcement (1)
 
 ### v0.24.0 — P0-P2 Comprehensive Fix (2026-02-16)
 - **Database**: Migration number conflicts resolved (004B→022, 005B→023, 006B→024); new migration 025 adds REPORTS_FINDING, ADDRESSES_PROBLEM, PROPOSES_INNOVATION relationship types
