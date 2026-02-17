@@ -86,7 +86,7 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M1-1 | Delete stale test projects | v0.25/1-1 | Supabase SQL | `[PLANNED]` |
+| M1-1 | Delete stale test projects | v0.25/1-1 | Supabase SQL | `[VERIFIED]` |
 | M1-2 | Run migrations 022-025 | v0.25/1-2 | `scripts/run_migrations.py` | `[VERIFIED]` |
 | M1-3 | Entity dedup verification | v0.25/1-3 | SQL verification queries | `[VERIFIED]` |
 
@@ -140,10 +140,10 @@
 
 | Status | Count |
 |--------|-------|
-| `[PLANNED]` | 2 |
+| `[PLANNED]` | 1 |
 | `[CODED]` | 0 |
 | `[DEPLOYED]` | 23 |
-| `[VERIFIED]` | 24 |
+| `[VERIFIED]` | 25 |
 | `[DEFERRED]` | 1 |
 | **Total** | **50** |
 
