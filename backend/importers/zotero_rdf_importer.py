@@ -618,19 +618,32 @@ class ZoteroRDFImporter:
             logger.warning(f"Entity extraction failed for '{item.title[:40]}...': {e}")
             return []
 
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extract text from PDF using PyMuPDF."""
+    def extract_text_from_pdf(self, pdf_path: str, max_pages: int = 50) -> str:
+        """Extract text from PDF using PyMuPDF.
+
+        MEM-002: Processes pages individually and caps at max_pages
+        to limit memory usage for very long PDFs.
+        """
         try:
             doc = fitz.open(pdf_path)
             text_parts = []
+            page_count = min(len(doc), max_pages)
 
-            for page in doc:
+            for i in range(page_count):
+                page = doc.load_page(i)
                 text = page.get_text()
                 if text.strip():
                     text_parts.append(text)
+                # MEM-002: Release page resources immediately
+                page = None
 
             doc.close()
-            return "\n\n".join(text_parts)
+
+            full_text = "\n\n".join(text_parts)
+            # MEM-002: Free intermediate list
+            del text_parts
+
+            return full_text
         except Exception as e:
             logger.error(f"Error extracting text from PDF {pdf_path}: {e}")
             return ""
@@ -1036,6 +1049,9 @@ class ZoteroRDFImporter:
                 # Phase 7A: Link entities to source chunks for provenance
                 if paper_id and results.get("chunks_created", 0) > 0 and _entity_ids_and_names:
                     await self._link_entities_to_chunks(project_id, paper_id, _entity_ids_and_names)
+
+                # MEM-002: Free PDF text after extraction and chunking complete
+                del pdf_text
 
                 # PERF-011: Log paper processing completion with timing
                 paper_elapsed = time.time() - paper_start_time
