@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-17
-> **Version**: 6.2.0 (v0.28.0 Topic View Stability & Gap UX)
+> **Version**: 6.3.0 (v0.29.0 Auth Enforcement, Settings Fix, Graph Stability & Find Papers)
 
 ## Project Overview
 
@@ -724,6 +724,25 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.29.0 Release Notes
+
+> **Version**: 0.29.0 | **Date**: 2026-02-17
+> **Full Notes**: See `RELEASE_NOTES_v0.29.0.md`
+
+### Auth Enforcement, Settings Fix, Graph Stability & Find Papers
+- **SEC-005**: Auth enforcement — `current_user is None` → HTTP 401 in `verify_project_access`, all project CRUD, `search_nodes`. Prevents unauthenticated data access
+- **BUG-045**: Settings `fetch_one()` → `fetchrow()` in 4 locations. Fixes API key save/load and per-user LLM provider selection
+- **BUG-046**: Graph3D `computeLineDistances()` removed from 3 empty-geometry calls (SAME_AS, BRIDGES_GAP, ghost). Fixes console TypeError
+- **BUG-047**: Find Papers UUID filter — `_build_gap_recommendation_query()` regex filters UUID patterns from bridge_candidates; gap INSERT resolves UUIDs to concept names
+
+### Technical
+- 5 files changed (4 backend + 1 frontend), +74/-68 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no new endpoints
+- Breaking: Unauthenticated requests that previously leaked data now correctly return 401
 
 ---
 
