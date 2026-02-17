@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-17
-> **Version**: 6.4.0 (v0.29.1 asyncpg JSONB Codec Fix — Settings & User Preferences)
+> **Version**: 6.5.0 (v0.30.0 Quality Evaluation + Research Report + Temporal Dashboard + Paper Fit)
 
 ## Project Overview
 
@@ -575,6 +575,13 @@ GET  /api/evaluation/report                         # Gap detection evaluation r
 GET  /api/system/query-metrics                      # Query performance + GraphDB recommendation
 POST /api/graph/{project_id}/cross-paper-links      # Cross-paper entity linking
 GET  /api/graph/gaps/{project_id}/repro/{gap_id}    # Gap reproduction report
+
+# Quality Evaluation (v0.30.0)
+POST /api/evaluation/retrieval/{project_id}         # Retrieval quality evaluation (Precision@K, Recall@K, MRR, Hit Rate)
+GET  /api/graph/summary/{project_id}                # Aggregated research summary (overview, metrics, entities, gaps)
+GET  /api/graph/summary/{project_id}/export         # Export summary as Markdown or HTML (?format=markdown|html)
+GET  /api/graph/temporal/{project_id}/trends        # Temporal trends: Emerging / Stable / Declining entities
+POST /api/graph/{project_id}/paper-fit              # Paper fit analysis (DOI or title → similarity, community, gaps)
 ```
 
 > **Full API Documentation**: See `DOCS/api/infranodus-api.md` for detailed schemas.
@@ -590,13 +597,16 @@ curl https://scholarag-graph-docker.onrender.com/health
 
 ## View Modes (InfraNodus Style)
 
-ScholaRAG_Graph provides three interactive visualization modes inspired by InfraNodus:
+ScholaRAG_Graph provides six interactive visualization modes inspired by InfraNodus:
 
-| Mode | Component | Technology | Icon | Purpose |
-|------|-----------|------------|------|---------|
-| **3D** | `Graph3D.tsx` | Three.js + Force Graph | Box (Teal) | Full knowledge graph exploration with physics simulation |
-| **Topic** | `TopicViewMode.tsx` | D3.js force layout | Grid2X2 (Purple) | Topic clustering and community detection |
-| **Gaps** | `GapsViewMode.tsx` | Three.js + Ghost Edges | AlertTriangle (Amber) | Research gap identification with bridge hypotheses |
+| Mode | Component | Technology | Icon | Theme | Purpose |
+|------|-----------|------------|------|-------|---------|
+| **3D** | `Graph3D.tsx` | Three.js + Force Graph | Box | Teal | Full knowledge graph exploration with physics simulation |
+| **Topic** | `TopicViewMode.tsx` | D3.js force layout | Grid2X2 | Purple | Topic clustering and community detection |
+| **Gaps** | `GapsViewMode.tsx` | Three.js + Ghost Edges | AlertTriangle | Amber | Research gap identification with bridge hypotheses |
+| **Citations** | `CitationsViewMode.tsx` | Three.js | BookOpen | Blue | Citation network visualization |
+| **Temporal** | `TemporalViewMode.tsx` + `TemporalDashboard.tsx` | React | Clock | Orange | Entity lifecycle: Emerging / Stable / Declining (v0.30.0) |
+| **Summary** | `ResearchReport.tsx` | React | FileText | Emerald | Executive research report with Markdown/HTML export (v0.30.0) |
 
 ### View Mode Details
 
@@ -724,6 +734,40 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.30.0 Release Notes
+
+> **Version**: 0.30.0 | **Date**: 2026-02-17
+> **Full Notes**: See `RELEASE_NOTES_v0.30.0.md`
+
+### Quality Evaluation System + UI Cleanup (Phase 1)
+- **Retrieval eval**: `POST /api/evaluation/retrieval/{project_id}` — Precision@K, Recall@K, MRR, Hit Rate via auto-generated ground truth (`auto_ground_truth.py`, 3 query types)
+- **Cluster quality**: `GET /api/graph/metrics/{project_id}` now returns raw modularity + Korean interpretation badge (강함/보통/약함), silhouette score, avg cluster coherence, cluster coverage
+- **Entity extraction quality**: type diversity, paper coverage, avg entities/paper, cross-paper ratio, type distribution
+- **Toolbar cleanup**: 13 → 6 buttons (removed Bloom, Label, SAME_AS, Centrality, Cluster, LOD, ClusterCompare, MainTopics)
+- **UI defaults**: `max_nodes` 2000→500, labels default to all visible, weak edges (weight < 0.3) fade
+- **InsightHUD**: redesigned with modularity + interpretation badge + entity quality section
+
+### Executive Summary & Research Report (Phase 2)
+- `GET /api/graph/summary/{project_id}` — aggregated overview, quality metrics, top entities, communities, gaps, temporal info
+- `GET /api/graph/summary/{project_id}/export?format=markdown|html` — StreamingResponse export
+- `backend/graph/report_generator.py` — structured Markdown report (연구 지형 리포트)
+- `ResearchReport.tsx` — in-app report viewer with export button; accessible via 6th Summary tab (emerald)
+
+### Temporal Dashboard + Paper Fit Analysis (Phase 3)
+- `GET /api/graph/temporal/{project_id}/trends` — classifies entities: Emerging (first_seen >= max-2, 2+ papers), Stable (3+ papers), Declining (last_seen <= max-3)
+- `TemporalDashboard.tsx` — color-coded entity cards (emerald/blue/coral)
+- `POST /api/graph/{project_id}/paper-fit` — pgvector similarity matching, community mapping, gap connection detection; accepts DOI/title (S2 lookup)
+- `backend/graph/paper_fit_analyzer.py` — PaperFitAnalyzer with embedding generation, entity search, community mapping, text summary
+- `PaperFitPanel.tsx` — DOI/title input + similarity bars + gap connections (purple toolbar button)
+- **ViewMode**: extended to `'3d' | 'topic' | 'gaps' | 'citations' | 'temporal' | 'summary'`
+
+### Technical
+- 16 files changed (6 new + 10 modified), +3108/-230 lines
+- 0 TypeScript errors, 260 pytest passing
+- No DB migrations, no new env vars, no breaking changes
 
 ---
 
