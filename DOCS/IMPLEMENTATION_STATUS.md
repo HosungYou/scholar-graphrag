@@ -20,8 +20,8 @@
 
 | # | Feature | Plan Ref | Code Files | DB Migration | Deploy | Status |
 |---|---------|----------|------------|--------------|--------|--------|
-| 0-1 | UNIQUE index on entities | P0-1 | `022_entity_deduplication.sql` | Pending | N/A | `[CODED]` |
-| 0-2 | Duplicate merge script (canonical entity selection) | P0-1 | `022_entity_deduplication.sql` | Pending | N/A | `[CODED]` |
+| 0-1 | UNIQUE index on entities | P0-1 | `022_entity_deduplication.sql` | Applied | N/A | `[VERIFIED]` |
+| 0-2 | Duplicate merge script (canonical entity selection) | P0-1 | `022_entity_deduplication.sql` | Applied | N/A | `[VERIFIED]` |
 | 0-3 | Name-based upsert in entity_dao | P0-2 | `backend/graph/persistence/entity_dao.py` | N/A | Render | `[DEPLOYED]` |
 | 0-4 | Frequency-based node sizing (paper_count) | P0-3 | `frontend/components/graph/Graph3D.tsx:470` | N/A | Vercel | `[DEPLOYED]` |
 | 0-5 | paper_count API field | P0-4 | `backend/routers/graph.py` | N/A | Render | `[DEPLOYED]` |
@@ -32,10 +32,10 @@
 
 | # | Feature | Plan Ref | Code Files | DB Migration | Deploy | Status |
 |---|---------|----------|------------|--------------|--------|--------|
-| 1-1 | Result/Claim entity types | P1-1 | `023_lexical_graph_schema.sql` | Pending | N/A | `[CODED]` |
-| 1-2 | USED_IN/EVALUATED_ON/REPORTS relationship types | P1-2 | `023_lexical_graph_schema.sql` | Pending | N/A | `[CODED]` |
-| 1-3 | extraction_source column on entities | P1-3 | `023_lexical_graph_schema.sql` | Pending | N/A | `[CODED]` |
-| 1-4 | extraction_metadata JSONB column | P1-4 | `023_lexical_graph_schema.sql` | Pending | N/A | `[CODED]` |
+| 1-1 | Result/Claim entity types | P1-1 | `023_lexical_graph_schema.sql` | Applied | N/A | `[VERIFIED]` |
+| 1-2 | USED_IN/EVALUATED_ON/REPORTS relationship types | P1-2 | `023_lexical_graph_schema.sql` | Applied | N/A | `[VERIFIED]` |
+| 1-3 | extraction_source column on entities | P1-3 | `023_lexical_graph_schema.sql` | Applied | N/A | `[VERIFIED]` |
+| 1-4 | extraction_metadata JSONB column | P1-4 | `023_lexical_graph_schema.sql` | Applied | N/A | `[VERIFIED]` |
 | 1-5 | Full-text extraction pipeline | P1-5 | `backend/importers/pdf_importer.py` | N/A | Render | `[DEPLOYED]` |
 | 1-6 | Feature flag `lexical_graph_v1` | P1-6 | `backend/config.py:92` | N/A | Render | `[DEPLOYED]` |
 
@@ -46,10 +46,10 @@
 | # | Feature | Plan Ref | Code Files | DB Migration | Deploy | Status |
 |---|---------|----------|------------|--------------|--------|--------|
 | 2-1 | Leiden community detection | P2-1 | `backend/graph/community_detector.py` | N/A | Render | `[CODED]` |
-| 2-2 | detection_method column on concept_clusters | P2-2 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
-| 2-3 | community_level hierarchical column | P2-3 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
-| 2-4 | Cluster summary (LLM-generated) | P2-4 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
-| 2-5 | query_path_cache table | P2-5 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
+| 2-2 | detection_method column on concept_clusters | P2-2 | `024_community_trace.sql` | Applied | N/A | `[VERIFIED]` |
+| 2-3 | community_level hierarchical column | P2-3 | `024_community_trace.sql` | Applied | N/A | `[VERIFIED]` |
+| 2-4 | Cluster summary (LLM-generated) | P2-4 | `024_community_trace.sql` | Applied | N/A | `[VERIFIED]` |
+| 2-5 | query_path_cache table | P2-5 | `024_community_trace.sql` | Applied | N/A | `[VERIFIED]` |
 | 2-6 | Feature flag `hybrid_trace_v1` | P2-6 | `backend/config.py:93` | N/A | Render | `[DEPLOYED]` |
 | 2-7 | leidenalg/python-igraph packages | P2-7 | `backend/requirements-base.txt` | N/A | Render | `[DEPLOYED]` |
 
@@ -59,9 +59,9 @@
 
 | # | Feature | Plan Ref | Code Files | DB Migration | Deploy | Status |
 |---|---------|----------|------------|--------------|--------|--------|
-| 3-1 | REPORTS_FINDING relationship type | P3-1 | `025_p0_comprehensive_fix.sql` | Pending | N/A | `[CODED]` |
-| 3-2 | ADDRESSES_PROBLEM relationship type | P3-2 | `025_p0_comprehensive_fix.sql` | Pending | N/A | `[CODED]` |
-| 3-3 | PROPOSES_INNOVATION relationship type | P3-3 | `025_p0_comprehensive_fix.sql` | Pending | N/A | `[CODED]` |
+| 3-1 | REPORTS_FINDING relationship type | P3-1 | `025_p0_comprehensive_fix.sql` | Applied | N/A | `[VERIFIED]` |
+| 3-2 | ADDRESSES_PROBLEM relationship type | P3-2 | `025_p0_comprehensive_fix.sql` | Applied | N/A | `[VERIFIED]` |
+| 3-3 | PROPOSES_INNOVATION relationship type | P3-3 | `025_p0_comprehensive_fix.sql` | Applied | N/A | `[VERIFIED]` |
 | 3-4 | Cluster label keyword fallback | P3-4 | `backend/graph/gap_detector.py:982-1009` | N/A | Render | `[DEPLOYED]` |
 | 3-5 | Edge visibility controls | P3-5 | `frontend/components/graph/Graph3D.tsx` | N/A | Vercel | `[DEPLOYED]` |
 
@@ -87,8 +87,8 @@
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
 | M1-1 | Delete stale test projects | v0.25/1-1 | Supabase SQL | `[PLANNED]` |
-| M1-2 | Run migrations 022-025 | v0.25/1-2 | `scripts/run_migrations.py` | `[PLANNED]` |
-| M1-3 | Entity dedup verification | v0.25/1-3 | SQL verification queries | `[PLANNED]` |
+| M1-2 | Run migrations 022-025 | v0.25/1-2 | `scripts/run_migrations.py` | `[VERIFIED]` |
+| M1-3 | Entity dedup verification | v0.25/1-3 | SQL verification queries | `[VERIFIED]` |
 
 ---
 
@@ -140,10 +140,10 @@
 
 | Status | Count |
 |--------|-------|
-| `[PLANNED]` | 10 |
-| `[CODED]` | 14 |
+| `[PLANNED]` | 8 |
+| `[CODED]` | 1 |
 | `[DEPLOYED]` | 21 |
-| `[VERIFIED]` | 4 |
+| `[VERIFIED]` | 19 |
 | `[DEFERRED]` | 1 |
 | **Total** | **50** |
 
@@ -156,3 +156,4 @@
 | 2026-02-16 | Initial matrix created covering v0.20.1 through v0.25.0 | Claude Code v0.25 |
 | 2026-02-16 | M0 (8 tasks), M3-4/5, M4 (4 components), M5-1/2 all coded. 16/16 tasks completed. | Claude Code v0.25 |
 | 2026-02-16 | v0.25.0 deployed to production (render + origin). 13 items [CODED]→[DEPLOYED]. GitHub Release + tag created. | Claude Code v0.25 |
+| 2026-02-16 | Migrations 022-025 applied via psql. 13 items [CODED]→[VERIFIED], 2 items [PLANNED]→[VERIFIED]. All schema verified. | Claude Code v0.25 |
