@@ -1,7 +1,7 @@
 # Implementation Status Matrix
 
 > **Last Updated**: 2026-02-16
-> **Version**: v0.25.0 (in progress)
+> **Version**: v0.25.0 (deployed)
 > **Tracking**: All features from v0.20.0 through v0.25.0
 
 ## Status Labels
@@ -51,7 +51,7 @@
 | 2-4 | Cluster summary (LLM-generated) | P2-4 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
 | 2-5 | query_path_cache table | P2-5 | `024_community_trace.sql` | Pending | N/A | `[CODED]` |
 | 2-6 | Feature flag `hybrid_trace_v1` | P2-6 | `backend/config.py:93` | N/A | Render | `[DEPLOYED]` |
-| 2-7 | leidenalg/python-igraph packages | P2-7 | `backend/requirements-base.txt` | N/A | Pending | `[CODED]` |
+| 2-7 | leidenalg/python-igraph packages | P2-7 | `backend/requirements-base.txt` | N/A | Render | `[DEPLOYED]` |
 
 ---
 
@@ -73,11 +73,11 @@
 |---|---------|----------|------------|--------|
 | M0-1 | CORS configuration fix | v0.25/0-1 | `backend/config.py`, `backend/main.py` | `[VERIFIED]` |
 | M0-2 | 401 Unauthorized fix | v0.25/0-2 | `backend/auth/middleware.py`, `backend/auth/supabase_client.py` | `[VERIFIED]` |
-| M0-3 | First-load "NO GRAPH DATA" race condition | v0.25/0-3 | `frontend/app/projects/[id]/page.tsx` | `[CODED]` |
-| M0-4 | Migration script enhancement (verify/range) | v0.25/0-4 | `scripts/run_migrations.py` | `[CODED]` |
-| M0-5 | 502 Bad Gateway (background task pattern) | v0.25/0-5 | `backend/routers/import_.py` | `[CODED]` |
+| M0-3 | First-load "NO GRAPH DATA" race condition | v0.25/0-3 | `frontend/app/projects/[id]/page.tsx` | `[DEPLOYED]` |
+| M0-4 | Migration script enhancement (verify/range) | v0.25/0-4 | `scripts/run_migrations.py` | `[DEPLOYED]` |
+| M0-5 | 502 Bad Gateway (background task pattern) | v0.25/0-5 | `backend/routers/import_.py` | `[DEPLOYED]` |
 | M0-6 | Cluster label regeneration | v0.25/0-6 | `backend/graph/gap_detector.py` | `[VERIFIED]` |
-| M0-7 | Leiden packages in Docker | v0.25/0-7 | `backend/requirements-base.txt`, `Dockerfile` | `[CODED]` |
+| M0-7 | Leiden packages in Docker | v0.25/0-7 | `backend/requirements-base.txt`, `Dockerfile` | `[DEPLOYED]` |
 | M0-8 | THREE.js warning resolution | v0.25/0-8 | `frontend/package.json` | `[VERIFIED]` |
 
 ---
@@ -109,8 +109,8 @@
 | M3-1 | Entity dedup effectiveness check | v0.25/3-1 | SQL verification | `[PLANNED]` |
 | M3-2 | Full-text extraction verification | v0.25/3-2 | `backend/config.py:92` (flag=True) | `[PLANNED]` |
 | M3-3 | Reranker pipeline connection | v0.25/3-3 | `backend/graph/reranker.py`, `backend/agents/query_execution_agent.py` | `[PLANNED]` |
-| M3-4 | Relative node size scaling | v0.25/3-4 | `frontend/components/graph/Graph3D.tsx:456-490` | `[CODED]` |
-| M3-5 | Non-functional UI cleanup | v0.25/3-5 | `frontend/components/graph/KnowledgeGraph3D.tsx` | `[CODED]` |
+| M3-4 | Relative node size scaling | v0.25/3-4 | `frontend/components/graph/Graph3D.tsx:456-490` | `[DEPLOYED]` |
+| M3-5 | Non-functional UI cleanup | v0.25/3-5 | `frontend/components/graph/KnowledgeGraph3D.tsx` | `[DEPLOYED]` |
 | M3-6 | Zotero import path verification | v0.25/3-6 | `backend/importers/zotero_rdf_importer.py` | `[PLANNED]` |
 
 ---
@@ -119,10 +119,10 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M4-1 | LOD manual control panel | v0.25/4-1 | `frontend/components/graph/LODControlPanel.tsx` (NEW) | `[CODED]` |
-| M4-2 | Reasoning Path Overlay | v0.25/4-2 | `frontend/components/graph/ReasoningPathOverlay.tsx` (NEW), `frontend/lib/TraversalPathRenderer.ts` (NEW) | `[CODED]` |
-| M4-3 | Cluster Compare + DrillDown | v0.25/4-3 | `frontend/components/graph/ClusterComparePanel.tsx` (NEW), `frontend/components/graph/ClusterDrillDown.tsx` (NEW) | `[CODED]` |
-| M4-4 | Performance Overlay | v0.25/4-4 | `frontend/components/graph/PerformanceOverlay.tsx` (NEW) | `[CODED]` |
+| M4-1 | LOD manual control panel | v0.25/4-1 | `frontend/components/graph/LODControlPanel.tsx` (NEW) | `[DEPLOYED]` |
+| M4-2 | Reasoning Path Overlay | v0.25/4-2 | `frontend/components/graph/ReasoningPathOverlay.tsx` (NEW), `frontend/lib/TraversalPathRenderer.ts` (NEW) | `[DEPLOYED]` |
+| M4-3 | Cluster Compare + DrillDown | v0.25/4-3 | `frontend/components/graph/ClusterComparePanel.tsx` (NEW), `frontend/components/graph/ClusterDrillDown.tsx` (NEW) | `[DEPLOYED]` |
+| M4-4 | Performance Overlay | v0.25/4-4 | `frontend/components/graph/PerformanceOverlay.tsx` (NEW) | `[DEPLOYED]` |
 
 ---
 
@@ -130,8 +130,8 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M5-1 | IMPLEMENTATION_STATUS.md | v0.25/5-1 | `DOCS/IMPLEMENTATION_STATUS.md` (this file) | `[CODED]` |
-| M5-2 | CHANGELOG.md + GitHub Release | v0.25/5-2 | `CHANGELOG.md` | `[CODED]` |
+| M5-1 | IMPLEMENTATION_STATUS.md | v0.25/5-1 | `DOCS/IMPLEMENTATION_STATUS.md` (this file) | `[DEPLOYED]` |
+| M5-2 | CHANGELOG.md + GitHub Release | v0.25/5-2 | `CHANGELOG.md` | `[DEPLOYED]` |
 | M5-3 | @status: code annotations | v0.25/5-3 | Various files | `[DEFERRED]` — deferred to post-deploy |
 
 ---
@@ -140,12 +140,12 @@
 
 | Status | Count |
 |--------|-------|
-| `[PLANNED]` | 12 |
-| `[CODED]` | 23 |
-| `[DEPLOYED]` | 9 |
+| `[PLANNED]` | 10 |
+| `[CODED]` | 14 |
+| `[DEPLOYED]` | 21 |
 | `[VERIFIED]` | 4 |
 | `[DEFERRED]` | 1 |
-| **Total** | **49** |
+| **Total** | **50** |
 
 ---
 
@@ -155,3 +155,4 @@
 |------|--------|--------|
 | 2026-02-16 | Initial matrix created covering v0.20.1 through v0.25.0 | Claude Code v0.25 |
 | 2026-02-16 | M0 (8 tasks), M3-4/5, M4 (4 components), M5-1/2 all coded. 16/16 tasks completed. | Claude Code v0.25 |
+| 2026-02-16 | v0.25.0 deployed to production (render + origin). 13 items [CODED]→[DEPLOYED]. GitHub Release + tag created. | Claude Code v0.25 |
