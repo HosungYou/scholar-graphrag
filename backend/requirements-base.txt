@@ -26,6 +26,10 @@ python-dotenv>=1.0.1,<2.0.0
 networkx>=3.2.1,<4.0.0
 scikit-learn>=1.4.0,<2.0.0
 
+# Community Detection (Leiden algorithm)
+python-igraph>=0.11.0,<1.0.0
+leidenalg>=0.10.0,<1.0.0
+
 # PDF Processing
 PyMuPDF>=1.23.0,<2.0.0
 pdfplumber>=0.10.0,<1.0.0

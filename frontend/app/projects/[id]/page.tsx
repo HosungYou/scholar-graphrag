@@ -125,11 +125,11 @@ export default function ProjectDetailPage() {
   } = useGraphStore();
 
   // Fetch project details
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const { data: project, isLoading: projectLoading, error: projectError, refetch } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId),
-    enabled: !!user && !!projectId,  // BUG-043: Only fetch when authenticated
+    enabled: !!user && !!projectId && !authLoading,  // BUG-043 + Task #3: Only fetch when auth is fully initialized
   });
 
   // Auto-scroll to bottom when messages change
@@ -336,7 +336,8 @@ export default function ProjectDetailPage() {
     setMobileView('graph');
   };
 
-  if (projectLoading) {
+  // Task #3: Show loading spinner while auth is initializing OR project is loading
+  if (authLoading || projectLoading) {
     return (
       <div className="min-h-screen bg-paper dark:bg-ink flex items-center justify-center">
         <div className="text-center">
@@ -344,7 +345,9 @@ export default function ProjectDetailPage() {
             <Hexagon className="w-16 h-16 text-accent-teal/30 animate-pulse-slow" strokeWidth={1} />
             <Loader2 className="w-6 h-6 text-accent-teal absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin" />
           </div>
-          <p className="font-mono text-sm text-muted">Loading project...</p>
+          <p className="font-mono text-sm text-muted">
+            {authLoading ? 'Initializing authentication...' : 'Loading project...'}
+          </p>
         </div>
       </div>
     );

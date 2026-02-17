@@ -17,10 +17,15 @@ import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
 import { TemporalView } from './TemporalView';  // v0.12.1: Temporal Timeline
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
+import { LODControlPanel } from './LODControlPanel';  // v0.25: LOD Manual Control
+import { ReasoningPathOverlay } from './ReasoningPathOverlay';  // v0.25: Reasoning Path Visualization
+import { ClusterComparePanel } from './ClusterComparePanel';  // v0.25: Cluster Comparison
+import { ClusterDrillDown } from './ClusterDrillDown';  // v0.25: Cluster DrillDown
+import { PerformanceOverlay } from './PerformanceOverlay';  // v0.25: Performance Monitor
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import { useGraphKeyboard, KEYBOARD_SHORTCUTS } from '@/hooks/useGraphKeyboard';
-import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode } from '@/types';
+import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode, ConceptCluster } from '@/types';
 import {
   Hexagon,
   Box,
@@ -40,6 +45,7 @@ import {
   Type,
   Calendar,
   Link2,
+  GitCompare,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -48,6 +54,8 @@ interface KnowledgeGraph3DProps {
   onAskQuestion?: (question: string) => void;
   onDebugCameraReset?: () => void;
   onDebugGapFocus?: (gapId: string) => void;
+  // v0.25: Reasoning path trace from chat retrieval
+  traceNodeIds?: string[];
 }
 
 export function KnowledgeGraph3D({
@@ -56,6 +64,7 @@ export function KnowledgeGraph3D({
   onAskQuestion,
   onDebugCameraReset,
   onDebugGapFocus,
+  traceNodeIds,
 }: KnowledgeGraph3DProps) {
   const graph3DRef = useRef<Graph3DRef>(null);
   const [selectedNode, setSelectedNode] = useState<GraphEntity | null>(null);
@@ -69,6 +78,16 @@ export function KnowledgeGraph3D({
   // UI-011: Edge context modal state for Relationship Evidence
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [edgeModalOpen, setEdgeModalOpen] = useState(false);
+  // v0.25: LOD Control Panel state
+  const [showLODPanel, setShowLODPanel] = useState(false);
+  // v0.25: Reasoning Path Overlay state
+  const showReasoningPath = traceNodeIds && traceNodeIds.length > 0;
+  // v0.25: Cluster Compare Panel state
+  const [showClusterCompare, setShowClusterCompare] = useState(false);
+  // v0.25: Cluster DrillDown state
+  const [drillDownCluster, setDrillDownCluster] = useState<ConceptCluster | null>(null);
+  // v0.25: Performance Overlay state
+  const [showPerformance, setShowPerformance] = useState(false);
 
   // Graph store (existing)
   const {
@@ -259,6 +278,22 @@ export function KnowledgeGraph3D({
     enabled: true,
     onFitView: handleResetCamera,
   });
+
+  // v0.25: P key handler for Performance Overlay
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.key === 'p' || e.key === 'P') {
+        // Don't toggle if user is typing in an input
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+          return;
+        }
+        setShowPerformance(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
 
   // Handle background click
   const handleBackgroundClick = useCallback(() => {
@@ -609,6 +644,32 @@ export function KnowledgeGraph3D({
             <Layers className="w-4 h-4" />
           </button>
 
+          {/* v0.25: Toggle LOD Control Panel */}
+          <button
+            onClick={() => setShowLODPanel(!showLODPanel)}
+            className={`p-2 transition-colors ${
+              showLODPanel
+                ? 'bg-accent-teal/10 text-accent-teal'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title="Toggle LOD Control"
+          >
+            <Layers className="w-4 h-4" />
+          </button>
+
+          {/* v0.25: Toggle Cluster Compare Panel */}
+          <button
+            onClick={() => setShowClusterCompare(!showClusterCompare)}
+            className={`p-2 transition-colors ${
+              showClusterCompare
+                ? 'bg-accent-purple/10 text-accent-purple'
+                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
+            }`}
+            title="Compare Clusters"
+          >
+            <GitCompare className="w-4 h-4" />
+          </button>
+
           {/* Toggle Insight HUD */}
           <button
             onClick={() => setShowInsightHUD(!showInsightHUD)}
@@ -720,7 +781,7 @@ export function KnowledgeGraph3D({
       )}
 
       {/* Right-side panels - stacked */}
-      {(showCentralityPanel || showClusterPanel) && (
+      {(showCentralityPanel || showClusterPanel || showLODPanel || showClusterCompare) && (
         <DraggablePanel panelId="right-stack" projectId={projectId} defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 300 : 900, y: 80 }}>
         <div className="flex flex-col gap-2 max-h-[calc(100vh-120px)] overflow-y-auto bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 rounded-sm">
           <DragHandle />
@@ -736,6 +797,16 @@ export function KnowledgeGraph3D({
               projectId={projectId}
               onFocusCluster={handleFocusCluster}
               onRecomputeComplete={handleClusterRecomputeComplete}
+            />
+          )}
+          {showLODPanel && (
+            <LODControlPanel
+              onClose={() => setShowLODPanel(false)}
+            />
+          )}
+          {showClusterCompare && (
+            <ClusterComparePanel
+              onClose={() => setShowClusterCompare(false)}
             />
           )}
         </div>
@@ -897,6 +968,43 @@ export function KnowledgeGraph3D({
         isLowTrust={selectedEdgeIsLowTrust}
         relationshipProperties={selectedEdge?.properties}
       />
+
+      {/* v0.25: Reasoning Path Overlay */}
+      {showReasoningPath && displayData && (
+        <ReasoningPathOverlay
+          traceNodeIds={traceNodeIds!}
+          nodes={displayData.nodes}
+          onClose={() => {
+            // Signal parent to clear trace (would need callback prop)
+          }}
+          onNodeClick={(nodeId) => {
+            const node = displayData.nodes.find(n => n.id === nodeId);
+            if (node) {
+              handleNodeClick(node);
+              graph3DRef.current?.focusOnNode(nodeId);
+            }
+          }}
+        />
+      )}
+
+      {/* v0.25: Cluster DrillDown */}
+      {drillDownCluster && displayData && (
+        <ClusterDrillDown
+          cluster={drillDownCluster}
+          allNodes={displayData.nodes}
+          allEdges={displayData.edges}
+          onBack={() => setDrillDownCluster(null)}
+          onNodeClick={handleNodeClick}
+        />
+      )}
+
+      {/* v0.25: Performance Overlay */}
+      {showPerformance && displayData && (
+        <PerformanceOverlay
+          nodeCount={displayData.nodes.length}
+          edgeCount={displayData.edges.length}
+        />
+      )}
     </div>
   );
 }

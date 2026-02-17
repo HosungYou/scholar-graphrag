@@ -454,6 +454,16 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       edgeCountMap.set(edge.target, (edgeCountMap.get(edge.target) || 0) + 1);
     });
 
+    // v0.25.0: Relative scaling - compute aggregate stats for normalization
+    const totalNodes = orderedNodes.length;
+    const densityFactor = totalNodes < 100 ? 1.0 : totalNodes < 500 ? 0.6 : 0.35;
+    const dynamicBaseSize = 3 * densityFactor;
+
+    // Pre-compute max values for normalization
+    const maxCentrality = Math.max(...orderedNodes.map(n => centralityMap.get(n.id) || 0), 0.001);
+    const maxConnections = Math.max(...Array.from(edgeCountMap.values()), 1);
+    const maxPaperCount = Math.max(...orderedNodes.map(n => (n.properties as any)?.paper_count || 1), 1);
+
     const forceNodes: ForceGraphNode[] = orderedNodes.map(node => {
       const clusterId = (node.properties as { cluster_id?: number })?.cluster_id;
       const centrality = centralityMap.get(node.id) || 0;
@@ -467,15 +477,18 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
         color = ENTITY_TYPE_COLORS[node.entity_type] || '#888888';
       }
 
-      // v0.20.0: Size based on centrality AND edge count (logarithmic scaling for balance)
+      // v0.25.0: Relative node sizing with normalization
       const connectionCount = edgeCountMap.get(node.id) || 0;
       const paperCount = (node.properties as { paper_count?: number })?.paper_count || 1;
-      const baseSize = 3;
-      const centralityBoost = Math.sqrt(centrality * 100) * 2;
-      const connectionBoost = Math.log(1 + connectionCount) * 1.5;
-      const frequencyBoost = Math.min(Math.log2(paperCount + 1) * 1.5, 4);
-      const bridgeBoost = isBridge ? 2 : 0;
-      const nodeSize = baseSize + centralityBoost + connectionBoost + frequencyBoost + bridgeBoost;
+
+      const normalizedCentrality = centrality / maxCentrality;
+      const normalizedConnections = connectionCount / maxConnections;
+      const normalizedFrequency = paperCount / maxPaperCount;
+
+      const sizeRange = dynamicBaseSize * 2;
+      const nodeSize = dynamicBaseSize +
+        (normalizedCentrality * 0.4 + normalizedConnections * 0.3 + normalizedFrequency * 0.3) * sizeRange +
+        (isBridge ? dynamicBaseSize * 0.5 : 0);
 
       // UI-010 FIX: Restore position from ref if available
       const savedPosition = nodePositionsRef.current.get(node.id);
