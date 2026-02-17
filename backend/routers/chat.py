@@ -17,8 +17,9 @@ Storage:
 import os
 import json
 import logging
+import time
 import traceback
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -512,68 +513,49 @@ class ConversationHistory(BaseModel):
 
 
 # ============================================================================
-# Global Orchestrator
+# Per-User Orchestrator Cache
 # ============================================================================
 
-_orchestrator: Optional[AgentOrchestrator] = None
+_orchestrator_cache: dict[str, Tuple] = {}  # {key: (orchestrator, timestamp)}
+_ORCHESTRATOR_TTL = 300  # 5 min
 
 
-def get_orchestrator() -> AgentOrchestrator:
-    """Get or create the global orchestrator instance with DB and GraphStore connections."""
-    global _orchestrator
-    if _orchestrator is None:
-        from llm import ClaudeProvider, OpenAIProvider, GroqProvider, GeminiProvider
+async def get_orchestrator_for_user(user_id: Optional[str] = None) -> AgentOrchestrator:
+    """Get or create an orchestrator instance for a specific user."""
+    from llm.user_provider import create_llm_provider_for_user
 
-        # Initialize LLM provider with multi-provider support
-        llm_provider = None
-        provider_name = settings.get_available_llm_provider()
+    cache_key = user_id or "__server_default__"
 
-        provider_factories = {
-            "anthropic": lambda: ClaudeProvider(api_key=settings.anthropic_api_key),
-            "openai": lambda: OpenAIProvider(api_key=settings.openai_api_key),
-            "groq": lambda: GroqProvider(
-                api_key=settings.groq_api_key,
-                requests_per_minute=int(getattr(settings, 'groq_requests_per_second', 1) * 60)
-            ),
-            "google": lambda: GeminiProvider(api_key=settings.google_api_key),
-        }
+    # Check cache
+    cached = _orchestrator_cache.get(cache_key)
+    if cached:
+        orch, ts = cached
+        if time.time() - ts < _ORCHESTRATOR_TTL:
+            return orch
 
-        factory = provider_factories.get(provider_name)
-        if factory:
-            try:
-                base_provider = factory()
-                # Wrap with caching (enabled by default, can be disabled via settings)
-                cache_enabled = getattr(settings, 'llm_cache_enabled', True)
-                cache_ttl = getattr(settings, 'llm_cache_ttl', 3600)  # 1 hour default
-                llm_provider = wrap_with_cache(
-                    base_provider,
-                    enabled=cache_enabled,
-                    default_ttl=cache_ttl,
-                )
-                logger.info(f"Initialized {provider_name} LLM provider (cache={'enabled' if cache_enabled else 'disabled'})")
-            except Exception as e:
-                logger.warning(f"Failed to initialize {provider_name} provider: {e}")
+    # Create LLM provider for this user
+    llm_provider = await create_llm_provider_for_user(user_id)
 
-        if llm_provider is None:
-            logger.error("No LLM provider available - chat functionality will be limited")
+    if llm_provider is None:
+        logger.error("No LLM provider available - chat functionality will be limited")
 
-        # Initialize GraphStore with DB connection
-        graph_store = None
-        try:
-            if db.is_connected:
-                graph_store = GraphStore(db=db)
-                logger.info("Initialized GraphStore with DB connection")
-        except Exception as e:
-            logger.error(f"Failed to initialize GraphStore: {e}\n{traceback.format_exc()}")
+    # Initialize GraphStore with DB connection
+    graph_store = None
+    try:
+        if db.is_connected:
+            graph_store = GraphStore(db=db)
+    except Exception as e:
+        logger.error(f"Failed to initialize GraphStore: {e}\n{traceback.format_exc()}")
 
-        # Create orchestrator with all dependencies
-        _orchestrator = AgentOrchestrator(
-            llm_provider=llm_provider,
-            graph_store=graph_store,
-            db_connection=db if db.is_connected else None,
-        )
-        logger.info("Initialized AgentOrchestrator with DB and GraphStore")
-    return _orchestrator
+    orchestrator = AgentOrchestrator(
+        llm_provider=llm_provider,
+        graph_store=graph_store,
+        db_connection=db if db.is_connected else None,
+    )
+
+    _orchestrator_cache[cache_key] = (orchestrator, time.time())
+    logger.info(f"Created orchestrator for {'user ' + user_id if user_id else 'server default'}")
+    return orchestrator
 
 
 # ============================================================================
@@ -606,7 +588,7 @@ async def chat_query(
     user_id = current_user.id if current_user else None
 
     # Get orchestrator and process query
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator_for_user(current_user.id if current_user else None)
 
     answer = ""
     intent: Optional[str] = None
@@ -888,7 +870,7 @@ async def explain_node(
     # Verify project access
     await verify_project_access(project_id, current_user, "access")
 
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator_for_user(current_user.id if current_user else None)
 
     # v0.9.0: Build context for explanation with DB fallback
     node_name = None
@@ -972,7 +954,7 @@ async def ask_about_node(
 
     conversation_id = str(uuid4())
     user_id = current_user.id if current_user else None
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator_for_user(current_user.id if current_user else None)
 
     try:
         result = await orchestrator.process_query(

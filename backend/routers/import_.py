@@ -35,6 +35,7 @@ from llm.gemini_provider import GeminiProvider
 from llm.openai_provider import OpenAIProvider
 from llm.groq_provider import GroqProvider
 from llm.cached_provider import wrap_with_cache
+from llm.user_provider import create_llm_provider_for_user, get_user_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -59,48 +60,8 @@ ALLOWED_IMPORT_ROOTS: List[str] = get_allowed_import_roots()
 MAX_PATH_DEPTH = 10
 
 
-def get_llm_provider():
-    """
-    Get an LLM provider instance based on settings.
-
-    Supports:
-    - anthropic: Claude (requires ANTHROPIC_API_KEY)
-    - google: Gemini (requires GOOGLE_API_KEY) - FREE TIER AVAILABLE
-    - openai: GPT (requires OPENAI_API_KEY)
-    - groq: Llama/Mixtral (requires GROQ_API_KEY) - FREE TIER: 14,400 req/day!
-
-    Returns:
-        BaseLLMProvider or None if no API key is configured
-    """
-    provider_name = settings.default_llm_provider
-
-    # Anthropic Claude
-    if provider_name == "anthropic" and settings.anthropic_api_key:
-        logger.info("Using Anthropic Claude provider")
-        base_provider = ClaudeProvider(api_key=settings.anthropic_api_key)
-        return wrap_with_cache(base_provider)
-
-    # Google Gemini (FREE TIER AVAILABLE!)
-    if provider_name == "google" and settings.google_api_key:
-        logger.info("Using Google Gemini provider (free tier)")
-        base_provider = GeminiProvider(api_key=settings.google_api_key)
-        return wrap_with_cache(base_provider)
-
-    # OpenAI GPT
-    if provider_name == "openai" and settings.openai_api_key:
-        logger.info("Using OpenAI GPT provider")
-        base_provider = OpenAIProvider(api_key=settings.openai_api_key)
-        return wrap_with_cache(base_provider)
-
-    # Groq (FREE TIER - 14,400 requests/day, FASTEST inference!)
-    if provider_name == "groq" and settings.groq_api_key:
-        logger.info("Using Groq provider (free tier, fastest inference!)")
-        base_provider = GroqProvider(api_key=settings.groq_api_key)
-        return wrap_with_cache(base_provider)
-
-    # No provider configured
-    logger.warning(f"LLM provider '{provider_name}' not configured or no API key")
-    return None
+# get_llm_provider() replaced by create_llm_provider_for_user() from llm.user_provider
+# Use: await create_llm_provider_for_user(user_id) in background tasks
 
 
 def validate_safe_path(folder_path: str) -> Path:
@@ -770,6 +731,7 @@ async def import_scholarag_folder(
         folder_path=str(validated_path),
         project_name=request.project_name,
         extract_entities=request.extract_entities,
+        user_id=current_user.id if current_user else None,
     )
 
     return response
@@ -789,6 +751,7 @@ async def _run_scholarag_import(
     folder_path: str,
     project_name: Optional[str],
     extract_entities: bool,
+    user_id: Optional[str] = None,
 ):
     """Background task to run ScholaRAG import."""
     # Mask path in logs to avoid exposing full directory structure
@@ -1167,6 +1130,7 @@ async def import_pdf(
         project_name=project_name,
         research_question=research_question,
         extract_concepts=extract_concepts,
+        user_id=current_user.id if current_user else None,
     )
 
     return PDFImportResponse(
@@ -1184,6 +1148,7 @@ async def _run_pdf_import(
     project_name: Optional[str],
     research_question: Optional[str],
     extract_concepts: bool,
+    user_id: Optional[str] = None,
 ):
     """Background task to run PDF import."""
     from importers.pdf_importer import PDFImporter
@@ -1246,13 +1211,14 @@ async def _run_pdf_import(
         graph_store = GraphStore(db=db)
 
         # Get actual LLM provider object (not string) for concept extraction
-        llm_provider = get_llm_provider() if extract_concepts else None
+        llm_provider = await create_llm_provider_for_user(user_id) if extract_concepts else None
         if extract_concepts and llm_provider is None:
             logger.warning("Concept extraction requested but LLM provider not configured")
+        llm_model = await get_user_llm_model(user_id)
 
         importer = PDFImporter(
             llm_provider=llm_provider,
-            llm_model=settings.default_llm_model,
+            llm_model=llm_model,
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
@@ -1341,6 +1307,7 @@ async def import_multiple_pdfs(
     project_name: str = "Uploaded PDFs",
     research_question: Optional[str] = None,
     extract_concepts: bool = True,
+    current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """
     Import multiple PDF files into a single project.
@@ -1417,6 +1384,7 @@ async def import_multiple_pdfs(
         project_name=project_name,
         research_question=research_question,
         extract_concepts=extract_concepts,
+        user_id=current_user.id if current_user else None,
     )
 
     return PDFImportResponse(
@@ -1433,6 +1401,7 @@ async def _run_multiple_pdf_import(
     project_name: str,
     research_question: Optional[str],
     extract_concepts: bool,
+    user_id: Optional[str] = None,
 ):
     """Background task to run multiple PDF import."""
     from importers.pdf_importer import PDFImporter
@@ -1480,13 +1449,14 @@ async def _run_multiple_pdf_import(
         graph_store = GraphStore(db=db)
 
         # Get actual LLM provider object (not string) for concept extraction
-        llm_provider = get_llm_provider() if extract_concepts else None
+        llm_provider = await create_llm_provider_for_user(user_id) if extract_concepts else None
         if extract_concepts and llm_provider is None:
             logger.warning("Concept extraction requested but LLM provider not configured")
+        llm_model = await get_user_llm_model(user_id)
 
         importer = PDFImporter(
             llm_provider=llm_provider,
-            llm_model=settings.default_llm_model,
+            llm_model=llm_model,
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
@@ -1831,6 +1801,7 @@ async def import_zotero_folder(
         project_name=project_name,
         research_question=research_question,
         extract_concepts=extract_concepts,
+        user_id=current_user.id if current_user else None,
     )
 
     return ZoteroImportResponse(
@@ -1855,6 +1826,7 @@ async def _run_zotero_import(
     research_question: Optional[str],
     extract_concepts: bool,
     resume_checkpoint: Optional[dict] = None,
+    user_id: Optional[str] = None,
 ):
     """Background task to run Zotero import.
 
@@ -1949,13 +1921,14 @@ async def _run_zotero_import(
         graph_store = GraphStore(db=db)
 
         # Get actual LLM provider object (not string) for concept extraction
-        llm_provider = get_llm_provider() if extract_concepts else None
+        llm_provider = await create_llm_provider_for_user(user_id) if extract_concepts else None
         if extract_concepts and llm_provider is None:
             logger.warning("Concept extraction requested but LLM provider not configured, using fallback extraction")
+        llm_model = await get_user_llm_model(user_id)
 
         importer = ZoteroRDFImporter(
             llm_provider=llm_provider,
-            llm_model=settings.default_llm_model,
+            llm_model=llm_model,
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
@@ -2093,6 +2066,7 @@ async def _run_zotero_import_from_dir(
     research_question: Optional[str],
     extract_concepts: bool,
     resume_checkpoint: Optional[dict] = None,
+    user_id: Optional[str] = None,
 ):
     """Background task to run Zotero import from temp directory.
 
@@ -2183,13 +2157,14 @@ async def _run_zotero_import_from_dir(
         graph_store = GraphStore(db=db)
 
         # Get actual LLM provider object (not string) for concept extraction
-        llm_provider = get_llm_provider() if extract_concepts else None
+        llm_provider = await create_llm_provider_for_user(user_id) if extract_concepts else None
         if extract_concepts and llm_provider is None:
             logger.warning("Concept extraction requested but LLM provider not configured, using fallback extraction")
+        llm_model = await get_user_llm_model(user_id)
 
         importer = ZoteroRDFImporter(
             llm_provider=llm_provider,
-            llm_model=settings.default_llm_model,
+            llm_model=llm_model,
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,

@@ -15,6 +15,7 @@ from auth.dependencies import require_auth_if_configured
 from auth.models import User
 from config import settings
 from database import db
+from llm.user_provider import invalidate_user_provider_cache
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,31 @@ async def get_api_keys(
     return result
 
 
+@router.get("/preferences")
+async def get_preferences(
+    current_user: Optional[User] = Depends(require_auth_if_configured)
+):
+    """Return user's saved LLM provider preferences."""
+    if not current_user:
+        return {"llm_provider": settings.default_llm_provider, "llm_model": settings.default_llm_model}
+
+    try:
+        row = await db.fetch_one(
+            "SELECT preferences FROM user_profiles WHERE id = $1",
+            current_user.id
+        )
+        if row and row["preferences"]:
+            prefs = row["preferences"]
+            return {
+                "llm_provider": prefs.get("llm_provider", settings.default_llm_provider),
+                "llm_model": prefs.get("llm_model", settings.default_llm_model),
+            }
+    except Exception as e:
+        logger.error(f"Error fetching preferences: {e}")
+
+    return {"llm_provider": settings.default_llm_provider, "llm_model": settings.default_llm_model}
+
+
 @router.put("/api-keys")
 async def update_api_keys(
     request_body: Dict[str, Any] = Body(...),
@@ -252,6 +278,12 @@ async def update_api_keys(
             current_user.id,
             merged_prefs
         )
+
+        # Invalidate cached LLM provider so next request uses new settings
+        try:
+            invalidate_user_provider_cache(str(current_user.id))
+        except Exception:
+            pass  # Non-critical
 
         return {"status": "success", "message": "API keys updated successfully"}
 

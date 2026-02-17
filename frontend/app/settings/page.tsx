@@ -45,10 +45,10 @@ export default function SettingsPage() {
   ];
 
   const llmOptions = [
-    { value: 'groq', label: 'Groq (Llama)', description: 'Llama 3.3 70B - Free, fastest inference', model: 'llama-3.3-70b-versatile' },
-    { value: 'anthropic', label: 'Claude (Anthropic)', description: 'Claude Haiku 4.5', model: 'claude-haiku-4-5-20251001' },
-    { value: 'openai', label: 'GPT-4 (OpenAI)', description: 'GPT-4o', model: 'gpt-4o' },
-    { value: 'google', label: 'Gemini (Google)', description: 'Gemini 1.5 Pro', model: 'gemini-1.5-pro' },
+    { value: 'groq', label: 'Groq (Llama)', description: 'Llama 3.3 70B - Free, 20 RPM', model: 'llama-3.3-70b-versatile' },
+    { value: 'openai', label: 'OpenAI', description: 'GPT-4o-mini - Fast, 10K RPM', model: 'gpt-4o-mini' },
+    { value: 'anthropic', label: 'Claude (Anthropic)', description: 'Claude Haiku 4.5 - 4K RPM', model: 'claude-haiku-4-5-20251001' },
+    { value: 'google', label: 'Gemini (Google)', description: 'Gemini 1.5 Flash', model: 'gemini-1.5-flash' },
   ];
 
   const languageOptions = [
@@ -56,11 +56,23 @@ export default function SettingsPage() {
     { value: 'en', label: 'English', flag: '🇺🇸' },
   ];
 
-  // Load API keys on mount
+  // Load API keys and preferences on mount
   useEffect(() => {
     loadApiKeys();
+    loadPreferences();
     loadQueryMetrics();
   }, []);
+
+  const loadPreferences = async () => {
+    try {
+      const prefs = await api.getPreferences();
+      if (prefs.llm_provider) {
+        setLlmProvider(prefs.llm_provider);
+      }
+    } catch (err) {
+      console.error('Failed to load preferences:', err);
+    }
+  };
 
   const loadQueryMetrics = async () => {
     try {
@@ -80,12 +92,6 @@ export default function SettingsPage() {
       setLoading(true);
       const keys = await api.getApiKeys();
       setApiKeys(keys);
-
-      // Find current LLM provider from keys or use default
-      const llmKey = keys.find(k => ['groq', 'anthropic', 'openai', 'google'].includes(k.provider));
-      if (llmKey && llmKey.is_set) {
-        setLlmProvider(llmKey.provider);
-      }
     } catch (err) {
       console.error('Failed to load API keys:', err);
       showSaveMessage('Failed to load API keys', false);
@@ -312,6 +318,16 @@ export default function SettingsPage() {
                     })}
                   </div>
 
+                  {/* Warning: No API key for selected provider */}
+                  {llmProvider && !getLlmProviderKey()?.is_set && (
+                    <div className="mt-3 border-l-2 border-accent-amber bg-accent-amber/5 p-3 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-accent-amber flex-shrink-0" />
+                      <span className="font-mono text-xs text-accent-amber">
+                        No API key configured for this provider. Using server default or add your key below.
+                      </span>
+                    </div>
+                  )}
+
                   {/* LLM Provider API Key Status */}
                   {llmProvider && (
                     <div className="mt-4 border-l-2 border-accent-teal bg-surface/5 p-4">
@@ -413,7 +429,7 @@ export default function SettingsPage() {
                   )}
 
                   <p className="mt-4 text-xs sm:text-sm font-mono text-muted">
-                    The selected AI model is used for chat and entity extraction.
+                    The selected AI model is used for chat, entity extraction, and paper import.
                   </p>
                 </>
               )}

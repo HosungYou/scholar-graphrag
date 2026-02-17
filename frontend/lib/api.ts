@@ -1099,6 +1099,13 @@ class ApiClient {
     });
   }
 
+  async getPreferences(): Promise<{
+    llm_provider: string;
+    llm_model: string;
+  }> {
+    return this.request('/api/settings/preferences');
+  }
+
   // ============================================
   // Evaluation Report (Phase 11E)
   // ============================================
