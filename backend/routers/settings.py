@@ -269,12 +269,12 @@ async def update_api_keys(
         if "llm_model" in preferences_update:
             merged_prefs["llm_model"] = preferences_update["llm_model"]
 
-        # Save to database
+        # Save to database (UPSERT — user_profiles row may not exist yet)
         await db.execute(
             """
-            UPDATE user_profiles
-            SET preferences = $2::jsonb
-            WHERE id = $1
+            INSERT INTO user_profiles (id, preferences)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (id) DO UPDATE SET preferences = $2::jsonb
             """,
             current_user.id,
             json.dumps(merged_prefs)
