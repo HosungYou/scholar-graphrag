@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore unknown env vars (e.g. AZURE_OPENAI_*)
 
     @property
     def cors_origins_list(self) -> List[str]:

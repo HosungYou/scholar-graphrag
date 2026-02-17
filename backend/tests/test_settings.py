@@ -186,7 +186,7 @@ class TestGetApiKeys:
     async def test_returns_all_providers(self, mock_get_server_key, mock_db, async_client_no_auth):
         """Test endpoint returns all 6 providers."""
         # Mock no user authentication
-        mock_db.fetch_one = AsyncMock(return_value=None)
+        mock_db.fetchrow = AsyncMock(return_value=None)
         mock_get_server_key.return_value = ""
 
         response = await async_client_no_auth.get("/api/settings/api-keys")
@@ -206,7 +206,7 @@ class TestGetApiKeys:
     async def test_user_key_priority(self, mock_get_server_key, mock_db, async_client_with_auth, mock_user):
         """Test user key takes priority over server key."""
         # Mock user with preferences
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {
                 "api_keys": {
                     "groq": "gsk_user_key"
@@ -229,7 +229,7 @@ class TestGetApiKeys:
     async def test_server_only_key(self, mock_get_server_key, mock_db, async_client_with_auth, mock_user):
         """Test server-only key shows source='server'."""
         # Mock no user key
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {}}
         })
         mock_get_server_key.side_effect = lambda p: "gsk_server_key" if p == "groq" else ""
@@ -247,7 +247,7 @@ class TestGetApiKeys:
     @patch("routers.settings.get_server_api_key")
     async def test_no_key_set(self, mock_get_server_key, mock_db, async_client_with_auth, mock_user):
         """Test provider with no key shows is_set=False."""
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {}}
         })
         mock_get_server_key.return_value = ""
@@ -283,7 +283,7 @@ class TestUpdateApiKeys:
     async def test_updates_api_keys(self, mock_db, async_client_with_auth, mock_user):
         """Test updating API keys in preferences."""
         # Mock current preferences
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {}}
         })
         mock_db.execute = AsyncMock()
@@ -307,7 +307,7 @@ class TestUpdateApiKeys:
     async def test_empty_string_deletes_key(self, mock_db, async_client_with_auth, mock_user):
         """Test empty string deletes API key."""
         # Mock existing key
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {"groq": "gsk_old_key"}}
         })
         mock_db.execute = AsyncMock()
@@ -328,7 +328,7 @@ class TestUpdateApiKeys:
     @patch("routers.settings.db")
     async def test_updates_llm_provider(self, mock_db, async_client_with_auth, mock_user):
         """Test updating LLM provider preference."""
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {}
         })
         mock_db.execute = AsyncMock()
@@ -353,7 +353,7 @@ class TestUpdateApiKeys:
     @patch("routers.settings.db")
     async def test_database_error_handling(self, mock_db, async_client_with_auth, mock_user):
         """Test handling of database errors."""
-        mock_db.fetch_one = AsyncMock(side_effect=Exception("Database error"))
+        mock_db.fetchrow = AsyncMock(side_effect=Exception("Database error"))
 
         response = await async_client_with_auth.put(
             "/api/settings/api-keys",

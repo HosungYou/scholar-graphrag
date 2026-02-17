@@ -175,6 +175,8 @@ async def list_projects(
             )
 
         return projects
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to list projects: {e}")
         raise HTTPException(
@@ -388,6 +390,10 @@ async def delete_project(
     Requires authentication in production.
     """
     try:
+        # Require authentication - only owner can delete
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
         # Check project exists
         row = await database.fetchrow(
             "SELECT id, owner_id FROM projects WHERE id = $1",
@@ -395,10 +401,6 @@ async def delete_project(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
-
-        # Require authentication - only owner can delete
-        if current_user is None:
-            raise HTTPException(status_code=401, detail="Authentication required")
         is_owner = await check_project_ownership(database, project_id, current_user.id)
         if not is_owner:
             raise HTTPException(
