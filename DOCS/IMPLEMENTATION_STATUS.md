@@ -96,8 +96,8 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M2-1 | Batch split import (50/batch) + Stream-to-disk (MEM-002) | v0.25/2-1 | `frontend/components/import/`, `backend/routers/import_.py` | `[CODED]` |
-| M2-2 | Import stability (skip-on-fail exists, GC every 3 papers) | v0.25/2-2 | `backend/importers/pdf_importer.py`, `backend/importers/zotero_rdf_importer.py` | `[CODED]` |
+| M2-1 | Batch split import (50/batch) + Stream-to-disk (MEM-002) | v0.25/2-1 | `frontend/components/import/`, `backend/routers/import_.py` | `[DEPLOYED]` |
+| M2-2 | Import stability (skip-on-fail exists, GC every 3 papers) | v0.25/2-2 | `backend/importers/pdf_importer.py`, `backend/importers/zotero_rdf_importer.py` | `[DEPLOYED]` |
 | M2-3 | Full 498 PDF import verification | v0.25/2-3 | N/A (operational) | `[PLANNED]` |
 
 ---
@@ -106,12 +106,12 @@
 
 | # | Feature | Plan Ref | Code Files | Status |
 |---|---------|----------|------------|--------|
-| M3-1 | Entity dedup effectiveness check | v0.25/3-1 | SQL verification | `[PLANNED]` |
-| M3-2 | Full-text extraction verification | v0.25/3-2 | `backend/config.py:92` (flag=True) | `[PLANNED]` |
-| M3-3 | Reranker pipeline connection | v0.25/3-3 | `backend/graph/reranker.py`, `backend/agents/query_execution_agent.py` | `[PLANNED]` |
+| M3-1 | Entity dedup effectiveness check | v0.25/3-1 | SQL verification | `[VERIFIED]` |
+| M3-2 | Full-text extraction verification | v0.25/3-2 | `backend/config.py:92` (flag=True) | `[VERIFIED]` |
+| M3-3 | Reranker pipeline connection | v0.25/3-3 | `backend/graph/reranker.py`, `backend/agents/query_execution_agent.py` | `[VERIFIED]` |
 | M3-4 | Relative node size scaling | v0.25/3-4 | `frontend/components/graph/Graph3D.tsx:456-490` | `[DEPLOYED]` |
 | M3-5 | Non-functional UI cleanup | v0.25/3-5 | `frontend/components/graph/KnowledgeGraph3D.tsx` | `[DEPLOYED]` |
-| M3-6 | Zotero import path verification | v0.25/3-6 | `backend/importers/zotero_rdf_importer.py` | `[PLANNED]` |
+| M3-6 | Zotero import path verification | v0.25/3-6 | `backend/importers/zotero_rdf_importer.py`, `backend/routers/import_.py` | `[VERIFIED]` |
 
 ---
 
@@ -140,10 +140,10 @@
 
 | Status | Count |
 |--------|-------|
-| `[PLANNED]` | 6 |
-| `[CODED]` | 3 |
-| `[DEPLOYED]` | 21 |
-| `[VERIFIED]` | 19 |
+| `[PLANNED]` | 2 |
+| `[CODED]` | 0 |
+| `[DEPLOYED]` | 23 |
+| `[VERIFIED]` | 24 |
 | `[DEFERRED]` | 1 |
 | **Total** | **50** |
 
@@ -158,3 +158,4 @@
 | 2026-02-16 | v0.25.0 deployed to production (render + origin). 13 items [CODED]→[DEPLOYED]. GitHub Release + tag created. | Claude Code v0.25 |
 | 2026-02-16 | Migrations 022-025 applied via psql. 13 items [CODED]→[VERIFIED], 2 items [PLANNED]→[VERIFIED]. All schema verified. | Claude Code v0.25 |
 | 2026-02-16 | M2-1/M2-2 coded: stream-to-disk MEM-002, batch GC every 3 papers, path validation fix for filenames with consecutive dots. Memory limit fix for 498 PDF import. | Claude Code v0.25 |
+| 2026-02-16 | M2-1/M2-2 deployed (36975b9). M3-1 verified (0 duplicates, 1896 entities/7 types). M3-2 verified (flag=True, pending re-import). M3-3 verified (SemanticReranker wired at query_execution_agent.py:445). M3-6 verified (path validation fixed). Stats: 2 PLANNED, 24 VERIFIED. | Claude Code v0.25 |
