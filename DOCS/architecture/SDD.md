@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.29.1
+**Version**: 0.30.0
 **Last Updated**: 2026-02-17
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -13,7 +13,7 @@
 | Field | Value |
 |-------|-------|
 | **Document Version** | 2.1.0 |
-| **Project Version** | 0.29.1 |
+| **Project Version** | 0.30.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -32,7 +32,7 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 **In Scope:**
 - Concept-centric knowledge graph construction from academic papers
 - Multi-agent RAG pipeline for intelligent query processing
-- Three visualization modes (3D, Topic, Gaps)
+- Six visualization modes (3D, Topic, Gaps, Citations, Temporal, Summary)
 - ScholaRAG folder import, PDF import, Zotero integration
 - Research gap detection using InfraNodus-style algorithms
 - Team collaboration features
@@ -83,6 +83,12 @@ ScholaRAG_Graph is an AGENTiGraph-style **Concept-Centric Knowledge Graph** plat
 | **Chatbot Full RAG Pipeline** | All queries flow through 6-agent pipeline, no early-return | ✅ v0.17.0 |
 | **Auth Enforcement** | All endpoints return 401 when `current_user is None` — no unauthenticated data leakage | ✅ v0.29.0 |
 | **Find Papers UUID Filter** | Bridge candidate UUID regex filter with cluster name fallback | ✅ v0.29.0 |
+| **Citations View** | Citation network visualization with Three.js | ✅ v0.24.0 |
+| **Temporal View** | Temporal co-citation trends and entity lifecycle dashboard | ✅ v0.30.0 |
+| **Summary View** | Executive research report with Markdown/HTML export | ✅ v0.30.0 |
+| **Quality Evaluation** | Retrieval metrics (Precision@K, Recall@K, MRR), cluster quality, entity extraction quality | ✅ v0.30.0 |
+| **Paper Fit Analysis** | Analyze how a paper fits into the knowledge graph via pgvector similarity | ✅ v0.30.0 |
+| **Toolbar Cleanup** | Streamlined toolbar from 13 to 6 buttons with sensible defaults | ✅ v0.30.0 |
 
 ### 1.4 Success Metrics
 
@@ -153,7 +159,7 @@ Render Starter 환경에서 관찰된 `memory limit exceeded` 이슈 대응을 �
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │               API Layer (FastAPI Routers)                    │   │
-│  │  /projects  /graph  /entities  /gaps  /chat  /import        │   │
+│  │  /projects  /graph  /entities  /gaps  /chat  /import  /eval │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                       │
 │  ┌───────────────────────────┴───────────────────────────────────┐ │
@@ -305,6 +311,9 @@ class ReasoningAgent:
 | **Entity Disambiguator** | `backend/graph/entity_disambiguator.py` | Merge similar entities using embedding similarity (threshold: 0.9) |
 | **Relationship Builder** | `backend/graph/relationship_builder.py` | Create edges between entities based on co-occurrence and semantic similarity |
 | **Gap Detector** | `backend/graph/gap_detector.py` | Identify structural gaps using K-means clustering and connection matrix analysis |
+| **Report Generator** | `backend/graph/report_generator.py` | Generate structured Markdown research report (연구 지형 리포트) from summary data |
+| **Paper Fit Analyzer** | `backend/graph/paper_fit_analyzer.py` | Analyze paper fit via embedding similarity, community mapping, gap connection detection |
+| **Auto Ground Truth** | `backend/evaluation/auto_ground_truth.py` | Auto-generate test queries from project entities for retrieval evaluation |
 
 **Entity Extraction Pipeline**:
 ```python
@@ -476,7 +485,7 @@ async def get_llm_response(prompt: str) -> str:
 
 #### 3.2.2 Graph Visualization
 
-**Purpose**: Three interactive view modes for exploring knowledge graphs.
+**Purpose**: Six interactive view modes for exploring knowledge graphs.
 
 **View Modes**:
 
@@ -485,6 +494,9 @@ async def get_llm_response(prompt: str) -> str:
 | **3D View** | `Graph3D.tsx` | Three.js + react-force-graph-3d | Full graph exploration with physics simulation |
 | **Topic View** | `TopicViewMode.tsx` | D3.js force layout | Topic clustering and community detection |
 | **Gaps View** | `GapsViewMode.tsx` | Three.js + Ghost Edges | Research gap identification with AI hypotheses |
+| **Citations View** | `CitationsViewMode.tsx` | Three.js | Citation network visualization |
+| **Temporal View** | `TemporalViewMode.tsx` + `TemporalDashboard.tsx` | React | Entity lifecycle: Emerging / Stable / Declining |
+| **Summary View** | `ResearchReport.tsx` | React | Executive research report with Markdown/HTML export |
 
 **3D View Specifications**:
 ```typescript
@@ -512,7 +524,7 @@ LABEL_CONFIG = {
   maxFontSize: 28,                 // Largest label font
   minOpacity: 0.3,                 // Least visible label
   maxOpacity: 1.0,                 // Most visible label
-  alwaysVisiblePercentile: 0.8,    // Top 20% always show
+  alwaysVisiblePercentile: 0,      // v0.30.0: All nodes show labels
   hoverRevealPercentile: 0.5       // Top 50% on hover
 }
 
@@ -702,7 +714,7 @@ interface GraphStore {
   edges: Edge[];
   selectedNode: Node | null;
   filters: FilterState;
-  viewMode: "3d" | "topic" | "gaps";
+  viewMode: "3d" | "topic" | "gaps" | "citations" | "temporal" | "summary";
 
   // Actions
   setNodes: (nodes: Node[]) => void;
@@ -994,6 +1006,25 @@ User navigates to /projects/{id}
          ├─ LLM generates bridge concepts
          ├─ Display as tooltip overlay
          └─ Allow "add to graph" action
+         ↓
+[Case: Citations View]
+         ├─ Fetch citation network data
+         ├─ Render paper citation graph (Three.js)
+         └─ Display citation connections
+         ↓
+[Case: Temporal View]
+         ├─ Fetch entity trends: GET /api/graph/temporal/{project_id}/trends
+         ├─ Classify entities: Emerging / Stable / Declining
+         ├─ Render TemporalDashboard with color-coded cards
+         └─ Emerald (emerging), Blue (stable), Coral (declining)
+         ↓
+[Case: Summary View]
+         ├─ Fetch aggregated summary: GET /api/graph/summary/{project_id}
+         ├─ Render ResearchReport component
+         │   ├─ Overview, quality metrics, top entities
+         │   ├─ Communities, structural gaps, temporal trends
+         │   └─ Export button (Markdown / HTML)
+         └─ User clicks Export → GET /api/graph/summary/{project_id}/export
 ```
 
 ---
@@ -1074,6 +1105,52 @@ Query: ?format=markdown
 Response: Markdown file download
 Content-Type: text/markdown
 Content-Disposition: attachment; filename="gap_report_ProjectName.md"
+```
+
+#### Quality Evaluation & Research Summary (v0.30.0)
+
+```
+POST /api/evaluation/retrieval/{project_id}
+Query: ?k=5&max_queries=20
+Response: {
+  total_queries: 20,
+  precision_at_1: 0.75, precision_at_3: 0.65, precision_at_5: 0.60, precision_at_10: 0.50,
+  recall_at_1: 0.15, recall_at_3: 0.35, recall_at_5: 0.55, recall_at_10: 0.72,
+  mrr: 0.71, hit_rate_at_5: 0.90,
+  by_query_type: { "concept_search": {...}, "relationship_query": {...}, "method_inquiry": {...} }
+}
+
+GET /api/graph/summary/{project_id}
+Response: {
+  overview: { total_papers, total_entities, total_relationships, total_communities },
+  quality_metrics: { modularity_raw, silhouette_score, cluster_coherence, precision_at_5, ... },
+  top_entities: [{ name, type, degree, betweenness }],
+  communities: [{ id, label, size, top_concepts }],
+  structural_gaps: [{ cluster_a_label, cluster_b_label, gap_strength }],
+  temporal: { emerging_count, stable_count, declining_count }
+}
+
+GET /api/graph/summary/{project_id}/export
+Query: ?format=markdown|html
+Response: StreamingResponse (text/markdown or text/html)
+Content-Disposition: attachment; filename="research_report_{project_name}.md"
+
+GET /api/graph/temporal/{project_id}/trends
+Response: {
+  emerging: [{ entity_id, name, entity_type, first_seen, last_seen, paper_count }],
+  stable: [{ ... }],
+  declining: [{ ... }],
+  year_range: { min_year, max_year }
+}
+
+POST /api/graph/{project_id}/paper-fit
+Request: { title: "paper title", doi?: "10.xxxx/..." }
+Response: {
+  matched_entities: [{ id, name, entity_type, similarity }],
+  community_relevance: [{ cluster_id, label, matched_count, relevance_score }],
+  gap_connections: [{ gap_id, cluster_a_label, cluster_b_label, connection_type }],
+  fit_summary: "Natural language summary of paper fit"
+}
 ```
 
 #### Chat (6-Agent RAG)
@@ -1269,18 +1346,46 @@ app.add_middleware(
 
 ### 6.5 Auto-Deploy Configuration
 
-**Status**: ❌ **DISABLED** (INFRA-006)
+**Status**: ✅ **ENABLED** (re-enabled 2026-02-13)
 
-**Reason**: Auto-deploy causes server restarts during import operations, killing background tasks (BUG-028).
+**History**: Previously disabled (INFRA-006, 2026-01-21) to prevent import interruption. Re-enabled 2026-02-13.
 
 **Deployment Process**:
-1. Go to Render Dashboard → `scholarag-graph-docker`
-2. Click "Manual Deploy" → "Deploy latest commit"
-3. ⚠️ Ensure no imports are running before deploying
+1. Push to `origin main`: `git push origin main`
+2. Frontend (Vercel): Auto-deploys from push
+3. Backend (Render): Auto-deploys from push
+4. ⚠️ Avoid deploying during active import operations
 
 ---
 
 ## 7. Change Log
+
+### v0.30.0 — Quality Evaluation + Research Report + Temporal Dashboard + Paper Fit (2026-02-17)
+
+**Phase 1: Quality Evaluation System + UI Cleanup**
+- **Retrieval Evaluation**: New `POST /api/evaluation/retrieval/{project_id}` endpoint with auto-generated ground truth from project entities. Computes Precision@K, Recall@K, MRR, Hit Rate across 3 query types (concept_search, relationship_query, method_inquiry).
+- **Cluster Quality**: `GET /api/graph/metrics` extended with raw modularity + Korean interpretation badge (강함/보통/약함), silhouette score, avg cluster coherence, cluster coverage.
+- **Entity Extraction Quality**: Type diversity, paper coverage, avg entities/paper, cross-paper ratio, type distribution added to metrics endpoint.
+- **Toolbar Cleanup**: 13 → 6 buttons (removed Bloom, Label, SAME_AS, Centrality, Cluster, LOD, ClusterCompare, MainTopics).
+- **UI Defaults**: `max_nodes` 2000→500, labels default to all visible (`alwaysVisiblePercentile: 0`), weak edges (weight < 0.3) fade.
+- **InsightHUD**: Redesigned with raw modularity + interpretation badge + entity quality section.
+
+**Phase 2: Executive Summary & Research Report**
+- **Summary API**: `GET /api/graph/summary/{project_id}` aggregates overview, quality metrics, top entities, communities, gaps, temporal into single JSON.
+- **Export**: `GET /api/graph/summary/{project_id}/export?format=markdown|html` as StreamingResponse.
+- **Report Generator**: `backend/graph/report_generator.py` generates structured Markdown report (연구 지형 리포트).
+- **ResearchReport Component**: `ResearchReport.tsx` in-app viewer with export button, 6th Summary tab (emerald theme).
+
+**Phase 3: Temporal Dashboard + Paper Fit Analysis**
+- **Temporal Trends**: `GET /api/graph/temporal/{project_id}/trends` classifies entities into Emerging/Stable/Declining lifecycle stages.
+- **TemporalDashboard**: Color-coded entity cards (emerald/blue/coral) grouped by lifecycle stage.
+- **Paper Fit**: `POST /api/graph/{project_id}/paper-fit` analyzes paper fit via pgvector similarity, community mapping, gap connection detection. Accepts DOI (S2 lookup) or title.
+- **PaperFitAnalyzer**: `backend/graph/paper_fit_analyzer.py` with embedding generation, similar entity search, community mapping, text summary.
+- **PaperFitPanel**: `PaperFitPanel.tsx` DOI/title input + similarity bars + gap connections display.
+
+**Technical**: 16 files changed (6 new + 10 modified), +3108/-230 lines. 0 TypeScript errors, 260 pytest passing. No DB migrations, no new env vars, no breaking changes.
+
+New files: `auto_ground_truth.py`, `report_generator.py`, `paper_fit_analyzer.py`, `ResearchReport.tsx`, `TemporalDashboard.tsx`, `PaperFitPanel.tsx`
 
 ### v0.29.1 — asyncpg JSONB Codec Fix (2026-02-17)
 - **Database (BUG-049)**: Registered `json.loads`/`json.dumps` codec on asyncpg pool `init` — all `jsonb` columns now return Python dicts instead of raw strings. Fixes 5 silent failures in settings, user_provider, and integrations.
