@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-16
-> **Version**: 6.1.0 (v0.26.0 Per-User LLM Provider Selection)
+> **Last Updated**: 2026-02-17
+> **Version**: 6.2.0 (v0.28.0 Topic View Stability & Gap UX)
 
 ## Project Overview
 
@@ -724,6 +724,25 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.28.0 Release Notes
+
+> **Version**: 0.28.0 | **Date**: 2026-02-17
+> **Full Notes**: See `RELEASE_NOTES_v0.28.0.md`
+
+### Topic View Stability & Gap UX Improvement
+- **Hover jitter fix**: useCallback for `onClusterHover`, ref pattern for D3 callbacks, dead `hoveredNodeId` state removal, tick handler scale preservation
+- **Gap cluster A/B colors**: Cluster A = coral (#E63946), Cluster B = teal (#2EC4B6), bridge = gold (#FFD700). Updated legend, navigator dots, highlight rings, labels
+- **Cluster label quality**: Shared `cluster_labeler.py` utility, improved LLM prompt (2-4 word academic terms, no slashes), smarter fallback (shortest 2 names joined with " & ")
+- **DRY labeling**: Both `gap_detector.py` and `community_detector.py` delegate to shared utility
+
+### Technical
+- 8 files changed (1 new + 6 modified + 1 build info), +217/-71 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no new endpoints
+- Backward compatible: `clusterANodes`/`clusterBNodes` optional with `[]` defaults
 
 ---
 
