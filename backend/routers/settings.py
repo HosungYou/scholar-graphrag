@@ -4,7 +4,6 @@ Settings router for ScholaRAG_Graph.
 Handles API key management, LLM provider configuration, and user preferences.
 """
 
-import json
 import logging
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
@@ -270,15 +269,16 @@ async def update_api_keys(
             merged_prefs["llm_model"] = preferences_update["llm_model"]
 
         # Save to database (UPSERT — user_profiles row may not exist yet)
+        # asyncpg jsonb codec handles dict↔JSON serialization automatically
         await db.execute(
             """
             INSERT INTO user_profiles (id, email, preferences)
-            VALUES ($1, $2, $3::jsonb)
-            ON CONFLICT (id) DO UPDATE SET preferences = $3::jsonb
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE SET preferences = EXCLUDED.preferences
             """,
             current_user.id,
             current_user.email,
-            json.dumps(merged_prefs)
+            merged_prefs
         )
 
         # Invalidate cached LLM provider so next request uses new settings

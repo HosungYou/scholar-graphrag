@@ -5,6 +5,7 @@ Provides connection pooling and helper methods for PostgreSQL operations.
 """
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -78,6 +79,17 @@ class Database:
             logger.warning("Database already connected")
             return
 
+        async def _init_connection(conn):
+            """Set up JSON/JSONB codecs so asyncpg returns Python dicts (not raw strings)."""
+            await conn.set_type_codec(
+                'jsonb', encoder=json.dumps, decoder=json.loads,
+                schema='pg_catalog', format='text',
+            )
+            await conn.set_type_codec(
+                'json', encoder=json.dumps, decoder=json.loads,
+                schema='pg_catalog', format='text',
+            )
+
         try:
             self._pool = await asyncpg.create_pool(
                 dsn=self.dsn,
@@ -89,6 +101,8 @@ class Database:
                 # pgbouncer compatibility: disable prepared statements
                 # Supabase uses pgbouncer in transaction mode which doesn't support prepared statements
                 statement_cache_size=0,
+                # JSON/JSONB codec: returns Python dicts instead of raw JSON strings
+                init=_init_connection,
             )
             logger.info(f"Database connected (pool: {min_size}-{max_size})")
             # Force fresh health probe after reconnect.
