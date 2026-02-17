@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-16
-> **Version**: 5.0.0 (v0.20.0 Async Cluster Labeling + Edge Visualization)
+> **Version**: 6.0.0 (v0.25.0 Stabilize, Scale, Enhance)
 
 ## Project Overview
 
@@ -707,6 +707,63 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.25.0 Release Notes
+
+> **Version**: 0.25.0 | **Date**: 2026-02-16
+> **Full Notes**: See `RELEASE_NOTES_v0.25.0.md`
+
+### Deploy Stabilization (M0)
+- **M0-3**: Auth race condition fix — `authLoading` guard prevents graph fetch before auth initialized
+- **M0-4**: Migration script enhanced with `--verify-only` and `--from/--to` range flags
+- **M0-7**: `leidenalg` + `python-igraph` added to Docker build (+ `cmake` in builder)
+
+### GraphRAG Quality (M3)
+- **M3-4**: Relative node sizing — density-aware normalization (~70% smaller at 500+ nodes)
+  - Density factor: <100→1.0, <500→0.6, 500+→0.35
+  - Metrics normalized to 0-1: centrality 40%, connections 30%, frequency 30%
+
+### 3D UX Enhancement (M4 — 6 New Components)
+- **LODControlPanel**: 4-step slider (All/Important/Key/Hub) with hidden node badge
+- **ReasoningPathOverlay** + **TraversalPathRenderer**: Chat retrieval trace → 3D gold path
+- **ClusterComparePanel**: 2-cluster side-by-side diff (concepts, methods, datasets)
+- **ClusterDrillDown**: Double-click cluster → internal sub-graph view
+- **PerformanceOverlay**: FPS, node/edge count (P-key toggle)
+
+### Tracking System (M5)
+- `DOCS/IMPLEMENTATION_STATUS.md`: 49-item status matrix (v0.20.1–v0.25.0)
+- `CHANGELOG.md`: Full project changelog (v0.7.0–v0.25.0)
+
+### Technical
+- 16 files changed (9 new + 7 modified), +2042/-22 lines
+- 0 TypeScript errors, 0 Python errors
+- New keyboard shortcut: `P` for Performance Overlay
+- New toolbar buttons: LOD Control (Layers), Cluster Compare (GitCompare)
+- Migrations 022-025 ready to apply (entity dedup, lexical graph, community, relationship types)
+
+---
+
+## 📊 v0.24.0 Release Notes
+
+> **Version**: 0.24.0 | **Date**: 2026-02-16
+> **Full Notes**: See `RELEASE_NOTES_v0.24.0.md`
+
+### Critical Fixes
+- **Migration conflicts**: Renamed 004B/005B/006B to 022/023/024; created 025
+- **Missing relationship types**: `REPORTS_FINDING`, `ADDRESSES_PROBLEM`, `PROPOSES_INNOVATION`
+- **Cluster labels**: LLM timeout 5s→15s, keyword fallback
+- **Leiden**: CommunityDetector + CommunitySummarizer connected
+
+### Feature Activation
+- Feature flags defaulted True: `lexical_graph_v1`, `hybrid_trace_v1`, `topic_lod_default`
+- `paper_count` in visualization API
+- Edge opacity floors raised
+
+### Technical
+- 20 TDD tests passing (test_p0_p2_fixes.py)
+- `max_nodes` default: 1000 → 2000
 
 ---
 
