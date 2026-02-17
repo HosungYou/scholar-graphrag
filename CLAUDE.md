@@ -727,6 +727,27 @@ When making architectural changes:
 
 ---
 
+## 📊 v0.27.0 Release Notes
+
+> **Version**: 0.27.0 | **Date**: 2026-02-17
+> **Full Notes**: See `RELEASE_NOTES_v0.27.0.md`
+
+### Production Stabilization & Relationship Diversity
+- **Migrations 022-025**: Entity deduplication, lexical graph schema, community trace, relationship type enums applied to production DB
+- **Relationship diversity**: 2 → 6 types (CO_OCCURS_WITH, SUPPORTS, APPLIES_TO, ADDRESSES, RELATED_TO, EVALUATES_WITH), 3,903 → 5,207 total
+- **Edge paper_count**: Computed from `source_paper_ids` intersection (was hardcoded to 1)
+- **NodeDetails popup**: Viewport boundary detection + `break-words` CSS
+- **INFRA-016**: Git remotes consolidated — single `origin` (scholar-graphrag)
+- **Community detection**: 11 communities, modularity 0.6025, 55 structural gaps, meaningful cluster labels
+
+### Technical
+- 3 files changed (code) + supabase config, +66/-30 lines
+- 0 TypeScript errors, 0 Python errors
+- 430 entities (7 types), 5,207 relationships (6 types)
+- No breaking changes
+
+---
+
 ## 📊 v0.26.0 Release Notes
 
 > **Version**: 0.26.0 | **Date**: 2026-02-16
