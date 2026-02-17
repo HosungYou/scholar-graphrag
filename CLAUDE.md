@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-16
-> **Version**: 6.0.0 (v0.25.0 Stabilize, Scale, Enhance)
+> **Version**: 6.1.0 (v0.26.0 Per-User LLM Provider Selection)
 
 ## Project Overview
 
@@ -731,6 +731,35 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.26.0 Release Notes
+
+> **Version**: 0.26.0 | **Date**: 2026-02-16
+> **Full Notes**: See `RELEASE_NOTES_v0.26.0.md`
+
+### Per-User LLM Provider Selection
+- **Problem**: Settings UI saved provider/model/API keys but backend ignored them — always used server Groq
+- **Solution**: New `backend/llm/user_provider.py` per-user provider factory with 3-tier fallback (user key → server key → default)
+- **Chat**: Replaced global `_orchestrator` singleton with per-user orchestrator cache (5-min TTL)
+- **Import**: Replaced local `get_llm_provider()` with `create_llm_provider_for_user(user_id)` at all 4 call sites
+- **Settings API**: Added `GET /api/settings/preferences` endpoint + cache invalidation on PUT
+- **Frontend**: Loads saved prefs on mount, updated model defaults (gpt-4o-mini, gemini-1.5-flash), missing-key amber warning
+
+### Provider Options
+| Provider | Model | RPM | Notes |
+|----------|-------|-----|-------|
+| Groq (default) | llama-3.3-70b-versatile | 20 | Free tier |
+| OpenAI | gpt-4o-mini | 10,000 | Fast imports |
+| Anthropic | claude-haiku-4-5-20251001 | 4,000 | High quality |
+| Google | gemini-1.5-flash | 1,000 | Alternative |
+
+### Technical
+- 8 files changed (1 new + 7 modified), +303/-119 lines
+- 0 TypeScript errors, 0 Python compile errors
+- No DB migration needed (`user_profiles.preferences` JSONB already exists)
+- Backward compatible: unauthenticated requests fall back to server default
 
 ---
 

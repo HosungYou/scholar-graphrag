@@ -1,8 +1,8 @@
 # Implementation Status Matrix
 
 > **Last Updated**: 2026-02-16
-> **Version**: v0.25.0 (deployed)
-> **Tracking**: All features from v0.20.0 through v0.25.0
+> **Version**: v0.26.0 (deployed)
+> **Tracking**: All features from v0.20.0 through v0.26.0
 
 ## Status Labels
 
@@ -136,16 +136,28 @@
 
 ---
 
+## Phase 5: Per-User LLM Provider Selection (v0.26)
+
+| # | Feature | Plan Ref | Code Files | DB Migration | Deploy | Status |
+|---|---------|----------|------------|--------------|--------|--------|
+| 5-1 | Per-user provider factory + TTL cache | v0.26/1 | `backend/llm/user_provider.py` (NEW) | N/A | Render | `[CODED]` |
+| 5-2 | Per-user orchestrator cache (chat.py) | v0.26/2 | `backend/routers/chat.py` | N/A | Render | `[CODED]` |
+| 5-3 | Per-user import provider (import_.py) | v0.26/3 | `backend/routers/import_.py` | N/A | Render | `[CODED]` |
+| 5-4 | GET /preferences endpoint + cache invalidation | v0.26/4 | `backend/routers/settings.py` | N/A | Render | `[CODED]` |
+| 5-5 | Frontend load prefs + missing-key warning | v0.26/5 | `frontend/app/settings/page.tsx`, `frontend/lib/api.ts` | N/A | Vercel | `[CODED]` |
+
+---
+
 ## Summary Statistics
 
 | Status | Count |
 |--------|-------|
 | `[PLANNED]` | 1 |
-| `[CODED]` | 0 |
+| `[CODED]` | 5 |
 | `[DEPLOYED]` | 23 |
 | `[VERIFIED]` | 25 |
 | `[DEFERRED]` | 1 |
-| **Total** | **50** |
+| **Total** | **55** |
 
 ---
 
