@@ -1,10 +1,22 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Graph3D } from '@/components/graph/Graph3D';
-import { KnowledgeGraph3D } from '@/components/graph/KnowledgeGraph3D';
-import { GapPanel } from '@/components/graph/GapPanel';
+
+// Dynamic imports with ssr:false to prevent Three.js "window is not defined" during static generation
+const Graph3D = dynamic(
+  () => import('@/components/graph/Graph3D').then(mod => ({ default: mod.Graph3D })),
+  { ssr: false }
+);
+const KnowledgeGraph3D = dynamic(
+  () => import('@/components/graph/KnowledgeGraph3D').then(mod => ({ default: mod.KnowledgeGraph3D })),
+  { ssr: false }
+);
+const GapPanel = dynamic(
+  () => import('@/components/graph/GapPanel').then(mod => ({ default: mod.GapPanel })),
+  { ssr: false }
+);
 import { ImportProgress } from '@/components/import/ImportProgress';
 import { api } from '@/lib/api';
 import { useGraphStore } from '@/hooks/useGraphStore';
