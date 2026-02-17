@@ -191,29 +191,22 @@ postgresql://postgres.arxntrtipkakbvhcpfqj:[PASSWORD]@aws-0-us-west-2.pooler.sup
 | Backend | Render | **Docker** | `https://scholarag-graph-docker.onrender.com` |
 | Database | Supabase | PostgreSQL+pgvector | - |
 
-### ⚠️ Git Remote Configuration (CRITICAL)
+### Git Remote Configuration
 
-> **INFRA-013 (2026-02-13)**: Both Vercel AND Render deploy from `render` remote.
+> **INFRA-016 (2026-02-17)**: Consolidated to single remote. `ScholaRAG_Graph` repo deleted.
 
 ```
-origin  → https://github.com/HosungYou/ScholaRAG_Graph.git   # Development repo (backup)
-render  → https://github.com/HosungYou/scholar-graphrag.git   # Deployment repo (Vercel + Render)
+origin  → https://github.com/HosungYou/scholar-graphrag.git   # Production (Vercel + Render)
 ```
-
-**Both frontend (Vercel) and backend (Render) are connected to the `scholar-graphrag` repo.**
 
 | Remote | Purpose | Connected Services |
 |--------|---------|-------------------|
-| `origin` (ScholaRAG_Graph) | Development, code backup | None |
-| `render` (scholar-graphrag) | **Production deployment** | **Vercel + Render** |
+| `origin` (scholar-graphrag) | **Production deployment** | **Vercel + Render** |
 
 **To deploy ANY change (frontend or backend):**
 ```bash
-git push render main    # Triggers Vercel (frontend) + Render (backend)
-git push origin main    # Optional: sync development repo
+git push origin main    # Triggers Vercel (frontend) + Render (backend)
 ```
-
-> ⚠️ **Common mistake**: Pushing only to `origin` does NOT deploy anything. Always push to `render` for deployment.
 
 ### ⚠️ Deprecated Services
 | Service | Status | Notes |
@@ -236,7 +229,7 @@ CORS_ORIGINS=https://schola-rag-graph.vercel.app,https://scholarag-graph.vercel.
 **History**: INFRA-006 (2026-01-21) disabled auto-deploy to prevent import interruption (BUG-028). Re-enabled 2026-02-13 after stabilization.
 
 **To Deploy**:
-1. Push to `render` remote: `git push render main`
+1. Push to `origin` remote: `git push origin main`
 2. Frontend (Vercel): Auto-deploys from push
 3. Backend (Render): Auto-deploys from push
 4. ⚠️ Still avoid deploying during active import operations if possible

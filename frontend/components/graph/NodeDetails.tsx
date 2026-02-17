@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, ExternalLink, MessageSquare, Share2, Loader2, ChevronDown, ChevronUp, Hexagon, Diamond, Pentagon, Square, Octagon } from 'lucide-react';
 import type { GraphEntity, EntityType, PaperProperties, AuthorProperties, ConceptProperties, MethodProperties, FindingProperties } from '@/types';
 import { api } from '@/lib/api';
@@ -115,6 +115,25 @@ export function NodeDetails({
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
   const [showFullAbstract, setShowFullAbstract] = useState(false);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ bottom?: number; top?: number; left: number }>({ bottom: 16, left: 16 });
+
+  const adjustPosition = useCallback(() => {
+    if (!panelRef.current) return;
+    const rect = panelRef.current.getBoundingClientRect();
+
+    // If panel overflows top of viewport, flip to top-anchored
+    if (rect.top < 0) {
+      setPosition({ top: 16, left: 16 });
+    } else {
+      setPosition({ bottom: 16, left: 16 });
+    }
+  }, []);
+
+  useEffect(() => {
+    adjustPosition();
+  }, [node, adjustPosition]);
 
   if (!node) return null;
 
@@ -397,7 +416,7 @@ export function NodeDetails({
             <p className="font-mono text-xs uppercase tracking-wider text-muted mb-1">
               {key.replace(/_/g, ' ')}
             </p>
-            <p className="text-sm text-ink dark:text-paper">
+            <p className="text-sm text-ink dark:text-paper break-words">
               {typeof value === 'object' ? JSON.stringify(value) : String(value)}
             </p>
           </div>
@@ -407,7 +426,15 @@ export function NodeDetails({
   };
 
   return (
-    <div className="absolute bottom-4 left-4 right-4 max-w-md bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 overflow-hidden z-10">
+    <div
+      ref={panelRef}
+      className="absolute max-w-md bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 overflow-hidden z-10"
+      style={{
+        left: position.left,
+        right: 16,
+        ...(position.top !== undefined ? { top: position.top } : { bottom: position.bottom }),
+      }}
+    >
       {/* Header with left accent bar */}
       <div className="relative border-b border-ink/10 dark:border-paper/10 px-4 py-3">
         {/* Left accent bar */}
@@ -451,7 +478,7 @@ export function NodeDetails({
       </div>
 
       {/* Content */}
-      <div className="p-4 max-h-64 overflow-y-auto">
+      <div className="p-4 max-h-64 overflow-y-auto break-words">
         {renderDetails()}
 
         {/* AI Explanation Section */}
@@ -460,7 +487,7 @@ export function NodeDetails({
             <div className="relative pl-3">
               <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-teal" />
               <p className="font-mono text-xs uppercase tracking-wider text-accent-teal mb-2">AI Analysis</p>
-              <p className="text-sm text-ink dark:text-paper leading-relaxed">{aiExplanation}</p>
+              <p className="text-sm text-ink dark:text-paper leading-relaxed break-words">{aiExplanation}</p>
             </div>
           </div>
         )}

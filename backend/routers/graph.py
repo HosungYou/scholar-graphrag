@@ -506,7 +506,8 @@ async def get_visualization_data(
         # Get nodes
         nodes_query = f"""
             SELECT id, entity_type::text, name, properties,
-                   COALESCE(array_length(source_paper_ids, 1), 0) as paper_count
+                   COALESCE(array_length(source_paper_ids, 1), 0) as paper_count,
+                   source_paper_ids
             FROM entities
             WHERE project_id = $1 {type_filter} {scoped_filter}
             ORDER BY
@@ -527,6 +528,12 @@ async def get_visualization_data(
             row_count=len(node_rows),
             project_id=str(project_id),
         )
+
+        # Build entity → source papers mapping for edge paper_count
+        entity_papers: dict[str, set[str]] = {}
+        for row in node_rows:
+            raw_ids = row.get("source_paper_ids") or []
+            entity_papers[str(row["id"])] = set(str(pid) for pid in raw_ids)
 
         nodes = []
         for row in node_rows:
@@ -571,17 +578,26 @@ async def get_visualization_data(
                 project_id=str(project_id),
             )
 
-            edges = [
-                EdgeResponse(
-                    id=str(row["id"]),
-                    source=str(row["source_id"]),
-                    target=str(row["target_id"]),
-                    relationship_type=_normalize_relationship_type(row["relationship_type"]),
-                    properties=_parse_json_field(row["properties"]),
-                    weight=row["weight"] or 1.0,
+            edges = []
+            for row in edge_rows:
+                edge_props = _parse_json_field(row["properties"])
+                # Compute paper_count for CO_OCCURS_WITH from shared papers
+                rel_type = _normalize_relationship_type(row["relationship_type"])
+                if rel_type == "CO_OCCURS_WITH":
+                    src_papers = entity_papers.get(str(row["source_id"]), set())
+                    tgt_papers = entity_papers.get(str(row["target_id"]), set())
+                    shared = len(src_papers & tgt_papers)
+                    edge_props["paper_count"] = shared if shared > 0 else 1
+                edges.append(
+                    EdgeResponse(
+                        id=str(row["id"]),
+                        source=str(row["source_id"]),
+                        target=str(row["target_id"]),
+                        relationship_type=rel_type,
+                        properties=edge_props,
+                        weight=row["weight"] or 1.0,
+                    )
                 )
-                for row in edge_rows
-            ]
 
             logger.info(f"Visualization: {len(nodes)} nodes, {len(edges)} edges (both endpoints visible)")
         else:
