@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useParams } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
@@ -15,10 +16,28 @@ import {
   Hexagon,
   PanelLeftClose,
   PanelLeft,
+  Box,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { KnowledgeGraph3D } from '@/components/graph/KnowledgeGraph3D';
+
+// Dynamic import with SSR disabled — Three.js/react-force-graph-3d requires `window`
+const KnowledgeGraph3D = dynamic(
+  () => import('@/components/graph/KnowledgeGraph3D').then(mod => ({ default: mod.KnowledgeGraph3D })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center h-full bg-[#0d1117]">
+        <div className="text-center">
+          <Box className="w-10 h-10 text-accent-teal animate-pulse mx-auto mb-4" />
+          <p className="font-mono text-xs uppercase tracking-wider text-muted">
+            Loading 3D knowledge graph...
+          </p>
+        </div>
+      </div>
+    ),
+  }
+);
 import { NodeDetails } from '@/components/graph/NodeDetails';
 import { FilterPanel } from '@/components/graph/FilterPanel';
 import { SearchBar } from '@/components/graph/SearchBar';
