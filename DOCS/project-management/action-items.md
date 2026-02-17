@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-16
+> **마지막 업데이트**: 2026-02-17
 > **관리자**: Claude Code
 
 ---
@@ -11,14 +11,38 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 23 | 22 | 1 | 0 |
+| 🔴 High | 25 | 24 | 1 | 0 |
 | 🟡 Medium | 26 | 26 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **54** | **53** | **1** | **0** |
+| **Total** | **56** | **55** | **1** | **0** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### BUG-049: asyncpg JSONB 코덱 — preferences가 dict 대신 str 반환
+- **Source**: 프로덕션 Settings 500 에러 디버깅 (2026-02-17)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: asyncpg의 기본 jsonb 코덱이 Python dict가 아닌 raw JSON string을 반환. `user_profiles.preferences` 읽는 5곳 전부 영향:
+  - `settings.py` PUT: `{**current_prefs}` → 500 에러
+  - `settings.py` GET /api-keys: `.get()` 조용히 실패 → "Not Set"
+  - `settings.py` GET /preferences: 사용자 LLM 선택 무시
+  - `user_provider.py`: 사용자 키로 LLM 생성 안 됨
+  - `integrations.py`: 사용자 S2 키 무시 → 429 Rate Limit
+- **Fix**: `database.py` pool `init` 콜백에 `set_type_codec('jsonb', encoder=json.dumps, decoder=json.loads)` 등록
+- **Completed**: 2026-02-17
+
+### BUG-048: Settings UPSERT — user_profiles 행 부재 + NOT NULL 제약
+- **Source**: 프로덕션 Settings 저장 실패 (2026-02-17)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: Settings API key 저장 시 3단계 연쇄 실패:
+  - (a) asyncpg `::jsonb`에 dict 대신 str 필요 → `json.dumps` 추가
+  - (b) `user_profiles` 행이 없으면 `UPDATE` 0 rows → UPSERT 패턴으로 변경
+  - (c) UPSERT INSERT에 email 누락 → NOT NULL 제약 위반
+- **Fix**: UPSERT `INSERT INTO user_profiles (id, email, preferences) ... ON CONFLICT (id) DO UPDATE`
+- **Completed**: 2026-02-17
 
 ### INFRA-015: Render DATABASE_URL 프로젝트 ref 확인/수정 필요
 - **Source**: Migration 022-025 실행 중 발견 (2026-02-16)

@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-17
-> **Version**: 6.3.0 (v0.29.0 Auth Enforcement, Settings Fix, Graph Stability & Find Papers)
+> **Version**: 6.4.0 (v0.29.1 asyncpg JSONB Codec Fix — Settings & User Preferences)
 
 ## Project Overview
 
@@ -724,6 +724,23 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.29.1 Release Notes
+
+> **Version**: 0.29.1 | **Date**: 2026-02-17
+> **Full Notes**: See `RELEASE_NOTES_v0.29.1.md`
+
+### asyncpg JSONB Codec Fix — Settings & User Preferences
+- **BUG-049**: asyncpg default jsonb codec returns raw strings, not Python dicts. Registered `json.loads`/`json.dumps` codec on pool `init` callback — fixes ALL 5 locations reading `user_profiles.preferences`
+- **BUG-048**: Settings UPSERT — `INSERT ON CONFLICT DO UPDATE` with email for NOT NULL constraint; `json.dumps` removed (codec handles it)
+- **Cascade fix**: Settings save (500→success), API key persistence, per-user LLM provider selection, S2 key lookup for Find Papers
+
+### Technical
+- 2 files changed (backend only), +24/-8 lines
+- 0 TypeScript errors, 0 Python errors, 23/23 tests passing
+- No DB migrations, no new env vars, no frontend changes
 
 ---
 

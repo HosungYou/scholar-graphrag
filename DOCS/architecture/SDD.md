@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.29.0
+**Version**: 0.29.1
 **Last Updated**: 2026-02-17
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -12,8 +12,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Document Version** | 2.0.0 |
-| **Project Version** | 0.29.0 |
+| **Document Version** | 2.1.0 |
+| **Project Version** | 0.29.1 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -1281,6 +1281,10 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### v0.29.1 — asyncpg JSONB Codec Fix (2026-02-17)
+- **Database (BUG-049)**: Registered `json.loads`/`json.dumps` codec on asyncpg pool `init` — all `jsonb` columns now return Python dicts instead of raw strings. Fixes 5 silent failures in settings, user_provider, and integrations.
+- **Settings (BUG-048)**: UPSERT pattern (`INSERT ON CONFLICT DO UPDATE`) with email column for user_profiles. Codec handles dict→jsonb serialization automatically.
 
 ### v0.29.0 — Auth Enforcement, Settings Fix, Graph Stability & Find Papers (2026-02-17)
 - **Security (SEC-005)**: All endpoints now return HTTP 401 when `current_user is None` — prevents unauthenticated data access across `verify_project_access()`, all project CRUD, and `search_nodes`
