@@ -1118,7 +1118,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       });
 
       const line = new THREE.Line(geometry, material);
-      line.computeLineDistances();
 
       return line;
     }
@@ -1135,7 +1134,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       });
 
       const line = new THREE.Line(geometry, material);
-      line.computeLineDistances();
 
       return line;
     }
@@ -1155,7 +1153,6 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
     });
 
     const line = new THREE.Line(geometry, material);
-    line.computeLineDistances();
 
     return line;
   }, []);

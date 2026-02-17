@@ -29,7 +29,7 @@ def invalidate_user_provider_cache(user_id: str) -> None:
 async def get_user_llm_preferences(user_id: str) -> dict:
     """Read llm_provider, llm_model, api_keys from user_profiles.preferences."""
     try:
-        row = await db.fetch_one(
+        row = await db.fetchrow(
             "SELECT preferences FROM user_profiles WHERE id = $1",
             user_id,
         )

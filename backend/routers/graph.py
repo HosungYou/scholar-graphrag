@@ -11,6 +11,7 @@ Security:
 
 import json
 import logging
+import re
 from typing import List, Optional
 from uuid import UUID
 from time import perf_counter
@@ -264,14 +265,15 @@ async def verify_project_access(
     if not exists:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # If auth is configured, verify access
-    if current_user is not None:
-        has_access = await check_project_access(database, project_id, current_user.id)
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail=f"You don't have permission to {action} this project"
-            )
+    # Require authentication
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    has_access = await check_project_access(database, project_id, current_user.id)
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You don't have permission to {action} this project"
+        )
 
 
 async def get_project_id_from_node(database, node_id: str) -> Optional[UUID]:
@@ -781,6 +783,10 @@ async def search_nodes(
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """Search nodes by query string. Requires auth in production."""
+    # Require authentication
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     # If project_id is provided, verify access
     if request.project_id:
         await verify_project_access(
@@ -795,9 +801,8 @@ async def search_nodes(
             project_filter = "AND project_id = $3"
             params.append(request.project_id)
         else:
-            # If no project_id, only search in accessible projects
-            if current_user is not None:
-                project_filter = """
+            # Only search in accessible projects
+            project_filter = """
                 AND project_id IN (
                     SELECT p.id FROM projects p
                     LEFT JOIN project_collaborators pc ON p.id = pc.project_id
@@ -809,9 +814,7 @@ async def search_nodes(
                        OR p.visibility = 'public'
                 )
                 """
-                params.append(current_user.id)
-            else:
-                project_filter = ""
+            params.append(current_user.id)
 
         if request.entity_types:
             type_offset = len(params) + 1
@@ -1517,7 +1520,10 @@ async def refresh_gap_analysis(
                 a_names,
                 b_names,
                 gap.gap_strength,
-                gap.bridge_concepts or [],
+                # v0.29.0: Store concept names instead of UUIDs for bridge_candidates
+                [c["name"] for c in concepts
+                 if c["id"] in set(gap.bridge_concepts or []) and c["name"]]
+                or gap.bridge_concepts or [],
                 gap.suggested_research_questions or [],
                 json.dumps(potential_edges_json),
             )
@@ -2047,6 +2053,9 @@ class GapReproReportResponse(BaseModel):
     recommendation: GapRecommendationTraceResponse
 
 
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-', re.IGNORECASE)
+
+
 def _build_gap_recommendation_query(
     bridge_candidates: List[str],
     cluster_a_names: List[str],
@@ -2057,10 +2066,12 @@ def _build_gap_recommendation_query(
     v0.19.0: Filter empty strings and avoid literal 'research gap' fallback.
     v0.20.0: Improved to produce better academic search terms by limiting to
     the most specific bridge candidates and cross-cluster concept pairs.
+    v0.29.0: Filter UUID patterns from bridge_candidates (legacy data stored IDs instead of names).
     Returns empty string if no meaningful terms available (caller should skip S2 call).
     """
-    # Try bridge candidates first (most specific)
-    parts = [c.strip() for c in (bridge_candidates or [])[:3] if c and c.strip()]
+    # Try bridge candidates first (most specific), filtering out UUIDs
+    parts = [c.strip() for c in (bridge_candidates or [])[:3]
+             if c and c.strip() and not _UUID_RE.match(c.strip())]
     if parts:
         return " ".join(parts)
 

@@ -130,15 +130,9 @@ async def list_projects(
     Requires authentication in production.
     """
     try:
-        # If no auth is configured (development mode), return all projects
+        # Require authentication
         if current_user is None:
-            rows = await database.fetch(
-                """
-                SELECT id, name, research_question, source_path, created_at, updated_at
-                FROM projects
-                ORDER BY created_at DESC
-                """
-            )
+            raise HTTPException(status_code=401, detail="Authentication required")
         else:
             # Filter by user access: owned, collaborated, team-shared, public, or unowned
             # NOTE: owner_id IS NULL covers projects created before auth was added
@@ -256,14 +250,15 @@ async def get_project(
     Requires authentication in production.
     """
     try:
-        # Verify access if auth is configured
-        if current_user is not None:
-            has_access = await check_project_access(database, project_id, current_user.id)
-            if not has_access:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You don't have permission to access this project"
-                )
+        # Require authentication
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        has_access = await check_project_access(database, project_id, current_user.id)
+        if not has_access:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to access this project"
+            )
 
         row = await database.fetchrow(
             """
@@ -312,13 +307,14 @@ async def update_project(
     Requires authentication in production.
     """
     try:
-        # Verify ownership if auth is configured
-        if current_user is not None:
-            # Check if user is owner or has admin role on the project
-            is_owner = await check_project_ownership(database, project_id, current_user.id)
+        # Require authentication
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        # Check if user is owner or has admin role on the project
+        is_owner = await check_project_ownership(database, project_id, current_user.id)
 
-            # Also check if user is an admin collaborator
-            is_admin = await database.fetchval(
+        # Also check if user is an admin collaborator
+        is_admin = await database.fetchval(
                 """
                 SELECT EXISTS(
                     SELECT 1 FROM project_collaborators
@@ -329,11 +325,11 @@ async def update_project(
                 current_user.id,
             )
 
-            if not is_owner and not is_admin:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only the project owner or admin can update this project"
-                )
+        if not is_owner and not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project owner or admin can update this project"
+            )
 
         # Build dynamic update query
         updates = []
@@ -400,14 +396,15 @@ async def delete_project(
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        # Verify ownership if auth is configured - only owner can delete
-        if current_user is not None:
-            is_owner = await check_project_ownership(database, project_id, current_user.id)
-            if not is_owner:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only the project owner can delete this project"
-                )
+        # Require authentication - only owner can delete
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        is_owner = await check_project_ownership(database, project_id, current_user.id)
+        if not is_owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project owner can delete this project"
+            )
 
         # Delete in order: team_projects, project_collaborators, relationships, entities, project
         await database.execute(
@@ -455,14 +452,15 @@ async def get_project_stats_endpoint(
 
     Requires authentication in production.
     """
-    # Verify access if auth is configured
-    if current_user is not None:
-        has_access = await check_project_access(database, project_id, current_user.id)
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to access this project"
-            )
+    # Require authentication
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    has_access = await check_project_access(database, project_id, current_user.id)
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to access this project"
+        )
 
     return await _get_project_stats(database, str(project_id))
 

@@ -114,7 +114,7 @@ async def get_api_keys(
     user_preferences = {}
     if current_user:
         try:
-            row = await db.fetch_one(
+            row = await db.fetchrow(
                 "SELECT preferences FROM user_profiles WHERE id = $1",
                 current_user.id
             )
@@ -174,7 +174,7 @@ async def get_preferences(
         return {"llm_provider": settings.default_llm_provider, "llm_model": settings.default_llm_model}
 
     try:
-        row = await db.fetch_one(
+        row = await db.fetchrow(
             "SELECT preferences FROM user_profiles WHERE id = $1",
             current_user.id
         )
@@ -239,7 +239,7 @@ async def update_api_keys(
         # Handle key deletions (empty strings)
         # We need to read current preferences and selectively update
         current_prefs = {}
-        row = await db.fetch_one(
+        row = await db.fetchrow(
             "SELECT preferences FROM user_profiles WHERE id = $1",
             current_user.id
         )
