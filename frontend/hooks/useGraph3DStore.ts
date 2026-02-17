@@ -121,7 +121,7 @@ export const useGraph3DStore = create<Graph3DStore>((set, get) => ({
       intensity: 0.5,
       glowSize: 1.3,
     },
-    labelVisibility: 'important' as LabelVisibility,  // v0.8.0: Default to 'important'
+    labelVisibility: 'all' as LabelVisibility,  // v0.30.0: All labels visible by default
   },
   lodConfig: DEFAULT_LOD_CONFIG,
 

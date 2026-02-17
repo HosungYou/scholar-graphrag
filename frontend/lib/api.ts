@@ -27,6 +27,32 @@ import type {
 } from '@/types';
 import { getSession, supabase } from './supabase';
 
+// ============================================
+// Temporal Trends Types (Phase 3A)
+// ============================================
+
+export interface TemporalTrend {
+  id: string;
+  name: string;
+  entity_type: string;
+  first_seen_year: number;
+  last_seen_year: number | null;
+  paper_count: number;
+}
+
+export interface TemporalTrendsData {
+  year_range: { min: number; max: number };
+  emerging: TemporalTrend[];
+  stable: TemporalTrend[];
+  declining: TemporalTrend[];
+  summary: {
+    total_classified: number;
+    emerging_count: number;
+    stable_count: number;
+    declining_count: number;
+  };
+}
+
 // API URL Configuration:
 // 1. Use NEXT_PUBLIC_API_URL if explicitly set (recommended for production)
 // 2. In production without env var: hardcode Render backend URL (avoids empty URL issues)
@@ -907,6 +933,44 @@ class ApiClient {
     total_without_year: number;
   }> {
     return this.request(`/api/graph/temporal/${projectId}/timeline`);
+  }
+
+  async getTemporalTrends(projectId: string): Promise<TemporalTrendsData> {
+    return this.request<TemporalTrendsData>(`/api/graph/temporal/${projectId}/trends`);
+  }
+
+  // ============================================
+  // v0.30.0: Project Summary
+  // ============================================
+
+  async getProjectSummary(projectId: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>(`/api/graph/summary/${projectId}`);
+  }
+
+  async exportProjectSummary(projectId: string, format: 'markdown' | 'html' = 'markdown'): Promise<Blob> {
+    const url = `${this.baseUrl}/api/graph/summary/${projectId}/export?format=${format}`;
+    const authHeaders = await this.getAuthHeaders();
+    const response = await fetch(url, { headers: { ...authHeaders } });
+    if (!response.ok) throw new Error(`Export failed: ${response.status}`);
+    return response.blob();
+  }
+
+  // ============================================
+  // v0.30.0: Paper Fit Analysis
+  // ============================================
+
+  async analyzePaperFit(projectId: string, data: { title: string; abstract?: string; doi?: string }): Promise<{
+    paper_title: string;
+    paper_abstract: string | null;
+    matched_entities: Array<{ id: string; name: string; entity_type: string; similarity: number; cluster_id: string | null }>;
+    community_relevance: Array<{ cluster_id: number; label: string; relevance_score: number; matched_count: number }>;
+    gap_connections: Array<{ gap_id: string; cluster_a_label: string; cluster_b_label: string; connection_type: string }>;
+    fit_summary: string;
+  }> {
+    return this.request(`/api/graph/${projectId}/paper-fit`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // ============================================

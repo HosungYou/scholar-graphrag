@@ -13,6 +13,18 @@ interface GraphMetrics {
   node_count: number;
   edge_count: number;
   cluster_count: number;
+  // v0.30.0: Extended quality metrics
+  modularity_raw?: number;
+  modularity_interpretation?: string;
+  silhouette_score?: number;
+  avg_cluster_coherence?: number;
+  cluster_coverage?: number;
+  // v0.30.0: Entity extraction quality
+  entity_type_diversity?: number;
+  paper_coverage?: number;
+  avg_entities_per_paper?: number;
+  cross_paper_ratio?: number;
+  type_distribution?: Record<string, number>;
 }
 
 interface DiversityMetrics {
@@ -291,20 +303,74 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
               </div>
             )}
 
-            {/* Quality Metrics */}
-            <div className="mb-4">
-              <MetricBar
-                label="Modularity"
-                value={metrics.modularity}
-                color="#4ECDC4"
-                tooltip="Cluster separation quality (higher = more distinct clusters)"
-              />
-              <MetricBar
-                label="Diversity"
-                value={metrics.diversity}
-                color="#96CEB4"
-                tooltip="Cluster size balance (higher = more even distribution)"
-              />
+            {/* v0.30.0: Quality Metrics - Raw values with interpretation */}
+            <div className="mb-4 space-y-3">
+              {/* Raw Modularity with interpretation badge */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-xs font-mono text-muted">Modularity</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-mono text-white font-bold">
+                      {metrics.modularity_raw?.toFixed(2) ?? metrics.modularity.toFixed(2)}
+                    </span>
+                    {metrics.modularity_interpretation && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                        metrics.modularity_interpretation === '강함'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : metrics.modularity_interpretation === '보통'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-red-500/20 text-red-400'
+                      }`}>
+                        {metrics.modularity_interpretation}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500 bg-[#4ECDC4]"
+                    style={{ width: `${Math.min(100, Math.max(0, (metrics.modularity_raw ?? metrics.modularity) * 100))}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Silhouette Score */}
+              {metrics.silhouette_score !== undefined && metrics.silhouette_score !== null && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs font-mono text-muted" title="클러스터 내 응집도 vs 클러스터 간 분리도 (-1~1)">Silhouette</span>
+                    <span className="text-xs font-mono text-white">{metrics.silhouette_score.toFixed(2)}</span>
+                  </div>
+                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-[#96CEB4]"
+                      style={{ width: `${Math.max(0, (metrics.silhouette_score + 1) / 2 * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Cluster Coherence */}
+              {metrics.avg_cluster_coherence !== undefined && metrics.avg_cluster_coherence !== null && (
+                <MetricBar
+                  label="Coherence"
+                  value={metrics.avg_cluster_coherence}
+                  color="#45B7D1"
+                  tooltip="클러스터 내 엔티티 간 평균 의미 유사도"
+                />
+              )}
+
+              {/* Coverage */}
+              {metrics.cluster_coverage !== undefined && metrics.cluster_coverage !== null && (
+                <MetricBar
+                  label="Coverage"
+                  value={metrics.cluster_coverage}
+                  color="#96CEB4"
+                  tooltip="클러스터에 배정된 엔티티 비율"
+                />
+              )}
+
+              {/* Density (keep existing) */}
               <MetricBar
                 label="Density"
                 value={metrics.density}
@@ -312,6 +378,78 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
                 tooltip="Connection density (higher = more interconnected)"
               />
             </div>
+
+            {/* v0.30.0: Entity Quality Metrics */}
+            {(metrics.entity_type_diversity !== undefined || metrics.paper_coverage !== undefined) && (
+              <div className="mb-4 pt-3 border-t border-white/10 space-y-2">
+                <span className="text-[10px] font-mono text-muted/70 uppercase tracking-wider">Entity Quality</span>
+
+                {metrics.entity_type_diversity !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted" title="8개 엔티티 타입 중 사용 비율">Type Diversity</span>
+                    <span className="text-white font-mono">{Math.round((metrics.entity_type_diversity ?? 0) * 100)}%</span>
+                  </div>
+                )}
+
+                {metrics.paper_coverage !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted" title="1개 이상 엔티티가 추출된 논문 비율">Paper Coverage</span>
+                    <span className="text-white font-mono">{Math.round((metrics.paper_coverage ?? 0) * 100)}%</span>
+                  </div>
+                )}
+
+                {metrics.avg_entities_per_paper !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted" title="논문당 평균 엔티티 수">Entities/Paper</span>
+                    <span className="text-white font-mono">{metrics.avg_entities_per_paper?.toFixed(1)}</span>
+                  </div>
+                )}
+
+                {metrics.cross_paper_ratio !== undefined && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted" title="3편+ 논문에서 등장하는 엔티티 비율">Cross-Paper</span>
+                    <span className="text-white font-mono">{Math.round((metrics.cross_paper_ratio ?? 0) * 100)}%</span>
+                  </div>
+                )}
+
+                {/* Type distribution mini chart */}
+                {metrics.type_distribution && Object.keys(metrics.type_distribution).length > 0 && (
+                  <div className="mt-2">
+                    <span className="text-[10px] text-muted block mb-1">Type Distribution</span>
+                    <div className="flex gap-0.5 h-4">
+                      {Object.entries(metrics.type_distribution)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([type, count]) => {
+                          const maxCount = Math.max(...Object.values(metrics.type_distribution!));
+                          const height = maxCount > 0 ? (count / maxCount) * 100 : 0;
+                          const typeColors: Record<string, string> = {
+                            Concept: '#4ECDC4',
+                            Method: '#FF6B6B',
+                            Finding: '#96CEB4',
+                            Problem: '#FFEAA7',
+                            Dataset: '#DDA0DD',
+                            Metric: '#87CEEB',
+                            Innovation: '#FFD700',
+                            Limitation: '#FF7F50',
+                          };
+                          return (
+                            <div
+                              key={type}
+                              className="flex-1 rounded-t"
+                              style={{
+                                height: `${height}%`,
+                                backgroundColor: typeColors[type] || '#888',
+                                opacity: 0.7,
+                              }}
+                              title={`${type}: ${count}`}
+                            />
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Stats */}
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">

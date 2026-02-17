@@ -458,7 +458,7 @@ async def get_visualization_data(
     project_id: UUID,
     entity_types: Optional[List[str]] = Query(None),
     view_context: str = Query("hybrid"),
-    max_nodes: int = Query(2000, le=5000),
+    max_nodes: int = Query(500, le=5000),
     max_edges: int = Query(15000, ge=1000, le=50000),
     database=Depends(get_db),
     current_user: Optional[User] = Depends(require_auth_if_configured),
@@ -2859,6 +2859,18 @@ class GraphMetricsResponse(BaseModel):
     node_count: int
     edge_count: int
     cluster_count: int
+    # v0.30.0: Extended quality metrics
+    modularity_raw: Optional[float] = None
+    modularity_interpretation: Optional[str] = None
+    silhouette_score: Optional[float] = None
+    avg_cluster_coherence: Optional[float] = None
+    cluster_coverage: Optional[float] = None
+    # v0.30.0: Entity extraction quality
+    entity_type_diversity: Optional[float] = None
+    paper_coverage: Optional[float] = None
+    avg_entities_per_paper: Optional[float] = None
+    cross_paper_ratio: Optional[float] = None
+    type_distribution: Optional[dict] = None
 
 
 # ============================================
@@ -3138,6 +3150,118 @@ async def get_graph_metrics(
         # Compute graph metrics
         metrics = centrality_analyzer.compute_graph_metrics(nodes, edges, clusters)
 
+        # v0.30.0: Extended cluster quality metrics
+        # Build embeddings map for cluster quality
+        embeddings_map = {}
+        try:
+            emb_rows = await database.fetch(
+                """
+                SELECT id, embedding
+                FROM entities
+                WHERE project_id = $1
+                AND embedding IS NOT NULL
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                """,
+                str(project_id),
+            )
+            for row in emb_rows:
+                emb = _parse_embedding(row["embedding"])
+                if emb:
+                    embeddings_map[str(row["id"])] = emb
+        except Exception as e:
+            logger.warning(f"Failed to load embeddings for cluster quality: {e}")
+
+        cluster_quality = centrality_analyzer.compute_cluster_quality(
+            nodes, edges, clusters, embeddings_map=embeddings_map if embeddings_map else None
+        )
+
+        # v0.30.0: Entity extraction quality metrics
+        entity_quality = {}
+        try:
+            # Type distribution
+            type_rows = await database.fetch(
+                """
+                SELECT entity_type::text, COUNT(*) as count
+                FROM entities
+                WHERE project_id = $1
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                GROUP BY entity_type
+                """,
+                str(project_id),
+            )
+            type_dist = {row["entity_type"]: row["count"] for row in type_rows}
+            all_types = ['Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation']
+            used_types = len([t for t in all_types if t in type_dist])
+            entity_quality["type_distribution"] = type_dist
+            entity_quality["entity_type_diversity"] = round(used_types / len(all_types), 4)
+
+            # Paper coverage
+            paper_coverage_row = await database.fetchrow(
+                """
+                SELECT
+                    COUNT(DISTINCT pm.id) as total_papers,
+                    COUNT(DISTINCT pm.id) FILTER (
+                        WHERE EXISTS (
+                            SELECT 1 FROM entities e
+                            WHERE e.project_id = $1
+                            AND pm.id::text = ANY(e.source_paper_ids)
+                        )
+                    ) as covered_papers
+                FROM paper_metadata pm
+                WHERE pm.project_id = $1
+                """,
+                str(project_id),
+            )
+            if paper_coverage_row and paper_coverage_row["total_papers"] > 0:
+                entity_quality["paper_coverage"] = round(
+                    paper_coverage_row["covered_papers"] / paper_coverage_row["total_papers"], 4
+                )
+            else:
+                entity_quality["paper_coverage"] = 0.0
+
+            # Avg entities per paper
+            avg_row = await database.fetchrow(
+                """
+                SELECT AVG(array_length(source_paper_ids, 1)) as avg_papers_per_entity,
+                       COUNT(*) as total_entities
+                FROM entities
+                WHERE project_id = $1
+                AND source_paper_ids IS NOT NULL
+                AND array_length(source_paper_ids, 1) > 0
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                """,
+                str(project_id),
+            )
+
+            # Cross-paper ratio: entities appearing in 3+ papers
+            cross_row = await database.fetchrow(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE array_length(source_paper_ids, 1) >= 3) as cross_paper,
+                    COUNT(*) as total
+                FROM entities
+                WHERE project_id = $1
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                """,
+                str(project_id),
+            )
+
+            total_papers = paper_coverage_row["total_papers"] if paper_coverage_row else 1
+            total_entities = avg_row["total_entities"] if avg_row else 0
+            entity_quality["avg_entities_per_paper"] = round(
+                total_entities / max(total_papers, 1), 1
+            )
+
+            if cross_row and cross_row["total"] > 0:
+                entity_quality["cross_paper_ratio"] = round(
+                    cross_row["cross_paper"] / cross_row["total"], 4
+                )
+            else:
+                entity_quality["cross_paper_ratio"] = 0.0
+
+        except Exception as e:
+            logger.warning(f"Failed to compute entity quality metrics: {e}")
+
         payload = {
             "modularity": metrics["modularity"],
             "diversity": metrics["diversity"],
@@ -3147,6 +3271,16 @@ async def get_graph_metrics(
             "node_count": len(nodes),
             "edge_count": len(edges),
             "cluster_count": len(clusters),
+            "modularity_raw": cluster_quality.get("modularity_raw", None),
+            "modularity_interpretation": cluster_quality.get("modularity_interpretation", None),
+            "silhouette_score": cluster_quality.get("silhouette_score", None),
+            "avg_cluster_coherence": cluster_quality.get("avg_cluster_coherence", None),
+            "cluster_coverage": cluster_quality.get("cluster_coverage", None),
+            "entity_type_diversity": entity_quality.get("entity_type_diversity", None),
+            "paper_coverage": entity_quality.get("paper_coverage", None),
+            "avg_entities_per_paper": entity_quality.get("avg_entities_per_paper", None),
+            "cross_paper_ratio": entity_quality.get("cross_paper_ratio", None),
+            "type_distribution": entity_quality.get("type_distribution", None),
         }
         await metrics_cache.set(cache_key, payload)
         return payload
@@ -3874,6 +4008,162 @@ async def get_temporal_timeline(
     except Exception as e:
         logger.error(f"Failed to get temporal timeline: {e}")
         raise HTTPException(500, "Failed to get temporal timeline data")
+
+
+# ============================================
+# Temporal Trends API (Phase 3A)
+# ============================================
+
+class TemporalTrend(BaseModel):
+    id: str
+    name: str
+    entity_type: str
+    first_seen_year: int
+    last_seen_year: Optional[int] = None
+    paper_count: int
+
+
+class TemporalTrendsResponse(BaseModel):
+    year_range: dict  # {min: int, max: int}
+    emerging: List[TemporalTrend]
+    stable: List[TemporalTrend]
+    declining: List[TemporalTrend]
+    summary: dict  # {total_classified, emerging_count, stable_count, declining_count}
+
+
+@router.get("/temporal/{project_id}/trends", response_model=TemporalTrendsResponse)
+async def get_temporal_trends(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Classify entities into Emerging / Stable / Declining based on temporal data.
+
+    - Emerging: first appeared within the last 2 years AND in 2+ papers
+    - Declining: last seen 3+ years before the most recent year
+    - Stable: everything else with 3+ papers
+
+    Requires auth in production.
+    """
+    await verify_project_access(database, project_id, current_user, "access")
+
+    cache_key = f"temporal_trends:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        # Get the most recent year across the project
+        max_year_row = await database.fetchrow(
+            """
+            SELECT MAX(COALESCE(last_seen_year, first_seen_year)) as max_year
+            FROM entities
+            WHERE project_id = $1
+              AND first_seen_year IS NOT NULL
+            """,
+            str(project_id),
+        )
+        max_year = max_year_row["max_year"] if max_year_row else None
+
+        if max_year is None:
+            empty_result = TemporalTrendsResponse(
+                year_range={"min": None, "max": None},
+                emerging=[],
+                stable=[],
+                declining=[],
+                summary={
+                    "total_classified": 0,
+                    "emerging_count": 0,
+                    "stable_count": 0,
+                    "declining_count": 0,
+                },
+            )
+            await metrics_cache.set(cache_key, empty_result)
+            return empty_result
+
+        # Fetch all temporally-annotated entities for classification
+        rows = await database.fetch(
+            """
+            SELECT id, name, entity_type::text,
+                   first_seen_year, last_seen_year,
+                   COALESCE(array_length(source_paper_ids, 1), 0) as paper_count,
+                   properties
+            FROM entities
+            WHERE project_id = $1
+              AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
+                                  'Dataset', 'Metric', 'Innovation', 'Limitation')
+              AND first_seen_year IS NOT NULL
+            ORDER BY first_seen_year DESC
+            """,
+            str(project_id),
+        )
+
+        if not rows:
+            empty_result = TemporalTrendsResponse(
+                year_range={"min": None, "max": None},
+                emerging=[],
+                stable=[],
+                declining=[],
+                summary={
+                    "total_classified": 0,
+                    "emerging_count": 0,
+                    "stable_count": 0,
+                    "declining_count": 0,
+                },
+            )
+            await metrics_cache.set(cache_key, empty_result)
+            return empty_result
+
+        min_year = min(row["first_seen_year"] for row in rows)
+
+        emerging: List[TemporalTrend] = []
+        stable: List[TemporalTrend] = []
+        declining: List[TemporalTrend] = []
+
+        for row in rows:
+            trend = TemporalTrend(
+                id=str(row["id"]),
+                name=row["name"],
+                entity_type=row["entity_type"],
+                first_seen_year=row["first_seen_year"],
+                last_seen_year=row["last_seen_year"],
+                paper_count=row["paper_count"],
+            )
+            lsy = row["last_seen_year"]
+            fsy = row["first_seen_year"]
+            pc = row["paper_count"]
+
+            # Emerging: first appeared within last 2 years AND in 2+ papers
+            if fsy >= max_year - 2 and pc >= 2:
+                emerging.append(trend)
+            # Declining: hasn't appeared in recent 3+ years
+            elif lsy is not None and lsy <= max_year - 3:
+                declining.append(trend)
+            # Stable: everything else with 3+ papers
+            elif pc >= 3:
+                stable.append(trend)
+
+        result = TemporalTrendsResponse(
+            year_range={"min": min_year, "max": max_year},
+            emerging=emerging,
+            stable=stable,
+            declining=declining,
+            summary={
+                "total_classified": len(emerging) + len(stable) + len(declining),
+                "emerging_count": len(emerging),
+                "stable_count": len(stable),
+                "declining_count": len(declining),
+            },
+        )
+        await metrics_cache.set(cache_key, result)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get temporal trends: {e}")
+        raise HTTPException(500, "Failed to get temporal trends data")
 
 
 # ============================================
@@ -4677,3 +4967,422 @@ async def get_communities(
             status_code=500,
             detail=f"Community detection failed: {str(e)}"
         )
+
+
+# ============================================
+# Phase 2A: Research Landscape Summary Endpoint
+# ============================================
+
+@router.get("/summary/{project_id}")
+async def get_project_summary(
+    project_id: UUID,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Get a unified research landscape summary for a project.
+
+    Aggregates overview stats, quality metrics, top entities by PageRank,
+    community clusters, structural gaps, and temporal info into a single response.
+    """
+    await verify_project_access(database, project_id, current_user, "access")
+
+    cache_key = f"project_summary:{project_id}"
+    cached = await metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        # ---- Project name ----
+        project_row = await database.fetchrow(
+            "SELECT name FROM projects WHERE id = $1",
+            str(project_id),
+        )
+        project_name = project_row["name"] if project_row else "Unknown Project"
+
+        # ---- Overview: paper / entity / relationship counts ----
+        paper_count = await database.fetchval(
+            "SELECT COUNT(*) FROM paper_metadata WHERE project_id = $1",
+            str(project_id),
+        ) or 0
+
+        entity_count = await database.fetchval(
+            """
+            SELECT COUNT(*) FROM entities
+            WHERE project_id = $1
+            """,
+            str(project_id),
+        ) or 0
+
+        relationship_count = await database.fetchval(
+            "SELECT COUNT(*) FROM relationships WHERE project_id = $1",
+            str(project_id),
+        ) or 0
+
+        type_rows = await database.fetch(
+            """
+            SELECT entity_type::text, COUNT(*) as count
+            FROM entities
+            WHERE project_id = $1
+            GROUP BY entity_type
+            """,
+            str(project_id),
+        )
+        entity_type_distribution = {r["entity_type"]: r["count"] for r in type_rows}
+
+        # ---- Quality metrics via CentralityAnalyzer ----
+        quality_metrics: dict = {}
+        try:
+            from graph.centrality_analyzer import centrality_analyzer, ClusterResult
+
+            node_rows = await database.fetch(
+                """
+                SELECT id, entity_type::text, name, properties
+                FROM entities
+                WHERE project_id = $1
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                """,
+                str(project_id),
+            )
+            edge_rows = await database.fetch(
+                """
+                SELECT id, source_id, target_id, relationship_type::text,
+                       COALESCE((properties->>'weight')::float, 1.0) as weight
+                FROM relationships
+                WHERE project_id = $1
+                """,
+                str(project_id),
+            )
+            cluster_rows_q = await database.fetch(
+                """
+                SELECT cluster_id, concepts, size
+                FROM concept_clusters
+                WHERE project_id = $1
+                ORDER BY cluster_id
+                """,
+                str(project_id),
+            )
+
+            nodes_list = [
+                {
+                    "id": str(r["id"]),
+                    "entity_type": r["entity_type"],
+                    "name": r["name"],
+                    "properties": _parse_json_field(r["properties"]),
+                }
+                for r in node_rows
+            ]
+            edges_list = [
+                {
+                    "id": str(r["id"]),
+                    "source": str(r["source_id"]),
+                    "target": str(r["target_id"]),
+                    "weight": float(r["weight"]) if r["weight"] else 1.0,
+                }
+                for r in edge_rows
+            ]
+            clusters_list = [
+                ClusterResult(
+                    cluster_id=r["cluster_id"],
+                    node_ids=r["concepts"] or [],
+                    node_names=[],
+                    centroid=None,
+                    size=r["size"],
+                )
+                for r in cluster_rows_q
+            ]
+
+            if nodes_list:
+                graph_metrics = centrality_analyzer.compute_graph_metrics(
+                    nodes_list, edges_list, clusters_list
+                )
+                quality_metrics["modularity_raw"] = getattr(graph_metrics, "modularity_raw", None)
+                quality_metrics["diversity"] = getattr(graph_metrics, "diversity", None)
+                quality_metrics["density"] = getattr(graph_metrics, "density", None)
+
+                # Cluster quality (silhouette, coherence, coverage)
+                emb_rows = await database.fetch(
+                    """
+                    SELECT id, embedding
+                    FROM entities
+                    WHERE project_id = $1
+                    AND embedding IS NOT NULL
+                    AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                    """,
+                    str(project_id),
+                )
+                embeddings_map = {}
+                for row in emb_rows:
+                    emb = _parse_embedding(row["embedding"])
+                    if emb:
+                        embeddings_map[str(row["id"])] = emb
+
+                cluster_quality = centrality_analyzer.compute_cluster_quality(
+                    nodes_list,
+                    edges_list,
+                    clusters_list,
+                    embeddings_map=embeddings_map if embeddings_map else None,
+                )
+                quality_metrics["silhouette"] = getattr(cluster_quality, "silhouette_score", None)
+                quality_metrics["coherence"] = getattr(cluster_quality, "coherence", None)
+                quality_metrics["paper_coverage"] = getattr(cluster_quality, "paper_coverage", None)
+
+            # Entity type diversity
+            visualized_types = {"Concept", "Method", "Finding", "Problem", "Dataset", "Metric", "Innovation", "Limitation"}
+            type_counts = {k: v for k, v in entity_type_distribution.items() if k in visualized_types}
+            if type_counts:
+                non_zero = sum(1 for v in type_counts.values() if v > 0)
+                quality_metrics["entity_diversity"] = non_zero / len(visualized_types)
+            else:
+                quality_metrics["entity_diversity"] = 0.0
+
+        except Exception as qm_err:
+            logger.warning(f"Quality metrics computation failed for summary {project_id}: {qm_err}")
+
+        # ---- Top entities by PageRank ----
+        top_entity_rows = await database.fetch(
+            """
+            SELECT name, entity_type::text, properties
+            FROM entities
+            WHERE project_id = $1
+            AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+            AND properties->>'centrality_pagerank' IS NOT NULL
+            ORDER BY (properties->>'centrality_pagerank')::float DESC NULLS LAST
+            LIMIT 10
+            """,
+            str(project_id),
+        )
+        top_entities = [
+            {
+                "name": r["name"],
+                "entity_type": r["entity_type"],
+                "pagerank": float(_parse_json_field(r["properties"]).get("centrality_pagerank", 0)),
+            }
+            for r in top_entity_rows
+        ]
+
+        # ---- Communities (clusters) ----
+        community_rows = await database.fetch(
+            """
+            SELECT cluster_id, label, size, concept_names
+            FROM concept_clusters
+            WHERE project_id = $1
+            ORDER BY size DESC
+            """,
+            str(project_id),
+        )
+        communities = [
+            {
+                "cluster_id": r["cluster_id"],
+                "label": r["label"],
+                "size": r["size"],
+                "concept_names": (r["concept_names"] or [])[:8],
+            }
+            for r in community_rows
+        ]
+
+        # ---- Structural gaps (top 5) ----
+        gap_rows = await database.fetch(
+            """
+            SELECT gap_strength, research_questions,
+                   cluster_a_id, cluster_b_id,
+                   cluster_a_names, cluster_b_names
+            FROM structural_gaps
+            WHERE project_id = $1
+            ORDER BY gap_strength DESC
+            LIMIT 5
+            """,
+            str(project_id),
+        )
+
+        # Resolve cluster labels from concept_clusters
+        cluster_label_map: dict = {}
+        for row in community_rows:
+            cluster_label_map[row["cluster_id"]] = row["label"] or f"클러스터 {row['cluster_id']}"
+
+        structural_gaps = [
+            {
+                "cluster_a_id": r["cluster_a_id"],
+                "cluster_b_id": r["cluster_b_id"],
+                "cluster_a_label": cluster_label_map.get(r["cluster_a_id"], f"클러스터 {r['cluster_a_id']}"),
+                "cluster_b_label": cluster_label_map.get(r["cluster_b_id"], f"클러스터 {r['cluster_b_id']}"),
+                "cluster_a_names": (r["cluster_a_names"] or [])[:5],
+                "cluster_b_names": (r["cluster_b_names"] or [])[:5],
+                "gap_strength": float(r["gap_strength"] or 0.0),
+                "research_questions": r["research_questions"] or [],
+            }
+            for r in gap_rows
+        ]
+
+        # ---- Temporal info ----
+        temporal_row = await database.fetchrow(
+            """
+            SELECT
+                MIN(first_seen_year) as min_year,
+                MAX(COALESCE(last_seen_year, first_seen_year)) as max_year
+            FROM entities
+            WHERE project_id = $1
+            """,
+            str(project_id),
+        )
+        min_year = temporal_row["min_year"] if temporal_row else None
+        max_year = temporal_row["max_year"] if temporal_row else None
+
+        emerging_concepts: list = []
+        if max_year is not None:
+            emerging_threshold = max_year - 2
+            emerging_rows = await database.fetch(
+                """
+                SELECT name
+                FROM entities
+                WHERE project_id = $1
+                AND first_seen_year >= $2
+                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                ORDER BY (properties->>'centrality_pagerank')::float DESC NULLS LAST
+                LIMIT 10
+                """,
+                str(project_id),
+                emerging_threshold,
+            )
+            emerging_concepts = [r["name"] for r in emerging_rows]
+
+        # ---- Assemble response ----
+        payload = {
+            "project_id": str(project_id),
+            "project_name": project_name,
+            "overview": {
+                "total_papers": paper_count,
+                "total_entities": entity_count,
+                "total_relationships": relationship_count,
+                "entity_type_distribution": entity_type_distribution,
+            },
+            "quality_metrics": quality_metrics,
+            "top_entities": top_entities,
+            "communities": communities,
+            "structural_gaps": structural_gaps,
+            "temporal_info": {
+                "min_year": min_year,
+                "max_year": max_year,
+                "emerging_concepts": emerging_concepts,
+            },
+        }
+
+        await metrics_cache.set(cache_key, payload, ttl=300)
+        return payload
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to compute project summary for {project_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to compute project summary")
+
+
+# ============================================
+# Phase 2B-2: Summary Export Endpoint (Markdown / HTML)
+# ============================================
+
+@router.get("/summary/{project_id}/export")
+async def export_project_summary(
+    project_id: UUID,
+    format: str = Query("markdown", pattern="^(markdown|html)$"),
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """
+    Export the project research landscape summary as Markdown or HTML.
+
+    Query params:
+        format: "markdown" (default) or "html"
+    """
+    await verify_project_access(database, project_id, current_user, "access")
+
+    try:
+        from graph.report_generator import generate_markdown_report, generate_html_report
+
+        # Reuse the summary logic — call the summary endpoint helper directly via DB
+        # (same queries, no HTTP round-trip)
+        summary_response = await get_project_summary(
+            project_id=project_id,
+            database=database,
+            current_user=current_user,
+        )
+
+        project_name = summary_response.get("project_name", "Project")
+        safe_name = project_name.replace(" ", "_").replace("/", "-")
+
+        if format == "html":
+            content = generate_html_report(summary_response, project_name)
+            media_type = "text/html"
+            filename = f"research_report_{safe_name}.html"
+        else:
+            content = generate_markdown_report(summary_response, project_name)
+            media_type = "text/markdown"
+            filename = f"research_report_{safe_name}.md"
+
+        encoded = content.encode("utf-8")
+        buffer = io.BytesIO(encoded)
+
+        return StreamingResponse(
+            buffer,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(encoded)),
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export project summary for {project_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to export project summary")
+
+
+# ============================================
+# Paper Fit Analysis (v0.30.0)
+# ============================================
+
+class PaperFitRequest(BaseModel):
+    title: str
+    abstract: Optional[str] = None
+    doi: Optional[str] = None
+
+
+@router.post("/{project_id}/paper-fit")
+async def analyze_paper_fit(
+    project_id: UUID,
+    request: PaperFitRequest,
+    database=Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth_if_configured),
+):
+    """Analyze where a paper fits in the knowledge graph."""
+    await verify_project_access(database, project_id, current_user, "access")
+
+    abstract = request.abstract
+
+    # If DOI provided, try to look up abstract
+    if request.doi and not abstract:
+        try:
+            from integrations.semantic_scholar import SemanticScholarClient
+            client = SemanticScholarClient()
+            paper = await client.get_paper(request.doi)
+            if paper and paper.abstract:
+                abstract = paper.abstract
+        except Exception as e:
+            logger.warning(f"S2 lookup failed for DOI {request.doi}: {e}")
+
+    if not abstract:
+        abstract = request.title
+
+    from graph.paper_fit_analyzer import PaperFitAnalyzer
+    analyzer = PaperFitAnalyzer(database)
+    result = await analyzer.analyze(project_id, request.title, abstract)
+
+    return {
+        "paper_title": result.paper_title,
+        "paper_abstract": result.paper_abstract,
+        "matched_entities": result.matched_entities,
+        "community_relevance": result.community_relevance,
+        "gap_connections": result.gap_connections,
+        "fit_summary": result.fit_summary,
+    }

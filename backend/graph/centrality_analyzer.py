@@ -394,6 +394,7 @@ class CentralityAnalyzer:
 
         # 1. Modularity: cluster separation quality (0-1)
         modularity = 0.0
+        modularity_raw = 0.0
         if clusters and len(clusters) > 1:
             try:
                 # Convert clusters to community format for NetworkX
@@ -409,7 +410,8 @@ class CentralityAnalyzer:
                     modularity = nx.algorithms.community.quality.modularity(
                         G, communities
                     )
-                    # Normalize to 0-1 range (modularity can be negative)
+                    modularity_raw = modularity
+                    # Normalize to 0-1 range for backward compatibility
                     modularity = max(0.0, min(1.0, (modularity + 0.5) / 1.5))
             except Exception as e:
                 logger.warning(f"Failed to compute modularity: {e}")
@@ -453,11 +455,145 @@ class CentralityAnalyzer:
 
         return {
             "modularity": round(modularity, 3),
+            "modularity_raw": round(modularity_raw, 4),
             "diversity": round(diversity, 3),
             "density": round(density, 3),
             "avg_clustering": round(avg_clustering, 3),
             "num_components": num_components,
         }
+
+
+    def compute_cluster_quality(
+        self,
+        nodes: List[dict],
+        edges: List[dict],
+        clusters: Optional[List[ClusterResult]] = None,
+        embeddings_map: Optional[Dict[str, List[float]]] = None,
+    ) -> Dict[str, float]:
+        """
+        Compute cluster quality metrics for v0.30.0.
+
+        Args:
+            nodes: List of node dictionaries
+            edges: List of edge dictionaries
+            clusters: Optional list of ClusterResult objects
+            embeddings_map: Optional dict mapping node_id to embedding vector
+
+        Returns:
+            Dict with modularity_raw, silhouette_score, avg_cluster_coherence, cluster_coverage
+        """
+        G = self.build_graph(nodes, edges)
+
+        result = {
+            "modularity_raw": 0.0,
+            "modularity_interpretation": "없음",
+            "silhouette_score": 0.0,
+            "avg_cluster_coherence": 0.0,
+            "cluster_coverage": 0.0,
+            "num_communities": 0,
+        }
+
+        if G.number_of_nodes() == 0 or not clusters or len(clusters) < 2:
+            return result
+
+        result["num_communities"] = len(clusters)
+
+        # 1. Raw modularity
+        try:
+            communities = [set(c.node_ids) for c in clusters]
+            communities = [c.intersection(set(G.nodes())) for c in communities]
+            communities = [c for c in communities if len(c) > 0]
+
+            if len(communities) > 1:
+                raw_mod = nx.algorithms.community.quality.modularity(G, communities)
+                result["modularity_raw"] = round(raw_mod, 4)
+
+                # Interpretation
+                if raw_mod >= 0.5:
+                    result["modularity_interpretation"] = "강함"
+                elif raw_mod >= 0.3:
+                    result["modularity_interpretation"] = "보통"
+                else:
+                    result["modularity_interpretation"] = "약함"
+        except Exception as e:
+            logger.warning(f"Failed to compute raw modularity: {e}")
+
+        # 2. Silhouette score (graph-distance based)
+        try:
+            # Build node-to-cluster label mapping
+            node_labels = {}
+            for cluster in clusters:
+                for node_id in cluster.node_ids:
+                    if node_id in G.nodes():
+                        node_labels[node_id] = cluster.cluster_id
+
+            labeled_nodes = [n for n in G.nodes() if n in node_labels]
+
+            if len(labeled_nodes) >= 4 and len(set(node_labels[n] for n in labeled_nodes)) >= 2:
+                # Use shortest path distances as distance matrix
+                # For efficiency, use embedding cosine distance if available
+                if embeddings_map and len(embeddings_map) >= len(labeled_nodes) * 0.5:
+                    # Use embedding-based distance
+                    valid_nodes = [n for n in labeled_nodes if n in embeddings_map]
+                    if len(valid_nodes) >= 4:
+                        emb_array = np.array([embeddings_map[n] for n in valid_nodes])
+                        labels_array = np.array([node_labels[n] for n in valid_nodes])
+
+                        if len(set(labels_array)) >= 2:
+                            score = silhouette_score(emb_array, labels_array, metric='cosine')
+                            result["silhouette_score"] = round(float(score), 4)
+                else:
+                    # Fallback: use adjacency-based features
+                    # Create feature matrix from graph structure
+                    adj_matrix = nx.to_numpy_array(G, nodelist=labeled_nodes)
+                    labels_array = np.array([node_labels[n] for n in labeled_nodes])
+
+                    if len(set(labels_array)) >= 2 and adj_matrix.shape[0] >= 4:
+                        score = silhouette_score(adj_matrix, labels_array, metric='euclidean')
+                        result["silhouette_score"] = round(float(score), 4)
+        except Exception as e:
+            logger.warning(f"Failed to compute silhouette score: {e}")
+
+        # 3. Cluster coherence (avg intra-cluster embedding similarity)
+        if embeddings_map:
+            try:
+                coherences = []
+                for cluster in clusters:
+                    cluster_embs = [
+                        embeddings_map[nid] for nid in cluster.node_ids
+                        if nid in embeddings_map
+                    ]
+                    if len(cluster_embs) >= 2:
+                        emb_array = np.array(cluster_embs)
+                        # Compute pairwise cosine similarities
+                        norms = np.linalg.norm(emb_array, axis=1, keepdims=True)
+                        norms = np.maximum(norms, 1e-10)
+                        normalized = emb_array / norms
+                        sim_matrix = normalized @ normalized.T
+                        # Average off-diagonal similarities
+                        n = len(cluster_embs)
+                        total_sim = (sim_matrix.sum() - n) / (n * (n - 1)) if n > 1 else 0
+                        coherences.append(total_sim)
+
+                if coherences:
+                    result["avg_cluster_coherence"] = round(float(np.mean(coherences)), 4)
+            except Exception as e:
+                logger.warning(f"Failed to compute cluster coherence: {e}")
+
+        # 4. Cluster coverage
+        try:
+            all_cluster_nodes = set()
+            for cluster in clusters:
+                all_cluster_nodes.update(cluster.node_ids)
+
+            graph_nodes = set(str(n) for n in G.nodes())
+            covered = all_cluster_nodes.intersection(graph_nodes)
+            if graph_nodes:
+                result["cluster_coverage"] = round(len(covered) / len(graph_nodes), 4)
+        except Exception as e:
+            logger.warning(f"Failed to compute cluster coverage: {e}")
+
+        return result
 
 
 # Singleton instance

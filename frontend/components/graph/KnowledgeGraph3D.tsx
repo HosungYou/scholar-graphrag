@@ -3,49 +3,38 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Graph3D, Graph3DRef } from './Graph3D';
 import { GapPanel } from './GapPanel';
-import { DraggablePanel, DragHandle } from '../ui/DraggablePanel';
-import { CentralityPanel } from './CentralityPanel';
-import { ClusterPanel } from './ClusterPanel';
+import { DraggablePanel } from '../ui/DraggablePanel';
 import { GraphLegend } from './GraphLegend';
 import { StatusBar } from './StatusBar';
 import { NodeDetails } from './NodeDetails';
 import { ConceptExplorer } from './ConceptExplorer';  // v0.18.0: Relationship exploration panel
 import { InsightHUD } from './InsightHUD';
-import { MainTopicsPanel } from './MainTopicsPanel';
 import { TopicViewMode } from './TopicViewMode';
 import { GapsViewMode } from './GapsViewMode';  // UI-010: Gaps View Mode
 import { TemporalView } from './TemporalView';  // v0.12.1: Temporal Timeline
 import { EdgeContextModal } from './EdgeContextModal';  // UI-011: Relationship Evidence
 import EntityTypeLegend from './EntityTypeLegend';  // v0.10.0: Entity type legend
-import { LODControlPanel } from './LODControlPanel';  // v0.25: LOD Manual Control
 import { ReasoningPathOverlay } from './ReasoningPathOverlay';  // v0.25: Reasoning Path Visualization
-import { ClusterComparePanel } from './ClusterComparePanel';  // v0.25: Cluster Comparison
 import { ClusterDrillDown } from './ClusterDrillDown';  // v0.25: Cluster DrillDown
 import { PerformanceOverlay } from './PerformanceOverlay';  // v0.25: Performance Monitor
+import { ResearchReport } from './ResearchReport';  // v0.30.0: Research Summary Report
+import { PaperFitPanel } from './PaperFitPanel';  // v0.30.0: Paper Fit Analysis
+import { TemporalDashboard } from './TemporalDashboard';  // v0.30.0: Temporal Trends Dashboard
 import { useGraphStore } from '@/hooks/useGraphStore';
 import { useGraph3DStore, applyLOD } from '@/hooks/useGraph3DStore';
 import { useGraphKeyboard, KEYBOARD_SHORTCUTS } from '@/hooks/useGraphKeyboard';
 import type { GraphData, GraphEntity, EntityType, StructuralGap, GraphEdge, ViewMode, ConceptCluster } from '@/types';
 import {
-  Hexagon,
   Box,
   Grid3X3,
   Grid2X2,
   Sparkles,
   Info,
   RotateCcw,
-  Layers,
-  Scissors,
   BarChart3,
-  PieChart,
-  Sun,
-  SunDim,
-  Tag,
-  Tags,
-  Type,
   Calendar,
-  Link2,
-  GitCompare,
+  FileText,
+  Search,
 } from 'lucide-react';
 
 interface KnowledgeGraph3DProps {
@@ -70,24 +59,19 @@ export function KnowledgeGraph3D({
   const [selectedNode, setSelectedNode] = useState<GraphEntity | null>(null);
   const [showLegend, setShowLegend] = useState(true);
   const [showGapPanel, setShowGapPanel] = useState(true);
-  const [showCentralityPanel, setShowCentralityPanel] = useState(false);
-  const [showClusterPanel, setShowClusterPanel] = useState(false);
   const [showInsightHUD, setShowInsightHUD] = useState(true);
-  const [showMainTopics, setShowMainTopics] = useState(false);
   const [isGapPanelMinimized, setIsGapPanelMinimized] = useState(false);
   // UI-011: Edge context modal state for Relationship Evidence
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [edgeModalOpen, setEdgeModalOpen] = useState(false);
-  // v0.25: LOD Control Panel state
-  const [showLODPanel, setShowLODPanel] = useState(false);
   // v0.25: Reasoning Path Overlay state
   const showReasoningPath = traceNodeIds && traceNodeIds.length > 0;
-  // v0.25: Cluster Compare Panel state
-  const [showClusterCompare, setShowClusterCompare] = useState(false);
   // v0.25: Cluster DrillDown state
   const [drillDownCluster, setDrillDownCluster] = useState<ConceptCluster | null>(null);
   // v0.25: Performance Overlay state
   const [showPerformance, setShowPerformance] = useState(false);
+  // v0.30.0: Paper Fit panel state
+  const [showPaperFit, setShowPaperFit] = useState(false);
 
   // Graph store (existing)
   const {
@@ -116,9 +100,6 @@ export function KnowledgeGraph3D({
     addPinnedNode,
     removePinnedNode,
     clearPinnedNodes,
-    // Phase 11F: SAME_AS edge filter
-    showSameAsEdges,
-    toggleSameAsEdges,
   } = useGraphStore();
 
   // 3D-specific store
@@ -127,14 +108,12 @@ export function KnowledgeGraph3D({
     centrality,
     fetchCentrality,
     getVisiblePercentage,
-    toggleBloom,
-    cycleLabelVisibility,
   } = useGraph3DStore();
 
   // Fetch data on mount
   useEffect(() => {
     const viewContext =
-      viewMode === 'topic' || viewMode === 'gaps' || viewMode === 'temporal'
+      viewMode === 'topic' || viewMode === 'gaps' || viewMode === 'temporal' || viewMode === 'summary'
         ? 'concept'
         : 'hybrid';
 
@@ -197,14 +176,6 @@ export function KnowledgeGraph3D({
     return rawDisplayData;
   }, [rawDisplayData]);
 
-  const handleClusterRecomputeComplete = useCallback(async () => {
-    clearHighlights();
-    setSelectedGap(null);
-    await Promise.all([
-      fetchGraphData(projectId, { viewContext: 'concept' }),
-      fetchGapAnalysis(projectId),
-    ]);
-  }, [clearHighlights, fetchGapAnalysis, fetchGraphData, projectId, setSelectedGap]);
   // Phase 4 FIX: Added `filters` to re-render when filter state changes
   const displayNodes = displayData?.nodes ?? [];
 
@@ -377,18 +348,6 @@ export function KnowledgeGraph3D({
     }
   }, [clusters, setHighlightedNodes, clearHighlights]);
 
-  // Handle slicing applied - refresh graph view
-  const handleSlicingApplied = useCallback(() => {
-    // The graph will automatically update through the store
-    // We could add visual feedback here if needed
-  }, []);
-
-  // Handle slicing reset
-  const handleSlicingReset = useCallback(() => {
-    // Reset highlights when slicing is reset
-    clearHighlights();
-  }, [clearHighlights]);
-
   // Count nodes by type for legend
   const nodeCounts = useMemo(() => {
     const filteredData = getFilteredData();
@@ -478,8 +437,6 @@ export function KnowledgeGraph3D({
             onClearPinnedNodes={clearPinnedNodes}
             // v0.8.0: Adaptive label visibility
             labelVisibility={view3D.labelVisibility}
-            // Phase 11F: SAME_AS edge filter
-            showSameAsEdges={showSameAsEdges}
           />
         </>
       )}
@@ -516,7 +473,15 @@ export function KnowledgeGraph3D({
         />
       )}
       {viewMode === 'temporal' && (
-        <TemporalView projectId={projectId} />
+        <>
+          <TemporalView projectId={projectId} />
+          <div className="absolute bottom-4 left-4 right-4 z-30 max-h-[40vh] overflow-y-auto">
+            <TemporalDashboard projectId={projectId} />
+          </div>
+        </>
+      )}
+      {viewMode === 'summary' && (
+        <ResearchReport projectId={projectId} />
       )}
 
       {/* Top Controls */}
@@ -527,61 +492,6 @@ export function KnowledgeGraph3D({
             <Box className="w-4 h-4" />
             <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white" />
           </div>
-
-          <div className="w-px bg-ink/10 dark:bg-paper/10" />
-
-          {/* Bloom/Glow Toggle */}
-          <button
-            onClick={toggleBloom}
-            className={`p-2 transition-colors ${
-              view3D.bloom.enabled
-                ? 'bg-yellow-500/10 text-yellow-500'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title={view3D.bloom.enabled ? 'Disable bloom effect' : 'Enable bloom effect (highlight important nodes)'}
-          >
-            {view3D.bloom.enabled ? (
-              <Sun className="w-4 h-4" />
-            ) : (
-              <SunDim className="w-4 h-4" />
-            )}
-          </button>
-
-          {/* v0.8.0: Label Visibility Toggle */}
-          <button
-            onClick={cycleLabelVisibility}
-            className={`p-2 transition-colors ${
-              view3D.labelVisibility === 'all'
-                ? 'bg-accent-violet/10 text-accent-violet'
-                : view3D.labelVisibility === 'important'
-                ? 'bg-accent-teal/10 text-accent-teal'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title={`Labels: ${view3D.labelVisibility === 'all' ? 'All nodes' : view3D.labelVisibility === 'important' ? 'Top 20% nodes' : 'Hidden'} (click to toggle)`}
-          >
-            {view3D.labelVisibility === 'all' ? (
-              <Tags className="w-4 h-4" />
-            ) : view3D.labelVisibility === 'important' ? (
-              <Tag className="w-4 h-4" />
-            ) : (
-              <Type className="w-4 h-4 opacity-50" />
-            )}
-          </button>
-
-          {/* Phase 11F: SAME_AS Edge Toggle */}
-          <button
-            onClick={toggleSameAsEdges}
-            className={`p-2 transition-colors ${
-              showSameAsEdges
-                ? 'bg-accent-violet/10 text-accent-violet'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title={`Cross-Paper Links (SAME_AS): ${showSameAsEdges ? 'Visible' : 'Hidden'}`}
-            aria-label="교차 논문 연결 표시/숨김"
-            aria-pressed={showSameAsEdges}
-          >
-            <Link2 className="w-4 h-4" />
-          </button>
 
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
 
@@ -621,58 +531,6 @@ export function KnowledgeGraph3D({
             <Sparkles className="w-4 h-4" />
           </button>
 
-          {/* Toggle Centrality Panel */}
-          <button
-            onClick={() => setShowCentralityPanel(!showCentralityPanel)}
-            className={`p-2 transition-colors ${
-              showCentralityPanel
-                ? 'bg-accent-teal/10 text-accent-teal'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title="Toggle Centrality Panel"
-          >
-            <Scissors className="w-4 h-4" />
-          </button>
-
-          {/* Toggle Cluster Panel */}
-          <button
-            onClick={() => setShowClusterPanel(!showClusterPanel)}
-            className={`p-2 transition-colors ${
-              showClusterPanel
-                ? 'bg-accent-violet/10 text-accent-violet'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title="Toggle Cluster Panel"
-          >
-            <Layers className="w-4 h-4" />
-          </button>
-
-          {/* v0.25: Toggle LOD Control Panel */}
-          <button
-            onClick={() => setShowLODPanel(!showLODPanel)}
-            className={`p-2 transition-colors ${
-              showLODPanel
-                ? 'bg-accent-teal/10 text-accent-teal'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title="Toggle LOD Control"
-          >
-            <Layers className="w-4 h-4" />
-          </button>
-
-          {/* v0.25: Toggle Cluster Compare Panel */}
-          <button
-            onClick={() => setShowClusterCompare(!showClusterCompare)}
-            className={`p-2 transition-colors ${
-              showClusterCompare
-                ? 'bg-accent-purple/10 text-accent-purple'
-                : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
-            }`}
-            title="Compare Clusters"
-          >
-            <GitCompare className="w-4 h-4" />
-          </button>
-
           {/* Toggle Insight HUD */}
           <button
             onClick={() => setShowInsightHUD(!showInsightHUD)}
@@ -686,17 +544,17 @@ export function KnowledgeGraph3D({
             <BarChart3 className="w-4 h-4" />
           </button>
 
-          {/* Toggle Main Topics */}
+          {/* Paper Fit - v0.30.0 */}
           <button
-            onClick={() => setShowMainTopics(!showMainTopics)}
+            onClick={() => setShowPaperFit(!showPaperFit)}
             className={`p-2 transition-colors ${
-              showMainTopics
-                ? 'bg-accent-violet/10 text-accent-violet'
+              showPaperFit
+                ? 'bg-accent-purple/10 text-accent-purple'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="Toggle Top Topics Panel"
+            title="내 논문 위치 분석 (Paper Fit)"
           >
-            <PieChart className="w-4 h-4" />
+            <Search className="w-4 h-4" />
           </button>
 
           <div className="w-px bg-ink/10 dark:bg-paper/10" />
@@ -758,6 +616,20 @@ export function KnowledgeGraph3D({
               <Calendar className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Temporal</span>
             </button>
+
+            {/* Summary Mode - v0.30.0 */}
+            <button
+              onClick={() => setViewMode('summary')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                viewMode === 'summary'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
+              }`}
+              title="연구 요약 리포트 (Research Summary)"
+            >
+              <FileText className="w-4 h-4" />
+              <span className="font-mono text-xs uppercase tracking-wider">Summary</span>
+            </button>
           </div>
         </div>
       </div>
@@ -783,39 +655,6 @@ export function KnowledgeGraph3D({
         </DraggablePanel>
       )}
 
-      {/* Right-side panels - stacked */}
-      {(showCentralityPanel || showClusterPanel || showLODPanel || showClusterCompare) && (
-        <DraggablePanel panelId="right-stack" projectId={projectId} defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 300 : 900, y: 80 }}>
-        <div className="flex flex-col gap-2 max-h-[calc(100vh-120px)] overflow-y-auto bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 rounded-sm">
-          <DragHandle />
-          {showCentralityPanel && (
-            <CentralityPanel
-              projectId={projectId}
-              onSlicingApplied={handleSlicingApplied}
-              onSlicingReset={handleSlicingReset}
-            />
-          )}
-          {showClusterPanel && (
-            <ClusterPanel
-              projectId={projectId}
-              onFocusCluster={handleFocusCluster}
-              onRecomputeComplete={handleClusterRecomputeComplete}
-            />
-          )}
-          {showLODPanel && (
-            <LODControlPanel
-              onClose={() => setShowLODPanel(false)}
-            />
-          )}
-          {showClusterCompare && (
-            <ClusterComparePanel
-              onClose={() => setShowClusterCompare(false)}
-            />
-          )}
-        </div>
-        </DraggablePanel>
-      )}
-
       {/* Legend */}
       {showLegend && (
         <GraphLegend
@@ -837,12 +676,11 @@ export function KnowledgeGraph3D({
       <StatusBar projectId={projectId} />
 
       {/* Insight HUD - v0.8.0: Repositioned to right side (InfraNodus-style Analytics) */}
-      {/* Dynamic positioning: below CentralityPanel and ClusterPanel if visible */}
       {showInsightHUD && (
         <DraggablePanel
           panelId="insight-hud"
           projectId={projectId}
-          defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 220 : 900, y: showCentralityPanel || showClusterPanel ? 400 : 80 }}
+          defaultPosition={{ x: window?.innerWidth ? window.innerWidth - 220 : 900, y: 80 }}
           zIndex={20}
         >
         <InsightHUD
@@ -851,18 +689,17 @@ export function KnowledgeGraph3D({
         </DraggablePanel>
       )}
 
-      {/* Main Topics Panel - Bottom Left (InsightHUD moved to right side) */}
-      {showMainTopics && (
+      {/* Paper Fit Panel - v0.30.0 */}
+      {showPaperFit && (
         <DraggablePanel
-          panelId="main-topics"
+          panelId="paper-fit"
           projectId={projectId}
-          defaultPosition={{ x: 16, y: typeof window !== 'undefined' ? window.innerHeight - 200 : 600 }}
+          defaultPosition={{ x: typeof window !== 'undefined' && window.innerWidth ? window.innerWidth - 420 : 700, y: 80 }}
+          zIndex={25}
         >
-          <MainTopicsPanel
-            clusters={clusters}
-            onFocusCluster={handleFocusCluster}
-            onHighlightCluster={setHighlightedNodes}
-            onClearHighlight={clearHighlights}
+          <PaperFitPanel
+            projectId={projectId}
+            onClose={() => setShowPaperFit(false)}
           />
         </DraggablePanel>
       )}
@@ -912,6 +749,18 @@ export function KnowledgeGraph3D({
                 <Calendar className="w-4 h-4 text-accent-orange" />
                 <span className="font-mono text-xs uppercase tracking-wider text-muted">
                   Temporal
+                </span>
+              </>
+            )}
+            {viewMode === 'summary' && (
+              <>
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-2 h-2 bg-emerald-500 rounded-full animate-ping opacity-75" />
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+                </div>
+                <FileText className="w-4 h-4 text-emerald-500" />
+                <span className="font-mono text-xs uppercase tracking-wider text-muted">
+                  Summary
                 </span>
               </>
             )}

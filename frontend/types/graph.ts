@@ -513,7 +513,7 @@ export interface TableSourceMetadata {
 // - '3d': Full 3D force-directed graph
 // - 'topic': 2D cluster block visualization
 // - 'gaps': Gap-focused visualization with bridge highlighting
-export type ViewMode = '3d' | 'topic' | 'gaps' | 'citations' | 'temporal';
+export type ViewMode = '3d' | 'topic' | 'gaps' | 'citations' | 'temporal' | 'summary';
 
 // Gaps View Configuration
 export interface GapsViewConfig {

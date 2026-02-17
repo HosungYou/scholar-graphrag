@@ -124,7 +124,7 @@ const LABEL_CONFIG = {
   maxFontSize: 28,
   minOpacity: 0.3,
   maxOpacity: 1.0,
-  alwaysVisiblePercentile: 0.8,  // Top 20% always show labels
+  alwaysVisiblePercentile: 0,  // v0.30.0: All nodes show labels by default
   hoverRevealPercentile: 0.5,     // Top 50% on hover
 };
 
@@ -1054,6 +1054,11 @@ export const Graph3D = forwardRef<Graph3DRef, Graph3DProps>(({
       weightOpacity = 0.55;  // Medium: clear visibility
     } else {
       weightOpacity = 0.35;  // Weak: still visible
+    }
+
+    // v0.30.0: Fade weak edges more aggressively
+    if (weight < 0.3) {
+      weightOpacity = Math.max(0.05, weight * 0.8);
     }
 
     // v0.18.0: Semantic edge coloring by relationship type
