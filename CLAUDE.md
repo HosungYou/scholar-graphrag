@@ -146,6 +146,28 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 ```
 
+### Supabase Connection (CRITICAL)
+
+> **INFRA-015 (2026-02-16)**: Supabase 프로젝트 ref 불일치 발견. 반드시 올바른 ref 사용할 것.
+
+| Field | Value |
+|-------|-------|
+| Project Ref | `arxntrtipkakbvhcpfqj` |
+| Region | `aws-0-us-west-2` |
+| Session Pooler Host | `aws-0-us-west-2.pooler.supabase.com` |
+| Session Pooler Port | `5432` |
+| Transaction Pooler Port | `6543` (사용 금지 — prepared statements 미지원) |
+| Direct Connection | IPv6 only (IPv4 네트워크에서 접속 불가) |
+| DB User | `postgres.arxntrtipkakbvhcpfqj` |
+
+**Dead/Invalid Refs (절대 사용 금지):**
+- `uxcpissmcrzflfdpxgxs` (aws-1-us-east-2) — "Tenant or user not found" 에러 발생
+
+**DATABASE_URL 형식:**
+```
+postgresql://postgres.arxntrtipkakbvhcpfqj:[PASSWORD]@aws-0-us-west-2.pooler.supabase.com:5432/postgres
+```
+
 ### Common Issues
 
 | Issue | Cause | Fix |
@@ -153,6 +175,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 | CORS error | Frontend URL not in CORS_ORIGINS | Add URL to Render env vars |
 | 503 error | DB connection pool exhaustion | Reduce pool size, enable retries |
 | Auth failure | Missing Supabase keys | Check both backend & frontend env vars |
+| "Tenant or user not found" | 잘못된 Supabase project ref 사용 | `arxntrtipkakbvhcpfqj` ref 사용 확인 (위 표 참조) |
+| DB password auth failed | 비밀번호 변경 후 전파 지연 또는 특수문자 이슈 | 비밀번호에 `!` 등 특수문자 피하기, 변경 후 1-2분 대기 |
 
 ---
 

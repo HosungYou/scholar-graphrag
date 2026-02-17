@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-13
+> **마지막 업데이트**: 2026-02-16
 > **관리자**: Claude Code
 
 ---
@@ -11,10 +11,37 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 21 | 21 | 0 | 0 |
+| 🔴 High | 22 | 21 | 0 | 1 |
 | 🟡 Medium | 26 | 26 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **52** | **52** | **0** | **0** |
+| **Total** | **53** | **52** | **0** | **1** |
+
+---
+
+## 🔴 High Priority (Immediate Action Required)
+
+### INFRA-015: Render DATABASE_URL 프로젝트 ref 확인/수정 필요
+- **Source**: Migration 022-025 실행 중 발견 (2026-02-16)
+- **Status**: ⏳ Pending (수동 확인 필요)
+- **Priority**: 🔴 High
+- **Description**: Supabase 프로젝트 ref가 2개 존재하며, 잘못된 ref 사용 시 "Tenant or user not found" 에러 발생
+- **발견 경위**:
+  - `backend/.env`에 저장된 ref: `uxcpissmcrzflfdpxgxs` (aws-1-us-east-2) — **DEAD, 접속 불가**
+  - 실제 Supabase Dashboard의 ref: `arxntrtipkakbvhcpfqj` (aws-0-us-west-2) — **정상 작동**
+  - 로컬 `.env`는 수정 완료, Render Dashboard는 미확인
+- **영향**: 잘못된 DATABASE_URL 사용 시 백엔드가 DB 연결 불가 → 모든 API 503 에러
+- **확인 방법**:
+  1. Render Dashboard → `scholarag-graph-docker` → Settings → Environment Variables
+  2. `DATABASE_URL` 값 확인
+  3. 호스트가 `aws-0-us-west-2.pooler.supabase.com`이고 유저가 `postgres.arxntrtipkakbvhcpfqj`인지 확인
+- **올바른 값**:
+  ```
+  DATABASE_URL=postgresql://postgres.arxntrtipkakbvhcpfqj:S2ac8es2123@aws-0-us-west-2.pooler.supabase.com:5432/postgres
+  ```
+- **체크리스트**:
+  - [x] 로컬 `backend/.env` 수정 완료
+  - [ ] Render Dashboard `DATABASE_URL` 확인 및 필요 시 수정
+  - [ ] Render 서비스 재시작 후 `/health` 정상 응답 확인
 
 ---
 
