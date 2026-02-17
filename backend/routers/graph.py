@@ -1389,8 +1389,9 @@ async def refresh_gap_analysis(
         ]
 
         # Run gap detection
-        from dependencies import get_llm_provider
-        llm = get_llm_provider()
+        from llm.user_provider import create_llm_provider_for_user
+        user_id = str(current_user.id) if current_user else None
+        llm = await create_llm_provider_for_user(user_id)
         gap_detector = GapDetector(llm_provider=llm)
         analysis = await gap_detector.analyze_graph(concepts, relationships)
 
@@ -1683,9 +1684,9 @@ async def generate_bridge_hypotheses(
         )
 
         # Get LLM provider
-        from dependencies import get_llm_provider
-
-        llm = get_llm_provider()
+        from llm.user_provider import create_llm_provider_for_user
+        user_id = str(current_user.id) if current_user else None
+        llm = await create_llm_provider_for_user(user_id)
 
         # Initialize gap detector with LLM
         from graph.gap_detector import GapDetector, StructuralGap as GapModel
@@ -3360,9 +3361,9 @@ async def recompute_clusters(
         # v0.19.0: Generate meaningful cluster labels via LLM
         try:
             from graph.gap_detector import GapDetector
-            from dependencies import get_llm_provider
-
-            llm = get_llm_provider()
+            from llm.user_provider import create_llm_provider_for_user
+            user_id = str(current_user.id) if current_user else None
+            llm = await create_llm_provider_for_user(user_id)
             gap_detector = GapDetector(llm_provider=llm)
 
             concept_name_map_for_labels = {n["id"]: n["name"] for n in nodes}
@@ -4203,8 +4204,9 @@ async def get_relationship_evidence(
             else:
                 # Try LLM-based explanation if available
                 try:
-                    from dependencies import get_llm_provider
-                    llm = get_llm_provider()
+                    from llm.user_provider import create_llm_provider_for_user
+                    user_id = str(current_user.id) if current_user else None
+                    llm = await create_llm_provider_for_user(user_id)
                     if llm:
                         ai_explanation = await llm.generate(
                             f"Explain the academic relationship between '{source_name}' and '{target_name}' "
