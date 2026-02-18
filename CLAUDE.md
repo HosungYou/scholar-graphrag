@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.7.0 (v0.32.0 Production Hardening + International UI)
+> **Version**: 6.7.1 (v0.32.1 Critical Hotfix — Project Visibility + Import Resume)
 
 ## Project Overview
 
@@ -737,6 +737,40 @@ When making architectural changes:
 
 ---
 
+## 📊 v0.32.1 Release Notes
+
+> **Version**: 0.32.1 | **Date**: 2026-02-18
+> **Full Notes**: See `RELEASE_NOTES_v0.32.1.md`
+
+### Critical Hotfix — Project Visibility + Import Resume
+
+**BUG-062: Projects Disappeared After v0.32.0 Deploy**
+- v0.32.0 BUG-060 removed `OR p.owner_id IS NULL` from `projects.py`, hiding ALL pre-existing projects (100% had NULL owner_id)
+- **Root cause**: BUG-059 (owner_id propagation) and BUG-060 (NULL access removal) deployed simultaneously — data migration should have preceded access restriction
+- **Fix**: Restored `OR p.owner_id IS NULL` + auto-claim mechanism: orphaned projects automatically assigned to current user on list
+- **Lesson**: Always audit existing data state before tightening access controls. See "Deployment Safety Checklist" in release notes
+
+**BUG-063: Import Resume — "Checkpoint is missing project_id"**
+- Import interrupted before project creation → checkpoint saved with `project_id: None` → resume endpoint rejected with 400
+- **Fix**: Resume now auto-creates project from original job's `project_name` when `project_id` is missing
+- `get_resume_info` returns `can_resume: true` for any existing checkpoint
+
+### Deployment Safety Checklist (New Protocol)
+```
+□ DATA AUDIT: Query existing data state before access control changes
+□ MIGRATION FIRST: Deploy data fixes BEFORE access restrictions
+□ GRADUAL ROLLOUT: Use auto-migration patterns (auto-claim) not hard cuts
+□ ROLLBACK PLAN: Ensure reversibility without data loss
+□ VERIFICATION: Confirm existing + new data accessible post-deploy
+```
+
+### Technical
+- 2 files changed, +40/-9 lines
+- No frontend changes, no DB migrations, no new env vars
+- Supersedes v0.32.0 BUG-060 behavior
+
+---
+
 ## 📊 v0.32.0 Release Notes
 
 > **Version**: 0.32.0 | **Date**: 2026-02-18
@@ -751,7 +785,7 @@ When making architectural changes:
 
 **Phase 2: Project Isolation**
 - **BUG-059**: 5 importer `INSERT INTO projects` missing `owner_id` → added `owner_id` param to all constructors (scholarag, pdf×2, tto_sample, zotero_rdf, entity_dao) + `import_.py` passes `user_id`
-- **BUG-060**: `OR p.owner_id IS NULL` in `projects.py` exposed unowned projects → removed from both `check_project_access()` and listing query
+- **BUG-060**: `OR p.owner_id IS NULL` in `projects.py` exposed unowned projects → ~~removed from both queries~~ **Superseded by v0.32.1 BUG-062**: restored NULL check + auto-claim mechanism
 
 **Phase 3: Settings Isolation**
 - **BUG-061**: Server API keys (Groq etc.) visible with masked values to all users → now return `is_set=false, source="not_configured"`. Backend fallback unchanged

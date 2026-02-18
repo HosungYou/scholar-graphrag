@@ -2,7 +2,7 @@
 
 > 이 문서는 코드 리뷰, 기능 구현, 버그 수정 등에서 발견된 액션 아이템을 추적합니다.
 >
-> **마지막 업데이트**: 2026-02-17
+> **마지막 업데이트**: 2026-02-18
 > **관리자**: Claude Code
 
 ---
@@ -11,14 +11,33 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 25 | 24 | 1 | 0 |
+| 🔴 High | 27 | 27 | 0 | 0 |
 | 🟡 Medium | 26 | 26 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **56** | **55** | **1** | **0** |
+| **Total** | **58** | **58** | **0** | **0** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### BUG-062: v0.32.0 BUG-060 회귀 — 기존 프로젝트 전부 사라짐
+- **Source**: v0.32.0 프로덕션 배포 후 사용자 보고 (2026-02-18)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: v0.32.0의 BUG-060 수정이 `OR p.owner_id IS NULL`을 제거하여, `owner_id`가 NULL인 기존 프로젝트 전부가 프로젝트 목록에서 사라짐
+- **근본 원인**: BUG-059 (importer에 owner_id 미전달) 수정과 BUG-060 (NULL 프로젝트 숨김)이 동시 배포됨. 기존 데이터는 모두 NULL 상태인데 접근 제한이 먼저 적용됨
+- **Fix**: `OR p.owner_id IS NULL` 복원 + auto-claim 메커니즘 (목록 조회 시 고아 프로젝트 자동 소유권 할당)
+- **교훈**: 접근 제한 강화 시 반드시 기존 데이터 상태를 먼저 확인하고, 데이터 마이그레이션을 선행할 것. RELEASE_NOTES_v0.32.1.md에 "Deployment Safety Checklist" 추가
+- **Completed**: 2026-02-18
+
+### BUG-063: Import Resume 실패 — "Checkpoint is missing project_id"
+- **Source**: v0.32.0 배포 중 서버 재시작으로 임포트 중단 후 Resume 시도 (2026-02-18)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Description**: 임포트가 프로젝트 생성 전에 중단되면 체크포인트에 `project_id: None`이 저장됨. Resume 엔드포인트가 이를 거부하여 400 에러 발생
+- **Fix**: Resume 시 `project_id` 없으면 원본 job 메타데이터의 `project_name`으로 새 프로젝트 자동 생성 후 진행. `get_resume_info`도 `can_resume: true` 반환하도록 수정
+- **Completed**: 2026-02-18
+
 
 ### BUG-049: asyncpg JSONB 코덱 — preferences가 dict 대신 str 반환
 - **Source**: 프로덕션 Settings 500 에러 디버깅 (2026-02-17)
