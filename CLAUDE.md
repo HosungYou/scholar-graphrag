@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.6.0 (v0.31.0 Temporal/Summary 500 Fix + Research Frontier Redesign)
+> **Version**: 6.7.0 (v0.32.0 Production Hardening + International UI)
 
 ## Project Overview
 
@@ -734,6 +734,46 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.32.0 Release Notes
+
+> **Version**: 0.32.0 | **Date**: 2026-02-18
+> **Full Notes**: See `RELEASE_NOTES_v0.32.0.md`
+
+### Production Hardening + International UI
+
+**Phase 1: 500 Error Complete Fix**
+- **BUG-056**: 13 unsafe Python `float()` casts → `_safe_float()` helper with fallback. Covers centrality metrics, bridge confidence, gap_strength, weight fields
+- **BUG-057**: SQL `(properties->>'weight')::float` without regex guard in summary endpoint → added `CASE WHEN regex` pattern
+- **BUG-058**: `ARRAY_AGG(name ...)` includes NULLs in timeline queries → added `FILTER (WHERE name IS NOT NULL)`
+
+**Phase 2: Project Isolation**
+- **BUG-059**: 5 importer `INSERT INTO projects` missing `owner_id` → added `owner_id` param to all constructors (scholarag, pdf×2, tto_sample, zotero_rdf, entity_dao) + `import_.py` passes `user_id`
+- **BUG-060**: `OR p.owner_id IS NULL` in `projects.py` exposed unowned projects → removed from both `check_project_access()` and listing query
+
+**Phase 3: Settings Isolation**
+- **BUG-061**: Server API keys (Groq etc.) visible with masked values to all users → now return `is_set=false, source="not_configured"`. Backend fallback unchanged
+
+**Phase 4: English UI**
+- 7 frontend files: All Korean labels → English (38+ strings across GapPanel, GapsViewMode, FrontierMatrix, BridgeStoryline, KnowledgeGraph3D, InsightHUD, PaperFitPanel)
+- 2 backend files: `centrality_analyzer.py` (강함→Strong, 보통→Moderate, 약함→Weak), `graph.py` (research significance + cluster labels)
+
+**Phase 5: Gap View UX**
+- Progress bar inverted: `(1 - gap_strength)` — high opportunity = full amber bar
+- FrontierMatrix: 280×220 → 420×340, dots 5/7→7/10, labels 8px→10px
+- Score differentiation: 4-factor impact (size^0.5, bridge, centrality, type_diversity) + 5-factor feasibility (sim_ratio, median_sim, bridge_avail, gap_weakness, sim_spread)
+
+**Phase 6: S2 Integration**
+- Auto-fetch papers on gap card expansion via `useEffect` (no manual "Find Papers" click needed)
+- Research significance: Korean template → English template
+
+### Technical
+- 19 files changed (18 modified + tsconfig), +201/-102 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars
+- Breaking: `owner_id IS NULL` projects hidden until owner assigned
 
 ---
 
