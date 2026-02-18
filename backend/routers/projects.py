@@ -42,6 +42,7 @@ async def check_project_access(database, project_id: UUID, user_id: str) -> bool
             SELECT 1 FROM projects p
             WHERE p.id = $1 AND (
                 p.owner_id = $2
+                OR p.owner_id IS NULL
                 OR p.visibility = 'public'
                 OR EXISTS (
                     SELECT 1 FROM project_collaborators pc
@@ -133,11 +134,11 @@ async def list_projects(
         if current_user is None:
             raise HTTPException(status_code=401, detail="Authentication required")
         else:
-            # Filter by user access: owned, collaborated, team-shared, or public
+            # Filter by user access: owned, collaborated, team-shared, public, or unclaimed
             rows = await database.fetch(
                 """
                 SELECT DISTINCT p.id, p.name, p.research_question, p.source_path,
-                       p.created_at, p.updated_at
+                       p.created_at, p.updated_at, p.owner_id
                 FROM projects p
                 LEFT JOIN project_collaborators pc ON p.id = pc.project_id
                 LEFT JOIN team_projects tp ON p.id = tp.project_id
@@ -146,10 +147,24 @@ async def list_projects(
                    OR pc.user_id = $1
                    OR tm.user_id = $1
                    OR p.visibility = 'public'
+                   OR p.owner_id IS NULL
                 ORDER BY p.created_at DESC
                 """,
                 current_user.id,
             )
+
+            # Auto-claim orphaned projects (owner_id IS NULL) for the current user
+            orphan_ids = [row["id"] for row in rows if row["owner_id"] is None]
+            if orphan_ids:
+                await database.execute(
+                    """
+                    UPDATE projects SET owner_id = $1
+                    WHERE id = ANY($2) AND owner_id IS NULL
+                    """,
+                    current_user.id,
+                    orphan_ids,
+                )
+                logger.info(f"Auto-claimed {len(orphan_ids)} orphaned projects for user {current_user.id}")
 
         # Get stats for all projects in a single batch query (prevents N+1)
         project_ids = [str(row["id"]) for row in rows]
