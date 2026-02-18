@@ -17,7 +17,7 @@ import os
 from collections import deque
 from pathlib import Path
 from typing import Optional, List, Any, Deque
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends, status
 from pydantic import BaseModel, field_validator
 from datetime import datetime
@@ -2356,12 +2356,28 @@ async def resume_import(
             detail="Cannot resume: No checkpoint found. The job may have failed before any papers were processed."
         )
 
-    # Validate checkpoint has required data
+    # If checkpoint is missing project_id, create a new project so resume can proceed
     if not checkpoint.get("project_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot resume: Checkpoint is missing project_id."
-        )
+        project_name = original_job.metadata.get("project_name") or "Resumed Import"
+        owner_id = current_user.id if current_user else None
+        new_project_id = uuid4()
+        now_ts = datetime.now()
+        try:
+            await db.execute(
+                """
+                INSERT INTO projects (id, name, owner_id, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                new_project_id, project_name, owner_id, now_ts, now_ts,
+            )
+            checkpoint["project_id"] = str(new_project_id)
+            logger.info(f"[Resume {job_id}] Created missing project {new_project_id} for resume")
+        except Exception as e:
+            logger.error(f"[Resume {job_id}] Failed to create project for resume: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Cannot resume: Failed to create project. Please start a new import."
+            )
 
     # Get original job metadata for re-running the import
     original_metadata = original_job.metadata
@@ -2439,7 +2455,7 @@ async def get_resume_info(
     return {
         "job_id": job_id,
         "status": job.status.value,
-        "can_resume": job.status == JobStatus.INTERRUPTED and bool(checkpoint.get("project_id")),
+        "can_resume": job.status == JobStatus.INTERRUPTED and bool(checkpoint),
         "checkpoint": {
             "processed_count": len(checkpoint.get("processed_paper_ids", [])),
             "total_papers": checkpoint.get("total_papers", 0),
