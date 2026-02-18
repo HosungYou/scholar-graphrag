@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
-> **Last Updated**: 2026-02-17
-> **Version**: 6.5.0 (v0.30.0 Quality Evaluation + Research Report + Temporal Dashboard + Paper Fit)
+> **Last Updated**: 2026-02-18
+> **Version**: 6.5.1 (v0.30.1 Insight HUD Accuracy Fix + First-Entry Race Condition)
 
 ## Project Overview
 
@@ -734,6 +734,23 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.30.1 Release Notes
+
+> **Version**: 0.30.1 | **Date**: 2026-02-18
+> **Full Notes**: See `RELEASE_NOTES_v0.30.1.md`
+
+### Insight HUD Accuracy Fix + First-Entry Race Condition
+- **BUG-050**: Paper coverage SQL `pm.id::text = ANY(uuid[])` type error — always showed 0%. Fixed to `pm.id = ANY()` for UUID comparison. Actual: 82.4%
+- **BUG-051**: Cluster `concepts` column (UUID[]) compared against string node IDs — modularity, silhouette, coherence, coverage all computed as 0. Added `str()` conversion in both `/metrics/` and `/diversity/` endpoints
+- **BUG-052**: `useGraphStore` initialized `isLoading: false` with `graphData: null` — first project entry showed "No graph data available" before fetch. Changed to `isLoading: true`
+
+### Technical
+- 2 files changed (1 backend + 1 frontend), +4/-4 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no breaking changes
 
 ---
 
