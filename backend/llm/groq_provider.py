@@ -34,12 +34,12 @@ class AsyncRateLimiter:
     Implements smooth rate limiting using interval-based approach.
     """
 
-    def __init__(self, requests_per_minute: int = 20):
+    def __init__(self, requests_per_minute: int = 28):
         """
         Initialize rate limiter.
 
         Args:
-            requests_per_minute: Maximum requests per minute (default: 20 for safety margin)
+            requests_per_minute: Maximum requests per minute (default: 28, Groq free tier allows 30)
         """
         self.requests_per_minute = requests_per_minute
         self.min_interval = 60.0 / requests_per_minute  # seconds between requests

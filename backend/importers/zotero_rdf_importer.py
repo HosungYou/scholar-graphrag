@@ -997,7 +997,7 @@ class ZoteroRDFImporter:
                         )
                         resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
                             entities,
-                            use_llm_confirmation=True,
+                            use_llm_confirmation=False,  # PERF-013: Skip LLM pair verification during import (saves ~7.5min/150 papers)
                         )
                         self._accumulate_resolution_stats(results, resolution)
 
@@ -1511,7 +1511,7 @@ class ZoteroRDFImporter:
                         )
                         resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
                             entities,
-                            use_llm_confirmation=True,
+                            use_llm_confirmation=False,  # PERF-013: Skip LLM pair verification during import (saves ~7.5min/150 papers)
                         )
                         self._accumulate_resolution_stats(results, resolution)
 
