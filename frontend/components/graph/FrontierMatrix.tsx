@@ -26,8 +26,8 @@ export function FrontierMatrix({ gaps, selectedGapId, onGapSelect, clusters }: F
   const hasScores = useMemo(() => gaps.some(g => (g.impact_score ?? 0) > 0 || (g.feasibility_score ?? 0) > 0), [gaps]);
 
   const padding = 40;
-  const width = 280;
-  const height = 220;
+  const width = 420;
+  const height = 340;
   const plotW = width - padding * 2;
   const plotH = height - padding * 2;
 
@@ -55,13 +55,13 @@ export function FrontierMatrix({ gaps, selectedGapId, onGapSelect, clusters }: F
 
           {/* Quadrant labels */}
           <text x={padding + plotW * 0.75} y={padding + 14} textAnchor="middle"
-            className="fill-amber-500/60 text-[8px] font-mono">⭐ 즉시 착수</text>
+            className="fill-amber-500/60 text-[10px] font-mono">⭐ Quick Win</text>
           <text x={padding + plotW * 0.25} y={padding + 14} textAnchor="middle"
-            className="fill-purple-400/60 text-[8px] font-mono">🔬 도전적 연구</text>
+            className="fill-purple-400/60 text-[10px] font-mono">🔬 Ambitious</text>
           <text x={padding + plotW * 0.75} y={padding + plotH - 4} textAnchor="middle"
-            className="fill-teal-400/60 text-[8px] font-mono">✅ 안전한 시작</text>
+            className="fill-teal-400/60 text-[10px] font-mono">✅ Safe Start</text>
           <text x={padding + plotW * 0.25} y={padding + plotH - 4} textAnchor="middle"
-            className="fill-gray-400/40 text-[8px] font-mono">⏳ 낮은 우선순위</text>
+            className="fill-gray-400/40 text-[10px] font-mono">⏳ Low Priority</text>
 
           {/* Axes */}
           <line x1={padding} y1={padding} x2={padding} y2={padding + plotH}
@@ -77,10 +77,10 @@ export function FrontierMatrix({ gaps, selectedGapId, onGapSelect, clusters }: F
 
           {/* Axis labels */}
           <text x={padding + plotW / 2} y={height - 4} textAnchor="middle"
-            className="fill-current opacity-40 text-[9px] font-mono">실현 가능성 →</text>
+            className="fill-current opacity-40 text-[10px] font-mono">Feasibility →</text>
           <text x={8} y={padding + plotH / 2} textAnchor="middle"
-            className="fill-current opacity-40 text-[9px] font-mono"
-            transform={`rotate(-90, 8, ${padding + plotH / 2})`}>영향력 →</text>
+            className="fill-current opacity-40 text-[10px] font-mono"
+            transform={`rotate(-90, 8, ${padding + plotH / 2})`}>Impact →</text>
 
           {/* Data points */}
           {gaps.map((gap, idx) => {
@@ -94,14 +94,14 @@ export function FrontierMatrix({ gaps, selectedGapId, onGapSelect, clusters }: F
             return (
               <g key={gap.id} onClick={() => onGapSelect(gap)} style={{ cursor: 'pointer' }}>
                 {isSelected && (
-                  <circle cx={cx} cy={cy} r={10}
+                  <circle cx={cx} cy={cy} r={14}
                     fill="none" stroke="#F59E0B" strokeWidth={2} strokeOpacity={0.6} />
                 )}
-                <circle cx={cx} cy={cy} r={isSelected ? 7 : 5}
+                <circle cx={cx} cy={cy} r={isSelected ? 10 : 7}
                   fill={color} fillOpacity={isSelected ? 1 : 0.7}
                   stroke={isSelected ? '#F59E0B' : 'white'} strokeWidth={isSelected ? 2 : 0.5} />
                 <text x={cx} y={cy - 10} textAnchor="middle"
-                  className="fill-current opacity-50 text-[8px] font-mono">
+                  className="fill-current opacity-50 text-[9px] font-mono">
                   {idx + 1}
                 </text>
               </g>

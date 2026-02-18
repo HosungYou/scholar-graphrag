@@ -188,12 +188,14 @@ class TTOSampleImporter:
         db_connection=None,
         graph_store=None,
         progress_callback: Optional[Callable[[ImportProgress], None]] = None,
+        owner_id: str = None,
     ):
         self.llm = llm_provider
         self.db = db_connection
         self.graph_store = graph_store
         self.progress_callback = progress_callback
         self.progress = ImportProgress()
+        self.owner_id = owner_id
 
     def _update_progress(
         self,
@@ -232,14 +234,15 @@ class TTOSampleImporter:
             if self.db:
                 await self.db.execute(
                     """
-                    INSERT INTO projects (id, name, research_question, source_path)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO projects (id, name, research_question, source_path, owner_id)
+                    VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (id) DO NOTHING
                     """,
                     project_id,
                     project_name,
                     "Demonstration of Penn State Technology Transfer Office innovation portfolio",
                     "sample_data/tto",
+                    self.owner_id,
                 )
 
             self.progress.records_total = len(SAMPLE_TTO_DATA)

@@ -781,6 +781,7 @@ async def _run_scholarag_import(
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
+            owner_id=user_id,
         )
 
         # Run the import
@@ -1222,6 +1223,7 @@ async def _run_pdf_import(
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
+            owner_id=user_id,
         )
 
         # Run the import
@@ -1460,6 +1462,7 @@ async def _run_multiple_pdf_import(
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
+            owner_id=user_id,
         )
 
         result = await importer.import_multiple_pdfs(
@@ -1932,6 +1935,7 @@ async def _run_zotero_import(
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
+            owner_id=user_id,
         )
 
         # Run the import
@@ -2168,6 +2172,7 @@ async def _run_zotero_import_from_dir(
             db_connection=db,
             graph_store=graph_store,
             progress_callback=progress_callback,
+            owner_id=user_id,
         )
 
         # Run the import from folder (MEM-002)

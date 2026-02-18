@@ -82,6 +82,18 @@ def _parse_json_field(value) -> dict:
     return {}
 
 
+def _safe_float(val, default: float = 0.0) -> float:
+    """Safely convert a value to float, returning default on failure."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def _normalize_relationship_type(raw_type) -> str:
     """Normalize legacy or inconsistent relationship labels into canonical API values."""
     if raw_type is None:
@@ -1189,23 +1201,67 @@ async def get_gap_analysis(
             if product > max_cluster_product:
                 max_cluster_product = product
 
+        # Pre-fetch centrality for scoring
+        _centrality_rows = await database.fetch(
+            """
+            SELECT name, properties
+            FROM entities
+            WHERE project_id = $1
+            AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+            AND properties->>'centrality_pagerank' IS NOT NULL
+            LIMIT 200
+            """,
+            str(project_id),
+        )
+        centrality_map = {}
+        for _cr in _centrality_rows:
+            _props = _parse_json_field(_cr["properties"])
+            centrality_map[_cr["name"]] = _safe_float(_props.get("centrality_pagerank", 0))
+
         for g in gaps:
-            # Impact: cluster_size_product * bridge_count, normalized
+            # Impact: cluster size, bridge count, centrality, type diversity
             c_a_size = cluster_size_map.get(g.cluster_a_id, 1)
             c_b_size = cluster_size_map.get(g.cluster_b_id, 1)
             size_product = c_a_size * c_b_size
             bridge_factor = min(len(g.bridge_candidates), 10) / 10.0
-            raw_impact = (size_product / max(max_cluster_product, 1)) * 0.6 + bridge_factor * 0.4
+
+            # Centrality factor from cluster concepts
+            avg_pr_a = 0.0
+            if g.cluster_a_names:
+                pr_vals = [centrality_map.get(c, 0) for c in g.cluster_a_names]
+                avg_pr_a = sum(pr_vals) / len(pr_vals) if pr_vals else 0
+            avg_pr_b = 0.0
+            if g.cluster_b_names:
+                pr_vals = [centrality_map.get(c, 0) for c in g.cluster_b_names]
+                avg_pr_b = sum(pr_vals) / len(pr_vals) if pr_vals else 0
+            centrality_factor = (avg_pr_a + avg_pr_b) / 2.0
+
+            # Type diversity: count unique entity types in bridge candidates
+            type_diversity = 0.0
+            if g.bridge_candidates:
+                # Normalize: up to 8 types possible
+                unique_count = min(len(set(g.bridge_candidates)), 8)
+                type_diversity = unique_count / 8.0
+
+            # Non-linear size scaling
+            size_ratio = (size_product / max(max_cluster_product, 1)) ** 0.5
+            raw_impact = size_ratio * 0.25 + bridge_factor * 0.25 + centrality_factor * 0.3 + type_diversity * 0.2
             g.impact_score = round(min(1.0, max(0.0, raw_impact)), 3)
 
-            # Feasibility: based on potential_edges similarity and bridge count
+            # Feasibility: similarity distribution, bridge availability, gap weakness
             if g.potential_edges:
                 high_sim_count = sum(1 for pe in g.potential_edges if pe.similarity > 0.5)
                 sim_ratio = high_sim_count / max(len(g.potential_edges), 1)
+                sims = [pe.similarity for pe in g.potential_edges]
+                sorted_sims = sorted(sims)
+                median_sim = sorted_sims[len(sorted_sims) // 2]
+                sim_spread = max(sims) - min(sims) if len(sims) > 1 else 0.0
             else:
-                sim_ratio = 0.3  # default moderate when no edges available
+                sim_ratio = 0.3
+                median_sim = 0.0
+                sim_spread = 0.0
             bridge_avail = min(len(g.bridge_candidates), 5) / 5.0
-            raw_feasibility = sim_ratio * 0.5 + bridge_avail * 0.3 + (1.0 - g.gap_strength) * 0.2
+            raw_feasibility = sim_ratio * 0.25 + median_sim * 0.2 + bridge_avail * 0.2 + (1.0 - g.gap_strength) * 0.15 + sim_spread * 0.2
             g.feasibility_score = round(min(1.0, max(0.0, raw_feasibility)), 3)
 
             # Quadrant
@@ -1225,7 +1281,7 @@ async def get_gap_analysis(
             b_label = next((c.label or f"Cluster {c.cluster_id}" for c in clusters if c.cluster_id == g.cluster_b_id), f"Cluster {g.cluster_b_id}")
             a_names = ", ".join(g.cluster_a_names[:2]) if g.cluster_a_names else a_label
             b_names = ", ".join(g.cluster_b_names[:2]) if g.cluster_b_names else b_label
-            g.research_significance = f"{a_names}과(와) {b_names} 사이의 미탐구 연결은 새로운 학제간 연구 기회를 제시합니다."
+            g.research_significance = f"Unexplored connection between {a_names} and {b_names} presents a new interdisciplinary research opportunity."
 
         # Get centrality metrics from entities
         centrality_rows = await database.fetch(
@@ -1247,9 +1303,9 @@ async def get_gap_analysis(
             CentralityMetricsResponse(
                 concept_id=str(row["id"]),
                 concept_name=row["name"],
-                degree_centrality=float(row["properties"].get("centrality_degree", 0)),
-                betweenness_centrality=float(row["properties"].get("centrality_betweenness", 0)),
-                pagerank=float(row["properties"].get("centrality_pagerank", 0)),
+                degree_centrality=_safe_float(row["properties"].get("centrality_degree", 0)),
+                betweenness_centrality=_safe_float(row["properties"].get("centrality_betweenness", 0)),
+                pagerank=_safe_float(row["properties"].get("centrality_pagerank", 0)),
                 cluster_id=row["properties"].get("cluster_id"),
             )
             for row in centrality_rows
@@ -2299,7 +2355,7 @@ async def _build_gap_repro_report(
                 relationship_id=str(row["id"]),
                 source_name=row["source_name"] or "",
                 target_name=row["target_name"] or "",
-                confidence=float(props.get("confidence", row["weight"] or 0.0) or 0.0),
+                confidence=_safe_float(props.get("confidence", row.get("weight"))),
                 hypothesis_title=props.get("hypothesis_title"),
                 ai_generated=bool(props.get("ai_generated", False)),
             )
@@ -2341,7 +2397,7 @@ async def _build_gap_repro_report(
         project_id=str(project_id),
         gap_id=str(gap_id),
         generated_at=datetime.utcnow().isoformat() + "Z",
-        gap_strength=float(gap_row["gap_strength"] or 0.0),
+        gap_strength=_safe_float(gap_row["gap_strength"]),
         cluster_a_names=cluster_a_names,
         cluster_b_names=cluster_b_names,
         bridge_candidates=bridge_candidates,
@@ -2855,7 +2911,7 @@ async def get_centrality(
                 "source": str(row["source_id"]),
                 "target": str(row["target_id"]),
                 "relationship_type": row["relationship_type"],
-                "weight": float(row["weight"]) if row["weight"] else 1.0,
+                "weight": _safe_float(row["weight"], 1.0),
             }
             for row in edge_rows
         ]
@@ -3148,7 +3204,7 @@ async def get_graph_metrics(
                 "id": str(row["id"]),
                 "source": str(row["source_id"]),
                 "target": str(row["target_id"]),
-                "weight": float(row["weight"]) if row["weight"] else 1.0,
+                "weight": _safe_float(row["weight"], 1.0),
             }
             for row in edge_rows
         ]
@@ -3416,7 +3472,7 @@ async def slice_graph(
                 "source": str(row["source_id"]),
                 "target": str(row["target_id"]),
                 "relationship_type": row["relationship_type"],
-                "weight": float(row["weight"]) if row["weight"] else 1.0,
+                "weight": _safe_float(row["weight"], 1.0),
             }
             for row in edge_rows
         ]
@@ -3984,7 +4040,7 @@ async def get_temporal_timeline(
                          THEN (properties->>'centrality_pagerank')::float
                          ELSE 0 END
                     DESC NULLS LAST
-                ))[1:5] as top_names
+                ) FILTER (WHERE name IS NOT NULL))[1:5] as top_names
             FROM entities
             WHERE project_id = $1
               AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
@@ -4003,7 +4059,7 @@ async def get_temporal_timeline(
                 SELECT
                     source_year as year,
                     COUNT(*) as concept_count,
-                    (ARRAY_AGG(name ORDER BY name))[1:5] as top_names
+                    (ARRAY_AGG(name ORDER BY name) FILTER (WHERE name IS NOT NULL))[1:5] as top_names
                 FROM entities
                 WHERE project_id = $1
                   AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem',
@@ -5100,7 +5156,7 @@ async def get_project_summary(
             edge_rows = await database.fetch(
                 """
                 SELECT id, source_id, target_id, relationship_type::text,
-                       COALESCE((properties->>'weight')::float, 1.0) as weight
+                       COALESCE(CASE WHEN properties->>'weight' ~ '^-?\\d+(\\.\\d+)?$' THEN (properties->>'weight')::float ELSE NULL END, 1.0) as weight
                 FROM relationships
                 WHERE project_id = $1
                 """,
@@ -5130,7 +5186,7 @@ async def get_project_summary(
                     "id": str(r["id"]),
                     "source": str(r["source_id"]),
                     "target": str(r["target_id"]),
-                    "weight": float(r["weight"]) if r["weight"] else 1.0,
+                    "weight": _safe_float(r["weight"], 1.0),
                 }
                 for r in edge_rows
             ]
@@ -5211,7 +5267,7 @@ async def get_project_summary(
             {
                 "name": r["name"],
                 "entity_type": r["entity_type"],
-                "pagerank": float(_parse_json_field(r["properties"]).get("centrality_pagerank", 0)),
+                "pagerank": _safe_float(_parse_json_field(r["properties"]).get("centrality_pagerank", 0)),
             }
             for r in top_entity_rows
         ]
@@ -5253,17 +5309,17 @@ async def get_project_summary(
         # Resolve cluster labels from concept_clusters
         cluster_label_map: dict = {}
         for row in community_rows:
-            cluster_label_map[row["cluster_id"]] = row["label"] or f"클러스터 {row['cluster_id']}"
+            cluster_label_map[row["cluster_id"]] = row["label"] or f"Cluster {row['cluster_id']}"
 
         structural_gaps = [
             {
                 "cluster_a_id": r["cluster_a_id"],
                 "cluster_b_id": r["cluster_b_id"],
-                "cluster_a_label": cluster_label_map.get(r["cluster_a_id"], f"클러스터 {r['cluster_a_id']}"),
-                "cluster_b_label": cluster_label_map.get(r["cluster_b_id"], f"클러스터 {r['cluster_b_id']}"),
+                "cluster_a_label": cluster_label_map.get(r["cluster_a_id"], f"Cluster {r['cluster_a_id']}"),
+                "cluster_b_label": cluster_label_map.get(r["cluster_b_id"], f"Cluster {r['cluster_b_id']}"),
                 "cluster_a_names": (r["cluster_a_names"] or [])[:5],
                 "cluster_b_names": (r["cluster_b_names"] or [])[:5],
-                "gap_strength": float(r["gap_strength"] or 0.0),
+                "gap_strength": _safe_float(r["gap_strength"]),
                 "research_questions": r["research_questions"] or [],
                 "impact_score": 0.0,
                 "feasibility_score": 0.0,

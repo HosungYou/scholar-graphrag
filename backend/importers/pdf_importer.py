@@ -45,12 +45,14 @@ class PDFImporter:
         db_connection: Optional[Database] = None,
         graph_store: Optional[GraphStore] = None,
         progress_callback: Optional[Callable[[str, float, str], None]] = None,
+        owner_id: str = None,
     ):
         self.llm_provider = llm_provider
         self.llm_model = llm_model
         self.db = db_connection
         self.graph_store = graph_store
         self.progress_callback = progress_callback
+        self.owner_id = owner_id
 
         # Initialize entity extractor, semantic chunker, and table extractor
         self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
@@ -376,10 +378,10 @@ class PDFImporter:
             if self.db:
                 await self.db.execute(
                     """
-                    INSERT INTO projects (id, name, research_question, created_at)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO projects (id, name, research_question, created_at, owner_id)
+                    VALUES ($1, $2, $3, $4, $5)
                     """,
-                    project_id, project_name_final, research_question, datetime.utcnow()
+                    project_id, project_name_final, research_question, datetime.utcnow(), self.owner_id
                 )
 
             self._update_progress("storing", 0.4, "Storing paper metadata...")
@@ -589,10 +591,10 @@ class PDFImporter:
         if self.db:
             await self.db.execute(
                 """
-                INSERT INTO projects (id, name, research_question, created_at)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO projects (id, name, research_question, created_at, owner_id)
+                VALUES ($1, $2, $3, $4, $5)
                 """,
-                project_id, project_name, research_question, datetime.utcnow()
+                project_id, project_name, research_question, datetime.utcnow(), self.owner_id
             )
 
         total_stats = {

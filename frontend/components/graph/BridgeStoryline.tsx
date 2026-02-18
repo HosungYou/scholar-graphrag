@@ -113,7 +113,7 @@ export function BridgeStoryline({ gap, clusters, nodes = [] }: BridgeStorylinePr
             {avgSimilarity && (
               <div className="mt-1.5 pt-1 border-t border-accent-amber/20">
                 <span className="font-mono text-[9px] text-accent-amber/70">
-                  유사도: {avgSimilarity}
+                  Similarity: {avgSimilarity}
                 </span>
               </div>
             )}

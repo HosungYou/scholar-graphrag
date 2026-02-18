@@ -486,7 +486,7 @@ class CentralityAnalyzer:
 
         result = {
             "modularity_raw": 0.0,
-            "modularity_interpretation": "없음",
+            "modularity_interpretation": "N/A",
             "silhouette_score": 0.0,
             "avg_cluster_coherence": 0.0,
             "cluster_coverage": 0.0,
@@ -510,11 +510,11 @@ class CentralityAnalyzer:
 
                 # Interpretation
                 if raw_mod >= 0.5:
-                    result["modularity_interpretation"] = "강함"
+                    result["modularity_interpretation"] = "Strong"
                 elif raw_mod >= 0.3:
-                    result["modularity_interpretation"] = "보통"
+                    result["modularity_interpretation"] = "Moderate"
                 else:
-                    result["modularity_interpretation"] = "약함"
+                    result["modularity_interpretation"] = "Weak"
         except Exception as e:
             logger.warning(f"Failed to compute raw modularity: {e}")
 

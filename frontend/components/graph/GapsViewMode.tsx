@@ -418,7 +418,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
                   {getClusterName(gap.cluster_a_id)} ↔ {getClusterName(gap.cluster_b_id)}
                 </div>
                 <div className="text-xs text-muted mt-1">
-                  {gap.bridge_candidates.length} 연결 후보
+                  {gap.bridge_candidates.length} bridges
                 </div>
               </button>
             ))}
@@ -485,7 +485,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-amber-500" />
-                <span className="text-xs text-white/70">연결 후보 (Bridge Concepts)</span>
+                <span className="text-xs text-white/70">Bridge Concepts</span>
               </div>
             </>
           ) : (
@@ -504,7 +504,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-white/20" />
-            <span className="text-xs text-white/70">비활성 노드 (Inactive)</span>
+            <span className="text-xs text-white/70">Inactive Nodes</span>
           </div>
         </div>
       </div>

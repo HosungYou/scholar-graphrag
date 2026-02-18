@@ -142,13 +142,13 @@ async def get_api_keys(
                 usage=provider_info["usage"]
             ))
         elif server_key:
-            # Using server default key
+            # Server key exists but don't expose it to users
             result.append(ApiKeyInfo(
                 provider=provider_id,
                 display_name=provider_info["display_name"],
-                is_set=True,
-                masked_key=mask_api_key(server_key),
-                source="server",
+                is_set=False,
+                masked_key="",
+                source="not_configured",
                 usage=provider_info["usage"]
             ))
         else:

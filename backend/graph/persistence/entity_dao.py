@@ -265,6 +265,7 @@ class EntityDAO:
         name: str,
         description: str = None,
         config: dict = None,
+        owner_id: str = None,
     ) -> str:
         """
         Create a new project in the database.
@@ -277,13 +278,14 @@ class EntityDAO:
         if self.db:
             await self.db.execute(
                 """
-                INSERT INTO projects (id, name, research_question, source_path, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO projects (id, name, research_question, source_path, owner_id, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 project_id,
                 name,
                 description,
                 None,
+                owner_id,
                 now,
                 now,
             )

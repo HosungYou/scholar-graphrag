@@ -90,7 +90,7 @@ export function PaperFitPanel({ projectId, onClose }: PaperFitPanelProps) {
             {mutation.isPending ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              '분석'
+              'Analyze'
             )}
           </button>
         </div>
@@ -119,7 +119,7 @@ export function PaperFitPanel({ projectId, onClose }: PaperFitPanelProps) {
             {result.matched_entities.length > 0 && (
               <div className="px-4 py-3">
                 <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted mb-2">
-                  관련 엔티티 ({result.matched_entities.length})
+                  Matched Entities ({result.matched_entities.length})
                 </h3>
                 <div className="space-y-1.5">
                   {result.matched_entities.slice(0, 10).map((entity) => (
@@ -154,7 +154,7 @@ export function PaperFitPanel({ projectId, onClose }: PaperFitPanelProps) {
             {result.community_relevance.length > 0 && (
               <div className="px-4 py-3">
                 <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted mb-2">
-                  커뮤니티 관련도 ({result.community_relevance.length})
+                  Community Relevance ({result.community_relevance.length})
                 </h3>
                 <div className="space-y-2">
                   {result.community_relevance.map((community) => (
@@ -186,7 +186,7 @@ export function PaperFitPanel({ projectId, onClose }: PaperFitPanelProps) {
             {result.gap_connections.length > 0 && (
               <div className="px-4 py-3">
                 <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted mb-2">
-                  갭 연결 ({result.gap_connections.length})
+                  Gap Connections ({result.gap_connections.length})
                 </h3>
                 <div className="space-y-2">
                   {result.gap_connections.map((gap) => (
@@ -212,7 +212,7 @@ export function PaperFitPanel({ projectId, onClose }: PaperFitPanelProps) {
             {result.fit_summary && (
               <div className="px-4 py-3">
                 <h3 className="font-mono text-[10px] uppercase tracking-wider text-muted mb-2">
-                  요약
+                  Summary
                 </h3>
                 <p className="font-mono text-xs text-ink/80 dark:text-paper/80 leading-relaxed">
                   {result.fit_summary}

@@ -119,6 +119,7 @@ class ZoteroRDFImporter:
         db_connection: Optional[Database] = None,
         graph_store: Optional[GraphStore] = None,
         progress_callback: Optional[Callable[[ImportProgress], None]] = None,
+        owner_id: str = None,
     ):
         self.llm = llm_provider
         self.llm_model = llm_model
@@ -126,6 +127,7 @@ class ZoteroRDFImporter:
         self.graph_store = graph_store
         self.progress_callback = progress_callback
         self.progress = ImportProgress()
+        self.owner_id = owner_id
 
         # Initialize processors
         self.entity_extractor = EntityExtractor(llm_provider=llm_provider)
@@ -860,6 +862,7 @@ class ZoteroRDFImporter:
                         "pdfs_count": len(pdf_map),
                         "import_date": datetime.now().isoformat(),
                     },
+                    owner_id=self.owner_id,
                 )
             else:
                 project_id = str(uuid4())

@@ -108,11 +108,13 @@ class ConceptCentricScholarAGImporter:
         db_connection=None,
         graph_store=None,
         progress_callback: Optional[Callable[[ImportProgress], None]] = None,
+        owner_id: str = None,
     ):
         self.llm = llm_provider
         self.db = db_connection
         self.graph_store = graph_store
         self.progress_callback = progress_callback
+        self.owner_id = owner_id
         self.progress = ImportProgress()
 
         # Initialize specialized processors
@@ -256,13 +258,14 @@ class ConceptCentricScholarAGImporter:
             if self.db:
                 await self.db.execute(
                     """
-                    INSERT INTO projects (id, name, research_question, source_path)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO projects (id, name, research_question, source_path, owner_id)
+                    VALUES ($1, $2, $3, $4, $5)
                     """,
                     project_id,
                     project_name_final,
                     config.research_question,
                     folder_path,
+                    self.owner_id,
                 )
 
             # Parse papers

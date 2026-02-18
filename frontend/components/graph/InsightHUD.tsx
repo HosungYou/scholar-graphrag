@@ -315,13 +315,16 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
                     </span>
                     {metrics.modularity_interpretation && (
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                        metrics.modularity_interpretation === '강함'
+                        metrics.modularity_interpretation === '강함' || metrics.modularity_interpretation === 'Strong'
                           ? 'bg-emerald-500/20 text-emerald-400'
-                          : metrics.modularity_interpretation === '보통'
+                          : metrics.modularity_interpretation === '보통' || metrics.modularity_interpretation === 'Moderate'
                           ? 'bg-amber-500/20 text-amber-400'
                           : 'bg-red-500/20 text-red-400'
                       }`}>
-                        {metrics.modularity_interpretation}
+                        {metrics.modularity_interpretation === '강함' ? 'Strong'
+                          : metrics.modularity_interpretation === '보통' ? 'Moderate'
+                          : metrics.modularity_interpretation === '약함' ? 'Weak'
+                          : metrics.modularity_interpretation}
                       </span>
                     )}
                   </div>
@@ -338,7 +341,7 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
               {metrics.silhouette_score !== undefined && metrics.silhouette_score !== null && (
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-mono text-muted" title="클러스터 내 응집도 vs 클러스터 간 분리도 (-1~1)">Silhouette</span>
+                    <span className="text-xs font-mono text-muted" title="Intra-cluster cohesion vs inter-cluster separation (-1~1)">Silhouette</span>
                     <span className="text-xs font-mono text-white">{metrics.silhouette_score.toFixed(2)}</span>
                   </div>
                   <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
@@ -356,7 +359,7 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
                   label="Coherence"
                   value={metrics.avg_cluster_coherence}
                   color="#45B7D1"
-                  tooltip="클러스터 내 엔티티 간 평균 의미 유사도"
+                  tooltip="Average semantic similarity between entities within clusters"
                 />
               )}
 
@@ -366,7 +369,7 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
                   label="Coverage"
                   value={metrics.cluster_coverage}
                   color="#96CEB4"
-                  tooltip="클러스터에 배정된 엔티티 비율"
+                  tooltip="Proportion of entities assigned to clusters"
                 />
               )}
 
@@ -386,28 +389,28 @@ export function InsightHUD({ projectId, className = '' }: InsightHUDProps) {
 
                 {metrics.entity_type_diversity !== undefined && (
                   <div className="flex justify-between text-xs">
-                    <span className="text-muted" title="8개 엔티티 타입 중 사용 비율">Type Diversity</span>
+                    <span className="text-muted" title="Usage ratio among 8 entity types">Type Diversity</span>
                     <span className="text-white font-mono">{Math.round((metrics.entity_type_diversity ?? 0) * 100)}%</span>
                   </div>
                 )}
 
                 {metrics.paper_coverage !== undefined && (
                   <div className="flex justify-between text-xs">
-                    <span className="text-muted" title="1개 이상 엔티티가 추출된 논문 비율">Paper Coverage</span>
+                    <span className="text-muted" title="Proportion of papers with 1+ extracted entities">Paper Coverage</span>
                     <span className="text-white font-mono">{Math.round((metrics.paper_coverage ?? 0) * 100)}%</span>
                   </div>
                 )}
 
                 {metrics.avg_entities_per_paper !== undefined && (
                   <div className="flex justify-between text-xs">
-                    <span className="text-muted" title="논문당 평균 엔티티 수">Entities/Paper</span>
+                    <span className="text-muted" title="Average entities per paper">Entities/Paper</span>
                     <span className="text-white font-mono">{metrics.avg_entities_per_paper?.toFixed(1)}</span>
                   </div>
                 )}
 
                 {metrics.cross_paper_ratio !== undefined && (
                   <div className="flex justify-between text-xs">
-                    <span className="text-muted" title="3편+ 논문에서 등장하는 엔티티 비율">Cross-Paper</span>
+                    <span className="text-muted" title="Proportion of entities appearing in 3+ papers">Cross-Paper</span>
                     <span className="text-white font-mono">{Math.round((metrics.cross_paper_ratio ?? 0) * 100)}%</span>
                   </div>
                 )}

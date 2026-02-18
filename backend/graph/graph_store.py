@@ -144,9 +144,10 @@ class GraphStore:
         name: str,
         description: str = None,
         config: dict = None,
+        owner_id: str = None,
     ) -> str:
         """Create a new project in the database. Returns the project UUID."""
-        return await self._entity_dao.create_project(name, description, config)
+        return await self._entity_dao.create_project(name, description, config, owner_id)
 
     async def store_paper_metadata(
         self,

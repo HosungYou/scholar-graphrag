@@ -552,7 +552,7 @@ export function KnowledgeGraph3D({
                 ? 'bg-accent-purple/10 text-accent-purple'
                 : 'hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper'
             }`}
-            title="내 논문 위치 분석 (Paper Fit)"
+            title="Paper Fit Analysis"
           >
             <Search className="w-4 h-4" />
           </button>
@@ -611,7 +611,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-accent-orange text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="시간축 시각화 (Temporal)"
+              title="Temporal View"
             >
               <Calendar className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Temporal</span>
@@ -625,7 +625,7 @@ export function KnowledgeGraph3D({
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10'
               }`}
-              title="연구 요약 리포트 (Research Summary)"
+              title="Research Summary"
             >
               <FileText className="w-4 h-4" />
               <span className="font-mono text-xs uppercase tracking-wider">Summary</span>

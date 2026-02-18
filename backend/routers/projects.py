@@ -42,7 +42,6 @@ async def check_project_access(database, project_id: UUID, user_id: str) -> bool
             SELECT 1 FROM projects p
             WHERE p.id = $1 AND (
                 p.owner_id = $2
-                OR p.owner_id IS NULL
                 OR p.visibility = 'public'
                 OR EXISTS (
                     SELECT 1 FROM project_collaborators pc
@@ -134,8 +133,7 @@ async def list_projects(
         if current_user is None:
             raise HTTPException(status_code=401, detail="Authentication required")
         else:
-            # Filter by user access: owned, collaborated, team-shared, public, or unowned
-            # NOTE: owner_id IS NULL covers projects created before auth was added
+            # Filter by user access: owned, collaborated, team-shared, or public
             rows = await database.fetch(
                 """
                 SELECT DISTINCT p.id, p.name, p.research_question, p.source_path,
@@ -148,7 +146,6 @@ async def list_projects(
                    OR pc.user_id = $1
                    OR tm.user_id = $1
                    OR p.visibility = 'public'
-                   OR p.owner_id IS NULL
                 ORDER BY p.created_at DESC
                 """,
                 current_user.id,
