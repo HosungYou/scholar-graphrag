@@ -225,6 +225,8 @@ class ImportJobResponse(BaseModel):
     updated_at: datetime
     # UI-002: Added metadata for interrupted jobs display (project_name, checkpoint)
     metadata: Optional[dict] = None
+    # BUG-064: Include job_type so frontend can route zotero resume correctly
+    job_type: Optional[str] = None
 
 
 class ImportValidationResponse(BaseModel):
@@ -983,6 +985,8 @@ async def list_import_jobs(
             updated_at=job.updated_at,
             # UI-002: Include metadata for frontend (project_name, checkpoint)
             metadata=job.metadata if job.metadata else None,
+            # BUG-064: Include job_type for zotero resume routing
+            job_type=job.job_type,
         )
         for job in jobs
     ]
@@ -1682,6 +1686,7 @@ async def import_zotero_folder(
     project_name: Optional[str] = None,
     research_question: Optional[str] = None,
     extract_concepts: bool = True,
+    resume_job_id: Optional[str] = None,
     current_user: Optional[User] = Depends(require_auth_if_configured),
 ):
     """
@@ -1796,6 +1801,18 @@ async def import_zotero_folder(
         "updated_at": now,
     }
 
+    # BUG-064: Load checkpoint from interrupted job for resume support
+    resume_checkpoint = None
+    if resume_job_id:
+        try:
+            old_job = await job_store.get_job(resume_job_id)
+            if old_job and old_job.metadata.get("checkpoint"):
+                resume_checkpoint = old_job.metadata["checkpoint"]
+                processed_count = len(resume_checkpoint.get("processed_paper_ids", []))
+                logger.info(f"[Zotero Import {job.id}] Resuming from job {resume_job_id}: {processed_count} papers to skip")
+        except Exception as e:
+            logger.warning(f"[Zotero Import {job.id}] Failed to load resume checkpoint: {e}")
+
     # Start background import task
     background_tasks.add_task(
         _run_zotero_import_from_dir,
@@ -1804,6 +1821,7 @@ async def import_zotero_folder(
         project_name=project_name,
         research_question=research_question,
         extract_concepts=extract_concepts,
+        resume_checkpoint=resume_checkpoint,
         user_id=current_user.id if current_user else None,
     )
 
@@ -2413,13 +2431,19 @@ async def resume_import(
 
     # Start background task based on job type
     if job_type == "zotero_import":
-        # For Zotero import, we need the uploaded files
-        # Since files are not persisted, we need to inform the user
-        # For now, we'll need to re-upload files - but the checkpoint will skip processed papers
-        raise HTTPException(
-            status_code=400,
-            detail="Zotero import resume requires re-uploading files. The checkpoint will skip already processed papers. Please use the import endpoint with the same files."
-        )
+        # BUG-064: Zotero imports need file re-upload — return info for the frontend
+        # The frontend will redirect to /import?resume_job_id=<new_job_id> so the user
+        # can re-upload files; the Zotero import endpoint will load the checkpoint and
+        # skip already-processed papers.
+        return {
+            "job_id": new_job.id,
+            "status": "requires_reupload",
+            "message": f"Zotero import resume requires re-uploading files. {processed_count} already processed papers will be skipped.",
+            "resume_job_id": job_id,
+            "processed_count": processed_count,
+            "total_count": total_count,
+            "project_id": checkpoint.get("project_id"),
+        }
 
     # For other job types (like PDF import), start the background task
     # This is a placeholder - specific implementations would go here

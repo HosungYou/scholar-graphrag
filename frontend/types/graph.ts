@@ -322,6 +322,8 @@ export interface ImportJob {
     checkpoint?: ImportCheckpoint;
     [key: string]: unknown;
   };
+  // BUG-064: job_type for routing zotero resume correctly
+  job_type?: string;
 }
 
 export interface ImportReliabilitySummary {

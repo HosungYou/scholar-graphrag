@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, DragEvent, useCallback, ChangeEvent } from 'react';
+import { useState, useRef, DragEvent, useCallback, ChangeEvent, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Network,
   FolderOpen,
@@ -101,6 +101,21 @@ export default function ImportPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // BUG-064: Resume support — pre-fill from URL params when redirected from interrupted import
+  const [resumeJobId, setResumeJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const resumeId = searchParams.get('resume_job_id');
+    const method = searchParams.get('method');
+    if (resumeId) {
+      setResumeJobId(resumeId);
+    }
+    if (method === 'zotero') {
+      setImportMethod('zotero');
+    }
+  }, [searchParams]);
 
   // PDF upload state
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -174,9 +189,17 @@ export default function ImportPage() {
         projectName: projectName || undefined,
         researchQuestion: researchQuestion || undefined,
         extractConcepts,
+        // BUG-064: Pass resume_job_id so already-processed papers are skipped
+        resumeJobId: resumeJobId || undefined,
       });
     },
-    onSuccess: (data) => setImportJobId(data.job_id),
+    onSuccess: (data) => {
+      // BUG-064: If the backend returns requires_reupload (shouldn't happen here since we
+      // are already re-uploading), just use the new job_id for tracking
+      setImportJobId(data.job_id);
+      // Clear resume state after successful submission
+      setResumeJobId(null);
+    },
   });
 
   const handleValidate = () => {
@@ -579,6 +602,22 @@ export default function ImportPage() {
           {/* Zotero Import Section */}
           {importMethod === 'zotero' && (
             <div className="space-y-6">
+              {/* BUG-064: Resume banner — shown when redirected from an interrupted Zotero import */}
+              {resumeJobId && (
+                <div className="p-4 border-l-2 border-accent-amber bg-accent-amber/5">
+                  <p className="font-medium text-ink dark:text-paper mb-1">Resuming interrupted import</p>
+                  <p className="text-sm text-muted">
+                    Re-upload the same Zotero files. Already processed papers will be skipped automatically.
+                  </p>
+                  <button
+                    onClick={() => setResumeJobId(null)}
+                    className="mt-2 text-xs text-muted underline hover:text-ink dark:hover:text-paper"
+                  >
+                    Cancel resume (start fresh)
+                  </button>
+                </div>
+              )}
+
               {/* Info Banner */}
               <div className="p-4 border-l-2 border-accent-teal bg-accent-teal/5">
                 <p className="font-medium text-ink dark:text-paper mb-2">Export from Zotero</p>

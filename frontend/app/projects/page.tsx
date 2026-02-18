@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Network, Plus, ArrowRight, FileText, Users, Hexagon, AlertTriangle, Play, RefreshCw, Clock, CheckCircle, Trash2, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -134,6 +135,7 @@ function EmptyState() {
  */
 function InterruptedImportsSection() {
   const { user } = useAuth();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [resumingJobId, setResumingJobId] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
@@ -181,7 +183,12 @@ function InterruptedImportsSection() {
     },
   });
 
-  const handleResume = async (jobId: string) => {
+  const handleResume = async (jobId: string, jobType?: string) => {
+    // BUG-064: Zotero imports need file re-upload — navigate to import page with resume_job_id
+    if (jobType === 'zotero_import') {
+      router.push(`/import?resume_job_id=${jobId}&method=zotero`);
+      return;
+    }
     setResumingJobId(jobId);
     resumeMutation.mutate(jobId);
   };
@@ -266,7 +273,7 @@ function InterruptedImportsSection() {
 
               {/* Resume Button */}
               <button
-                onClick={() => handleResume(job.job_id)}
+                onClick={() => handleResume(job.job_id, job.job_type)}
                 disabled={isResuming}
                 className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 font-mono text-xs bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal transition-colors disabled:opacity-50"
               >

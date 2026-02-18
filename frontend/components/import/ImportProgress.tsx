@@ -142,6 +142,12 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
     setResumeError(null);
     try {
       const resumedJob = await api.resumeImport(jobId);
+      // BUG-064: Zotero resume returns requires_reupload — redirect to import page
+      if ((resumedJob as any).status === 'requires_reupload') {
+        const newJobId = (resumedJob as any).job_id;
+        router.push(`/import?resume_job_id=${newJobId}&method=zotero`);
+        return;
+      }
       setJob(resumedJob);
       setIsInterrupted(false);
       // Restart polling loop after interrupted -> running transition.
@@ -323,7 +329,14 @@ export function ImportProgress({ jobId, onComplete, onError }: ImportProgressPro
 
             {/* Secondary: Re-upload files */}
             <button
-              onClick={() => router.push('/import')}
+              onClick={() => {
+                // BUG-064: For zotero jobs, carry resume_job_id so already-processed papers are skipped
+                if (job?.job_type === 'zotero_import') {
+                  router.push(`/import?resume_job_id=${jobId}&method=zotero`);
+                } else {
+                  router.push('/import');
+                }
+              }}
               aria-label="Upload new files"
               className="flex items-center justify-center gap-2 px-4 py-3 border border-ink/20 dark:border-paper/20 text-ink dark:text-paper font-medium rounded-sm hover:bg-ink/5 dark:hover:bg-paper/5 transition-colors"
             >

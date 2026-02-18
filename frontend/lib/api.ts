@@ -590,6 +590,7 @@ class ApiClient {
       projectName?: string;
       researchQuestion?: string;
       extractConcepts?: boolean;
+      resumeJobId?: string;
     }
   ): Promise<{
     job_id: string;
@@ -597,6 +598,10 @@ class ApiClient {
     message: string;
     items_count: number;
     project_id?: string;
+    // BUG-064: fields returned when status === 'requires_reupload'
+    resume_job_id?: string;
+    processed_count?: number;
+    total_count?: number;
   }> {
     const formData = new FormData();
     files.forEach((file) => {
@@ -613,6 +618,8 @@ class ApiClient {
     if (options?.extractConcepts !== undefined) {
       params.set('extract_concepts', String(options.extractConcepts));
     }
+    // BUG-064: Pass resume_job_id to skip already-processed papers
+    if (options?.resumeJobId) params.set('resume_job_id', options.resumeJobId);
 
     const url = `${this.baseUrl}/api/import/zotero${params.toString() ? '?' + params.toString() : ''}`;
 
