@@ -1,8 +1,8 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.30.0
-**Last Updated**: 2026-02-17
+**Version**: 0.31.0
+**Last Updated**: 2026-02-18
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
 
@@ -13,7 +13,7 @@
 | Field | Value |
 |-------|-------|
 | **Document Version** | 2.1.0 |
-| **Project Version** | 0.30.0 |
+| **Project Version** | 0.31.0 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -1359,6 +1359,14 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### v0.31.0 (2026-02-18) — Research Frontier Explorer
+- **Backend**: Fixed 3 critical 500 errors in temporal/summary endpoints (BUG-053/054/055)
+- **Backend**: Added impact_score, feasibility_score, research_significance, quadrant to StructuralGapResponse
+- **Frontend**: Rebranded Gaps View → Research Frontiers with Korean localization
+- **Frontend**: New FrontierMatrix.tsx (2×2 Impact×Feasibility scatter plot)
+- **Frontend**: New BridgeStoryline.tsx (Cluster A → Bridge → Cluster B flow)
+- **Frontend**: Star rating for research opportunity level
 
 ### v0.30.0 — Quality Evaluation + Research Report + Temporal Dashboard + Paper Fit (2026-02-17)
 
