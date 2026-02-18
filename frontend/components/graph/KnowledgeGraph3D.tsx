@@ -141,7 +141,7 @@ export function KnowledgeGraph3D({
         e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
       ),
     };
-  }, [getFilteredData, view3D.lodEnabled, centrality, getVisiblePercentage, filters]);
+  }, [getFilteredData, view3D.lodEnabled, centrality, getVisiblePercentage, filters, graphData]);
 
   const displayDataRef = useRef<GraphData | null>(null);
 
