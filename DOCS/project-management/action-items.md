@@ -11,14 +11,45 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 27 | 27 | 0 | 0 |
-| 🟡 Medium | 26 | 26 | 0 | 0 |
+| 🔴 High | 28 | 28 | 0 | 0 |
+| 🟡 Medium | 27 | 27 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **58** | **58** | **0** | **0** |
+| **Total** | **60** | **60** | **0** | **0** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### BUG-064: Zotero Import Resume with File Re-upload
+- **Source**: v0.32.2 (2026-02-18)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `backend/routers/import_.py`
+  - `frontend/app/import/page.tsx`
+  - `frontend/app/projects/page.tsx`
+  - `frontend/components/import/ImportProgress.tsx`
+  - `frontend/lib/api.ts`
+  - `frontend/types/graph.ts`
+- **Description**: When Zotero import is interrupted (e.g., server restart), uploaded files are lost on the temp filesystem. Resume endpoint hard-blocked with HTTP 400 "Zotero import resume requires re-uploading files", leaving users no path to continue without starting over.
+- **Fix**: Backend accepts `resume_job_id` query param on `POST /api/import/zotero`, loads checkpoint from old job, passes `skip_paper_ids` to background task. Resume endpoint returns `requires_reupload` status instead of 400. Frontend redirects to `/import?resume_job_id=<id>&method=zotero` with resume banner showing already-processed papers will be skipped. Added `job_type` to `ImportJobResponse` for routing.
+- **Commits**: 5c91c20
+- **Completed**: 2026-02-18
+
+### PERF-013: Import Speed Improvement (~10 min saved for 150 papers)
+- **Source**: v0.32.2 (2026-02-18)
+- **Status**: ✅ Completed
+- **Priority**: 🟡 Medium
+- **Files**:
+  - `backend/llm/groq_provider.py`
+  - `backend/importers/zotero_rdf_importer.py`
+- **Description**: Groq rate limiter at 20 RPM (3s intervals) created a 15-minute floor for 300 LLM calls. 2 LLM calls per paper (extraction + resolution confirmation) compounded the delay.
+- **Fix**:
+  - Raised `AsyncRateLimiter` from 20 to 28 RPM (Groq free tier allows 30). Saves ~2.5 min.
+  - Disabled LLM entity resolution confirmation during import (`use_llm_confirmation=False`). String-based resolution (Jaccard+SequenceMatcher at 0.95 threshold) still handles duplicates. Saves ~7.5 min.
+  - Estimated new time: ~5-10 min for 150 papers (down from 15-20 min).
+- **Commits**: d5fa7f9
+- **Completed**: 2026-02-18
 
 ### BUG-062: v0.32.0 BUG-060 회귀 — 기존 프로젝트 전부 사라짐
 - **Source**: v0.32.0 프로덕션 배포 후 사용자 보고 (2026-02-18)

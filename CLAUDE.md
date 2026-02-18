@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.7.1 (v0.32.1 Critical Hotfix — Project Visibility + Import Resume)
+> **Version**: 6.7.2 (v0.32.2 Zotero Resume + Import Speed)
 
 ## Project Overview
 
@@ -734,6 +734,38 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.32.2 Release Notes
+
+> **Version**: 0.32.2 | **Date**: 2026-02-18 | **Codename**: Zotero Resume + Import Speed
+> **Full Notes**: See `RELEASE_NOTES_v0.32.2.md`
+
+### Zotero Import Resume with File Re-upload
+
+**BUG-064: Resume Flow for Interrupted Zotero Imports**
+- Resume endpoint previously hard-blocked with HTTP 400 when temp files were lost after server restart, leaving users with no recovery path
+- **Fix**: Backend accepts `resume_job_id` query param on `POST /api/import/zotero`, loads checkpoint, passes `skip_paper_ids` to skip already-processed papers. Resume endpoint returns `requires_reupload` status (not 400). Frontend redirects to `/import?resume_job_id=<id>&method=zotero` with resume banner
+- Added `job_type` field to `ImportJobResponse` for frontend routing
+
+### Import Speed Improvement (~10 min saved for 150 papers)
+
+**PERF-013: Groq Rate Limiter + LLM Call Reduction**
+- **Root cause**: 20 RPM rate limiter = 3s/call floor × 300 calls = 15-min minimum. 2 LLM calls per paper (extraction + resolution confirmation)
+- **Fix 1**: Raised `AsyncRateLimiter` 20 → 28 RPM (Groq free tier allows 30). Saves ~2.5 min
+- **Fix 2**: Disabled LLM resolution confirmation during import (`use_llm_confirmation=False`). String-based resolution (Jaccard+SequenceMatcher at 0.95 threshold) still handles duplicates. Saves ~7.5 min
+- **Result**: ~5-10 min for 150 papers (down from 15-20 min)
+
+### API Changes
+- `POST /api/import/zotero`: new optional `resume_job_id` query param
+- `POST /api/import/resume/{job_id}`: returns `requires_reupload` status instead of HTTP 400 for Zotero jobs
+- `GET /api/import/jobs`: response now includes `job_type` field
+
+### Technical
+- 9 files changed, +110/-18 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars
 
 ---
 
