@@ -2971,7 +2971,7 @@ async def get_diversity_metrics(
             for row in edge_rows
         ]
         clusters = [
-            {"node_ids": row["concepts"] or [], "size": row["size"]}
+            {"node_ids": [str(c) for c in (row["concepts"] or [])], "size": row["size"]}
             for row in cluster_rows
         ]
 
@@ -3104,7 +3104,7 @@ async def get_graph_metrics(
         clusters = [
             ClusterResult(
                 cluster_id=row["cluster_id"],
-                node_ids=row["concepts"] or [],
+                node_ids=[str(c) for c in (row["concepts"] or [])],
                 node_names=[],
                 centroid=None,
                 size=row["size"],
@@ -3204,7 +3204,7 @@ async def get_graph_metrics(
                         WHERE EXISTS (
                             SELECT 1 FROM entities e
                             WHERE e.project_id = $1
-                            AND pm.id::text = ANY(e.source_paper_ids)
+                            AND pm.id = ANY(e.source_paper_ids)
                         )
                     ) as covered_papers
                 FROM paper_metadata pm

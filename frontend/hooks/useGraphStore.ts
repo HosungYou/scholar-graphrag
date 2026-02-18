@@ -126,7 +126,7 @@ export const useGraphStore = create<GraphStore>()(
   selectedNode: null,
   highlightedNodes: [],
   highlightedEdges: [],
-  isLoading: false,
+  isLoading: true,
   error: null,
   filters: { ...defaultFilters },
 
