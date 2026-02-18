@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.5.1 (v0.30.1 Insight HUD Accuracy Fix + First-Entry Race Condition)
+> **Version**: 6.6.0 (v0.31.0 Temporal/Summary 500 Fix + Research Frontier Redesign)
 
 ## Project Overview
 
@@ -734,6 +734,35 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.31.0 Release Notes
+
+> **Version**: 0.31.0 | **Date**: 2026-02-18
+> **Full Notes**: See `RELEASE_NOTES_v0.31.0.md`
+
+### Temporal/Summary 500 Fix + Research Frontier Redesign
+
+**Phase 1: Backend 500 Error Fixes**
+- **BUG-053**: Summary endpoint `node_ids=r["concepts"] or []` — UUID→str conversion missing (BUG-051 parity). Fixed to `[str(c) for c in ...]`
+- **BUG-054**: Unsafe `(properties->>'centrality_pagerank')::float` cast in 3 queries — empty string causes cast failure. Added `CASE WHEN regex` guard in summary top entities, emerging concepts, and gap analysis centrality queries
+- **BUG-055**: Temporal info section failure crashes entire summary endpoint. Wrapped in try/except so temporal failure degrades gracefully (min_year/max_year=None)
+
+**Phase 2: Research Frontier Redesign**
+- **Rebranding**: "Structural Gaps" → "Research Frontiers" across GapsViewMode + GapPanel with Korean labels (연결 개념, AI 연구 질문, 관련 논문, 개념 클러스터)
+- **Impact×Feasibility scores**: `impact_score` (cluster size × bridge count), `feasibility_score` (similarity ratio × bridge availability), `quadrant`, `research_significance` fields added to `StructuralGapResponse`
+- **FrontierMatrix**: New 2×2 SVG scatter plot component with Korean quadrant labels (⭐ 즉시 착수 / 🔬 도전적 연구 / ✅ 안전한 시작 / ⏳ 낮은 우선순위)
+- **BridgeStoryline**: New Cluster A → Bridge → Cluster B horizontal flow visualization with cluster colors and cosine similarity scores
+- **Star rating**: Research opportunity level (★★★★★ 매우 높음 ~ ★☆☆☆☆ 매우 낮음) replaces raw percentage
+- **Legend redesign**: Added "Established Links" + renamed to "Opportunity Connections"
+- **Auto-generated significance**: Each frontier gets Korean research significance text
+
+### Technical
+- 7 files changed (5 modified + 2 new), +453/-61 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no breaking changes
+- New components: `FrontierMatrix.tsx`, `BridgeStoryline.tsx`
 
 ---
 
