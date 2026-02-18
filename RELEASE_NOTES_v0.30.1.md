@@ -39,13 +39,21 @@ Critical bugfix release addressing three issues that caused Insight HUD metrics 
 
 ### BUG-052: "No graph data available" Race Condition on First Entry (P0)
 
-**Problem**: `useGraphStore` initialized with `isLoading: false` and `graphData: null`. On first project entry, the component rendered before `useEffect` triggered `fetchGraphData`, resulting in a frame where `isLoading=false` + `graphData=null` → "No graph data available" displayed instead of a loading spinner.
+**Problem**: Two compounding issues:
 
-Going back and returning fixed it because the zustand in-memory store retained `graphData` from the first visit.
+1. `useGraphStore` initialized with `isLoading: false` and `graphData: null`. On first project entry, the component rendered before `useEffect` triggered `fetchGraphData`, resulting in a frame where `isLoading=false` + `graphData=null` → "No graph data available" displayed instead of a loading spinner.
 
-**Fix**: Changed `isLoading` initial value from `false` to `true` so the loading spinner shows until the first fetch completes.
+2. **Root cause**: `rawDisplayData` useMemo in `KnowledgeGraph3D.tsx` did NOT include `graphData` in its dependency array. When `graphData` updated after API fetch, useMemo returned its cached `null` value because none of its listed deps (`getFilteredData`, `view3D.lodEnabled`, etc.) changed. The filter panel showed data correctly (reads `graphData` directly), but the graph rendering pipeline was permanently stuck on `null`.
 
-**File**: `frontend/hooks/useGraphStore.ts:129`
+Going back and returning fixed it because the zustand in-memory store retained `graphData` from the first visit, and on re-mount the useMemo computed with the already-present data.
+
+**Fix (2 parts)**:
+1. Changed `isLoading` initial value from `false` to `true` so the loading spinner shows until the first fetch completes.
+2. Added `graphData` to `rawDisplayData` useMemo dependency array so it re-computes when graph data arrives.
+
+**Files**:
+- `frontend/hooks/useGraphStore.ts:129`
+- `frontend/components/graph/KnowledgeGraph3D.tsx:144`
 
 ---
 
@@ -64,6 +72,7 @@ Going back and returning fixed it because the zustand in-memory store retained `
 ### Files Changed
 - `backend/routers/graph.py` — 3 lines changed (SQL fix + 2x UUID→str conversion)
 - `frontend/hooks/useGraphStore.ts` — 1 line changed (isLoading initial value)
+- `frontend/components/graph/KnowledgeGraph3D.tsx` — 1 line changed (graphData added to useMemo deps)
 
 ### Impact
 - 0 TypeScript errors

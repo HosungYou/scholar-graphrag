@@ -745,10 +745,10 @@ When making architectural changes:
 ### Insight HUD Accuracy Fix + First-Entry Race Condition
 - **BUG-050**: Paper coverage SQL `pm.id::text = ANY(uuid[])` type error — always showed 0%. Fixed to `pm.id = ANY()` for UUID comparison. Actual: 82.4%
 - **BUG-051**: Cluster `concepts` column (UUID[]) compared against string node IDs — modularity, silhouette, coherence, coverage all computed as 0. Added `str()` conversion in both `/metrics/` and `/diversity/` endpoints
-- **BUG-052**: `useGraphStore` initialized `isLoading: false` with `graphData: null` — first project entry showed "No graph data available" before fetch. Changed to `isLoading: true`
+- **BUG-052**: Two compounding issues: (1) `useGraphStore` initialized `isLoading: false` — changed to `true`. (2) `rawDisplayData` useMemo missing `graphData` in dependency array — added it so graph re-renders when data arrives
 
 ### Technical
-- 2 files changed (1 backend + 1 frontend), +4/-4 lines
+- 3 files changed (1 backend + 2 frontend), +5/-4 lines
 - 0 TypeScript errors, 0 Python errors
 - No DB migrations, no new env vars, no breaking changes
 
