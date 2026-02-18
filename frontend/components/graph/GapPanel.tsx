@@ -26,6 +26,8 @@ import {
 import type { StructuralGap, ConceptCluster, GraphEntity, BridgeHypothesis, BridgeGenerationResult } from '@/types';
 import { api } from '@/lib/api';
 import { BridgeHypothesisList } from './BridgeHypothesisCard';
+import { FrontierMatrix } from './FrontierMatrix';
+import { BridgeStoryline } from './BridgeStoryline';
 import { DragHandle } from '../ui/DraggablePanel';
 import { useToast } from '../ui/Toast';
 
@@ -287,6 +289,18 @@ export function GapPanel({
     return `${Math.round(strength * 100)}%`;
   }, []);
 
+  const getOpportunityRating = useCallback((strength: number) => {
+    // Higher gap_strength = weaker connection = bigger research opportunity
+    // But note: gap_strength 0 = strong gap (weakest connection), 1 = well connected
+    // So LOWER strength = BIGGER opportunity
+    const opportunity = 1 - strength;
+    if (opportunity >= 0.8) return { stars: '★★★★★', label: '매우 높음', level: 5 };
+    if (opportunity >= 0.6) return { stars: '★★★★☆', label: '높음', level: 4 };
+    if (opportunity >= 0.4) return { stars: '★★★☆☆', label: '보통', level: 3 };
+    if (opportunity >= 0.2) return { stars: '★★☆☆☆', label: '낮음', level: 2 };
+    return { stars: '★☆☆☆☆', label: '매우 낮음', level: 1 };
+  }, []);
+
   // Generate bridge hypotheses (Phase 3)
   const handleGenerateBridge = useCallback(async (gapId: string) => {
     if (generatingBridgeFor) return; // Prevent multiple simultaneous requests
@@ -418,11 +432,11 @@ export function GapPanel({
               </div>
               <div className="text-left">
                 <span className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper block">
-                  Research Gaps
+                  Research Frontiers
                 </span>
                 {gaps.length > 0 && (
                   <span className="font-mono text-xs text-accent-amber">
-                    {gaps.length} detected
+                    {gaps.length} frontiers
                   </span>
                 )}
               </div>
@@ -458,11 +472,22 @@ export function GapPanel({
             <div className="flex items-start gap-2 pl-3">
               <HelpCircle className="w-4 h-4 text-accent-teal mt-0.5 flex-shrink-0" />
               <p className="text-xs text-muted leading-relaxed">
-                Research gaps are areas where concept clusters have weak connections.
-                Click a gap to see AI-suggested research questions.
+                Research Frontiers는 개념 클러스터 간 아직 탐구되지 않은 연결을 나타냅니다. 각 frontier는 잠재적 연구 기회입니다. 클릭하여 AI 연구 제안을 확인하세요.
               </p>
             </div>
           </div>
+
+          {/* Frontier Impact×Feasibility Matrix */}
+          {gaps.length > 0 && (
+            <div className="p-3 border-b border-ink/10 dark:border-paper/10">
+              <FrontierMatrix
+                gaps={gaps}
+                selectedGapId={selectedGap?.id || null}
+                onGapSelect={(gap) => handleGapClick(gap)}
+                clusters={clusters}
+              />
+            </div>
+          )}
 
           {/* Gaps List */}
           {gaps.length === 0 ? (
@@ -470,9 +495,9 @@ export function GapPanel({
               <div className="w-14 h-14 flex items-center justify-center bg-accent-amber/5 border border-accent-amber/20 mx-auto mb-4">
                 <Sparkles className="w-7 h-7 text-accent-amber/50" />
               </div>
-              <p className="font-mono text-xs text-muted uppercase tracking-wider mb-2">No Gaps Detected</p>
+              <p className="font-mono text-xs text-muted uppercase tracking-wider mb-2">No Frontiers Detected</p>
               <p className="text-xs text-muted leading-relaxed mb-4">
-                Gaps appear when your knowledge graph has distinct topic clusters with weak connections between them.
+                Frontiers appear when your knowledge graph has distinct topic clusters with unexplored connections between them.
               </p>
               {onRefresh && (
                 <button
@@ -481,7 +506,7 @@ export function GapPanel({
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs bg-accent-teal/10 hover:bg-accent-teal/20 text-accent-teal transition-colors disabled:opacity-50"
                 >
                   {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  Refresh Analysis
+                  Refresh Frontiers
                 </button>
               )}
             </div>
@@ -564,6 +589,10 @@ export function GapPanel({
                           {getClusterLabel(gap.cluster_b_id)}
                         </span>
                       </div>
+                      {/* Why this is a research opportunity */}
+                      <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                        {getClusterLabel(gap.cluster_a_id)}와(과) {getClusterLabel(gap.cluster_b_id)} 사이의 연결이 부족하여 새로운 연구 기회가 존재합니다.
+                      </p>
                       {/* Row 2: Strength gradient + percentage + Find Papers (Improvement G) */}
                       <div className="flex items-center gap-2 mb-2">
                         {/* Gradient progress bar */}
@@ -580,14 +609,19 @@ export function GapPanel({
                             }}
                           />
                         </div>
-                        {/* Strength percentage */}
-                        <span className={`font-mono text-xs flex-shrink-0 ${
-                          gap.gap_strength > 0.7 ? 'text-accent-red'
-                          : gap.gap_strength > 0.4 ? 'text-accent-amber'
-                          : 'text-accent-teal'
-                        }`}>
-                          {formatGapStrength(gap.gap_strength)}
-                        </span>
+                        {/* Opportunity star rating */}
+                        {(() => {
+                          const rating = getOpportunityRating(gap.gap_strength);
+                          return (
+                            <span className={`font-mono text-xs flex-shrink-0 ${
+                              rating.level >= 4 ? 'text-accent-amber'
+                              : rating.level >= 3 ? 'text-accent-teal'
+                              : 'text-muted'
+                            }`} title={`연구 기회 수준: ${rating.label}`}>
+                              {rating.stars} {rating.label}
+                            </span>
+                          );
+                        })()}
                         {/* Find Papers button (Improvement C: Retry countdown) */}
                         <button
                           onClick={(e) => {
@@ -660,7 +694,7 @@ export function GapPanel({
                           ) : (
                             <Search className="w-3 h-3" />
                           )}
-                          {retryCountdown[gap.id] <= 0 && <span>Find Papers</span>}
+                          {retryCountdown[gap.id] <= 0 && <span>논문 검색</span>}
                         </button>
                       </div>
 
@@ -680,12 +714,29 @@ export function GapPanel({
                     {/* Expanded Content */}
                     {isExpandedItem && (
                       <div className="px-4 pb-4 space-y-4 border-t border-ink/10 dark:border-paper/10 pt-4">
+                        {/* Research Significance */}
+                        {gap.research_significance && (
+                          <div className="mb-3 p-2 bg-accent-amber/5 border-l-2 border-accent-amber/50">
+                            <p className="text-xs text-ink dark:text-paper leading-relaxed">
+                              💡 {gap.research_significance}
+                            </p>
+                          </div>
+                        )}
+                        {/* Bridge Storyline */}
+                        {gap.bridge_candidates.length > 0 && (
+                          <BridgeStoryline
+                            gap={gap}
+                            clusters={clusters}
+                            nodes={nodes}
+                          />
+                        )}
+
                         {/* Bridge Candidates */}
                         {gap.bridge_candidates.length > 0 && (
                           <div>
                             <p className="font-mono text-xs uppercase tracking-wider text-accent-amber mb-2 flex items-center gap-1">
                               <Sparkles className="w-3 h-3" />
-                              Bridge Concepts
+                              연결 개념 (Bridge Concepts)
                             </p>
                             <div className="flex flex-wrap gap-1">
                               {gap.bridge_candidates.slice(0, 5).map((candidate, idx) => (
@@ -783,7 +834,7 @@ export function GapPanel({
                           <div className="pt-4 mt-4 border-t border-ink/10 dark:border-paper/10">
                             <p className="font-mono text-xs uppercase tracking-wider text-accent-teal mb-2 flex items-center gap-1">
                               <Lightbulb className="w-3 h-3" />
-                              AI Research Questions
+                              AI 연구 질문
                             </p>
                             <div className="space-y-2">
                               {gap.research_questions.map((question, qIdx) => (
@@ -829,7 +880,7 @@ export function GapPanel({
                           <div className="flex items-center justify-between mb-2">
                             <p className="font-mono text-xs uppercase tracking-wider text-accent-teal flex items-center gap-1">
                               <BookOpen className="w-3 h-3" />
-                              Related Papers
+                              관련 논문
                             </p>
                             <button
                               onClick={async () => {
@@ -855,7 +906,7 @@ export function GapPanel({
                               ) : (
                                 <BookOpen className="w-3 h-3" />
                               )}
-                              Find Papers
+                              논문 검색
                             </button>
                           </div>
                           {recommendations[gap.id] && (
@@ -911,7 +962,7 @@ export function GapPanel({
                                 className="inline-block w-2 h-2"
                                 style={{ backgroundColor: getClusterColor(gap.cluster_a_id) }}
                               />
-                              Cluster A ({gap.cluster_a_names.length})
+                              클러스터 A ({gap.cluster_a_names.length})
                             </p>
                             <div className="text-xs text-ink dark:text-paper space-y-1 max-h-24 overflow-y-auto">
                               {gap.cluster_a_names.slice(0, 5).map((name, idx) => (
@@ -930,7 +981,7 @@ export function GapPanel({
                                 className="inline-block w-2 h-2"
                                 style={{ backgroundColor: getClusterColor(gap.cluster_b_id) }}
                               />
-                              Cluster B ({gap.cluster_b_names.length})
+                              클러스터 B ({gap.cluster_b_names.length})
                             </p>
                             <div className="text-xs text-ink dark:text-paper space-y-1 max-h-24 overflow-y-auto">
                               {gap.cluster_b_names.slice(0, 5).map((name, idx) => (
@@ -991,7 +1042,7 @@ export function GapPanel({
               <div className="flex items-center gap-2 mb-3">
                 <Hexagon className="w-4 h-4 text-accent-teal" />
                 <p className="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper">
-                  Concept Clusters
+                  개념 클러스터
                 </p>
               </div>
               <div className="grid grid-cols-4 gap-1">

@@ -310,10 +310,10 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-accent-amber" />
           <span className="font-mono text-xs uppercase tracking-wider text-muted">
-            Gaps View
+            Research Frontiers
           </span>
           <span className="text-xs text-muted">
-            • {gaps.length} structural gaps
+            • {gaps.length} research frontiers
           </span>
         </div>
       </div>
@@ -334,7 +334,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               {selectedGap ? (
                 <div className="flex flex-col">
                   <span className="text-xs text-amber-400 font-mono">
-                    Gap {currentGapIndex + 1} of {gaps.length}
+                    Frontier {currentGapIndex + 1} of {gaps.length}
                   </span>
                   <span className="text-sm text-white truncate flex items-center gap-1 justify-center" title={`${getClusterName(selectedGap.cluster_a_id)} ↔ ${getClusterName(selectedGap.cluster_b_id)}`}>
                     <span className="w-2 h-2 rounded-full flex-shrink-0 inline-block" style={{ backgroundColor: '#E63946' }} />
@@ -379,7 +379,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent-amber" />
               <span className="font-mono text-xs uppercase tracking-wider text-white">
-                Structural Gaps
+                Research Frontiers
               </span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 bg-accent-amber/20 text-accent-amber rounded">
                 {gaps.length}
@@ -403,7 +403,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-muted">Gap #{index + 1}</span>
+                  <span className="text-xs text-muted">Frontier #{index + 1}</span>
                   <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
                     gap.gap_strength > 0.7
                       ? 'bg-red-500/25 text-red-300'
@@ -418,13 +418,13 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
                   {getClusterName(gap.cluster_a_id)} ↔ {getClusterName(gap.cluster_b_id)}
                 </div>
                 <div className="text-xs text-muted mt-1">
-                  {gap.bridge_candidates.length} bridge candidate{gap.bridge_candidates.length !== 1 ? 's' : ''}
+                  {gap.bridge_candidates.length} 연결 후보
                 </div>
               </button>
             ))}
           </div>
           <div className="px-3 py-2 border-t border-white/5 flex items-center justify-center gap-1">
-            <span className="text-[10px] text-muted/50 font-mono">Click a gap to highlight in graph</span>
+            <span className="text-[10px] text-muted/50 font-mono">Click a frontier to highlight in graph</span>
           </div>
         </div>
       )}
@@ -433,7 +433,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
       {showGapList && gaps.length === 0 && (
         <div className="absolute bottom-20 left-4 w-80 bg-[#161b22]/95 backdrop-blur-sm border border-white/10 rounded-lg p-6 text-center">
           <Sparkles className="w-6 h-6 text-accent-amber/40 mx-auto mb-2" />
-          <p className="font-mono text-xs text-muted">No structural gaps detected in this graph</p>
+          <p className="font-mono text-xs text-muted">No research frontiers detected</p>
         </div>
       )}
 
@@ -467,7 +467,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
 
       {/* Legend */}
       <div className="absolute bottom-4 right-[188px] bg-[#161b22]/90 backdrop-blur-sm border border-white/10 rounded-lg p-3">
-        <div className="text-xs font-mono text-muted mb-2">Gaps View Legend</div>
+        <div className="text-xs font-mono text-muted mb-2">Research Frontiers Legend</div>
         <div className="flex flex-col gap-1.5">
           {selectedGap ? (
             <>
@@ -485,7 +485,7 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-amber-500" />
-                <span className="text-xs text-white/70">Bridge candidates</span>
+                <span className="text-xs text-white/70">연결 후보 (Bridge Concepts)</span>
               </div>
             </>
           ) : (
@@ -495,12 +495,16 @@ export const GapsViewMode = forwardRef<Graph3DRef, GapsViewModeProps>(({
             </div>
           )}
           <div className="flex items-center gap-2">
+            <div className="w-6 h-0.5 bg-white/40" />
+            <span className="text-xs text-white/70">Established Links</span>
+          </div>
+          <div className="flex items-center gap-2">
             <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
-            <span className="text-xs text-white/70">Potential connections</span>
+            <span className="text-xs text-white/70">Opportunity Connections</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-white/20" />
-            <span className="text-xs text-white/70">Inactive nodes</span>
+            <span className="text-xs text-white/70">비활성 노드 (Inactive)</span>
           </div>
         </div>
       </div>

@@ -1078,6 +1078,11 @@ class StructuralGapResponse(BaseModel):
     bridge_candidates: List[str]
     research_questions: List[str]
     potential_edges: List[PotentialEdgeResponse] = []  # Ghost edges for visualization
+    # v0.31.0: Research Frontier scores
+    impact_score: float = 0.0
+    feasibility_score: float = 0.0
+    research_significance: str = ""
+    quadrant: str = ""
 
 
 class CentralityMetricsResponse(BaseModel):
@@ -1176,6 +1181,52 @@ async def get_gap_analysis(
                 )
             )
 
+        # v0.31.0: Compute Research Frontier scores
+        cluster_size_map = {c.cluster_id: c.size for c in clusters}
+        max_cluster_product = 1
+        for g in gaps:
+            product = cluster_size_map.get(g.cluster_a_id, 1) * cluster_size_map.get(g.cluster_b_id, 1)
+            if product > max_cluster_product:
+                max_cluster_product = product
+
+        for g in gaps:
+            # Impact: cluster_size_product * bridge_count, normalized
+            c_a_size = cluster_size_map.get(g.cluster_a_id, 1)
+            c_b_size = cluster_size_map.get(g.cluster_b_id, 1)
+            size_product = c_a_size * c_b_size
+            bridge_factor = min(len(g.bridge_candidates), 10) / 10.0
+            raw_impact = (size_product / max(max_cluster_product, 1)) * 0.6 + bridge_factor * 0.4
+            g.impact_score = round(min(1.0, max(0.0, raw_impact)), 3)
+
+            # Feasibility: based on potential_edges similarity and bridge count
+            if g.potential_edges:
+                high_sim_count = sum(1 for pe in g.potential_edges if pe.similarity > 0.5)
+                sim_ratio = high_sim_count / max(len(g.potential_edges), 1)
+            else:
+                sim_ratio = 0.3  # default moderate when no edges available
+            bridge_avail = min(len(g.bridge_candidates), 5) / 5.0
+            raw_feasibility = sim_ratio * 0.5 + bridge_avail * 0.3 + (1.0 - g.gap_strength) * 0.2
+            g.feasibility_score = round(min(1.0, max(0.0, raw_feasibility)), 3)
+
+            # Quadrant
+            hi = g.impact_score >= 0.5
+            hf = g.feasibility_score >= 0.5
+            if hi and hf:
+                g.quadrant = "high_impact_high_feasibility"
+            elif hi and not hf:
+                g.quadrant = "high_impact_low_feasibility"
+            elif not hi and hf:
+                g.quadrant = "low_impact_high_feasibility"
+            else:
+                g.quadrant = "low_impact_low_feasibility"
+
+            # Research significance
+            a_label = next((c.label or f"Cluster {c.cluster_id}" for c in clusters if c.cluster_id == g.cluster_a_id), f"Cluster {g.cluster_a_id}")
+            b_label = next((c.label or f"Cluster {c.cluster_id}" for c in clusters if c.cluster_id == g.cluster_b_id), f"Cluster {g.cluster_b_id}")
+            a_names = ", ".join(g.cluster_a_names[:2]) if g.cluster_a_names else a_label
+            b_names = ", ".join(g.cluster_b_names[:2]) if g.cluster_b_names else b_label
+            g.research_significance = f"{a_names}과(와) {b_names} 사이의 미탐구 연결은 새로운 학제간 연구 기회를 제시합니다."
+
         # Get centrality metrics from entities
         centrality_rows = await database.fetch(
             """
@@ -1184,7 +1235,9 @@ async def get_gap_analysis(
             WHERE project_id = $1
             AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
             AND properties->>'centrality_degree' IS NOT NULL
-            ORDER BY (properties->>'centrality_pagerank')::float DESC NULLS LAST
+            ORDER BY CASE WHEN properties->>'centrality_pagerank' ~ '^-?\\d+(\\.\\d+)?$'
+                          THEN (properties->>'centrality_pagerank')::float
+                          ELSE 0 END DESC NULLS LAST
             LIMIT 100
             """,
             str(project_id),
@@ -5084,7 +5137,7 @@ async def get_project_summary(
             clusters_list = [
                 ClusterResult(
                     cluster_id=r["cluster_id"],
-                    node_ids=r["concepts"] or [],
+                    node_ids=[str(c) for c in (r["concepts"] or [])],
                     node_names=[],
                     centroid=None,
                     size=r["size"],
@@ -5147,7 +5200,9 @@ async def get_project_summary(
             WHERE project_id = $1
             AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
             AND properties->>'centrality_pagerank' IS NOT NULL
-            ORDER BY (properties->>'centrality_pagerank')::float DESC NULLS LAST
+            ORDER BY CASE WHEN properties->>'centrality_pagerank' ~ '^-?\\d+(\\.\\d+)?$'
+                          THEN (properties->>'centrality_pagerank')::float
+                          ELSE 0 END DESC NULLS LAST
             LIMIT 10
             """,
             str(project_id),
@@ -5210,41 +5265,52 @@ async def get_project_summary(
                 "cluster_b_names": (r["cluster_b_names"] or [])[:5],
                 "gap_strength": float(r["gap_strength"] or 0.0),
                 "research_questions": r["research_questions"] or [],
+                "impact_score": 0.0,
+                "feasibility_score": 0.0,
+                "research_significance": "",
+                "quadrant": "",
             }
             for r in gap_rows
         ]
 
         # ---- Temporal info ----
-        temporal_row = await database.fetchrow(
-            """
-            SELECT
-                MIN(first_seen_year) as min_year,
-                MAX(COALESCE(last_seen_year, first_seen_year)) as max_year
-            FROM entities
-            WHERE project_id = $1
-            """,
-            str(project_id),
-        )
-        min_year = temporal_row["min_year"] if temporal_row else None
-        max_year = temporal_row["max_year"] if temporal_row else None
-
+        min_year = None
+        max_year = None
         emerging_concepts: list = []
-        if max_year is not None:
-            emerging_threshold = max_year - 2
-            emerging_rows = await database.fetch(
+        try:
+            temporal_row = await database.fetchrow(
                 """
-                SELECT name
+                SELECT
+                    MIN(first_seen_year) as min_year,
+                    MAX(COALESCE(last_seen_year, first_seen_year)) as max_year
                 FROM entities
                 WHERE project_id = $1
-                AND first_seen_year >= $2
-                AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
-                ORDER BY (properties->>'centrality_pagerank')::float DESC NULLS LAST
-                LIMIT 10
                 """,
                 str(project_id),
-                emerging_threshold,
             )
-            emerging_concepts = [r["name"] for r in emerging_rows]
+            min_year = temporal_row["min_year"] if temporal_row else None
+            max_year = temporal_row["max_year"] if temporal_row else None
+
+            if max_year is not None:
+                emerging_threshold = max_year - 2
+                emerging_rows = await database.fetch(
+                    """
+                    SELECT name
+                    FROM entities
+                    WHERE project_id = $1
+                    AND first_seen_year >= $2
+                    AND entity_type IN ('Concept', 'Method', 'Finding', 'Problem', 'Dataset', 'Metric', 'Innovation', 'Limitation')
+                    ORDER BY CASE WHEN properties->>'centrality_pagerank' ~ '^-?\\d+(\\.\\d+)?$'
+                                  THEN (properties->>'centrality_pagerank')::float
+                                  ELSE 0 END DESC NULLS LAST
+                    LIMIT 10
+                    """,
+                    str(project_id),
+                    emerging_threshold,
+                )
+                emerging_concepts = [r["name"] for r in emerging_rows]
+        except Exception as temporal_err:
+            logger.warning(f"Temporal info computation failed for summary {project_id}: {temporal_err}")
 
         # ---- Assemble response ----
         payload = {

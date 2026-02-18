@@ -420,6 +420,11 @@ export interface StructuralGap {
   research_questions: string[];
   potential_edges?: PotentialEdge[];  // Ghost edges for visualization
   created_at?: string;
+  // v0.31.0: Research Frontier scores
+  impact_score?: number;
+  feasibility_score?: number;
+  research_significance?: string;
+  quadrant?: string;
 }
 
 export interface CentralityMetrics {
