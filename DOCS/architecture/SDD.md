@@ -1,7 +1,7 @@
 # Software Design Document (SDD)
 
 **Project**: ScholaRAG_Graph
-**Version**: 0.31.0
+**Version**: 0.32.4
 **Last Updated**: 2026-02-18
 **Status**: Production-Ready
 **Document Type**: Architecture & Design Specification
@@ -13,7 +13,7 @@
 | Field | Value |
 |-------|-------|
 | **Document Version** | 2.1.0 |
-| **Project Version** | 0.31.0 |
+| **Project Version** | 0.32.4 |
 | **Authors** | ScholaRAG_Graph Development Team |
 | **Classification** | Internal - Technical Documentation |
 | **Review Cycle** | Quarterly or on major releases |
@@ -376,6 +376,20 @@ Return ONLY valid JSON.
 - **Local API First**: Connect to Zotero desktop app via HTTP (localhost:23119)
 - **Web API Fallback**: Use Zotero Web API if local unavailable
 - **Sync State**: Track last sync timestamp to enable incremental updates
+
+**Zotero Import Performance (PERF-014, v0.32.4)**:
+
+5-phase optimization reducing 150-paper import from ~20 min to ~5-7 min:
+
+| Phase | Optimization | Mechanism |
+|-------|-------------|-----------|
+| 1 | Concurrent paper processing | `asyncio.Semaphore(3)` + `asyncio.gather()` batches of 5 |
+| 2 | Non-blocking PDF extraction | `asyncio.to_thread()` for PyMuPDF calls |
+| 3 | Batch co-occurrence writes | `executemany` replacing O(n²) individual INSERTs |
+| 4 | Embedding batch increase | `batch_size` 5 → 50 (API payloads ~100 tokens) |
+| 5 | Post-import parallelization | `asyncio.gather(embeddings, co-occurrence)` |
+
+Thread safety: `asyncio.Lock` for `_concept_cache` and shared result counters. Memory safe with Semaphore(3) for 512MB Render Docker.
 
 #### 3.1.4 LLM Provider Management
 
@@ -1359,6 +1373,12 @@ app.add_middleware(
 ---
 
 ## 7. Change Log
+
+### v0.32.4 (2026-02-18) — Zotero Import Speed Optimization
+- **Performance (PERF-014)**: 5-phase import pipeline optimization: concurrent paper processing (Semaphore(3)), thread pool PDF extraction, batch co-occurrence writes (executemany), embedding batch 5→50, post-import parallelization
+- **Backend**: New `entity_dao.batch_add_relationships()` method with ON CONFLICT weight increment + individual insert fallback
+- **Backend**: `graph_store.py` facade wrapper for batch relationships
+- **Result**: 150-paper import ~20 min → ~5-7 min (65-75% reduction)
 
 ### v0.31.0 (2026-02-18) — Research Frontier Explorer
 - **Backend**: Fixed 3 critical 500 errors in temporal/summary endpoints (BUG-053/054/055)
