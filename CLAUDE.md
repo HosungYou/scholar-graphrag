@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.7.3 (v0.32.3 Resume 500 Fix + Cross-Paper Entity Merging)
+> **Version**: 6.7.4 (v0.32.4 Zotero Import Speed Optimization)
 
 ## Project Overview
 
@@ -734,6 +734,28 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.32.4 Release Notes
+
+> **Version**: 0.32.4 | **Date**: 2026-02-18 | **Codename**: Zotero Import Speed Optimization (PERF-014)
+> **Full Notes**: See `RELEASE_NOTES_v0.32.4.md`
+
+### Zotero Import Speed Optimization (65-75% faster)
+
+**PERF-014: 5-Phase Pipeline Optimization**
+- **Phase 1+2**: Concurrent paper processing with `asyncio.Semaphore(3)` + `asyncio.gather()` batches of 5. PDF extraction moved to `asyncio.to_thread()` (non-blocking). Thread-safe shared state via `asyncio.Lock`.
+- **Phase 3A**: Batch co-occurrence relationships — O(n²) individual INSERTs (~4,500 round-trips) replaced by single `batch_add_relationships()` using `executemany` with ON CONFLICT weight increment. New method in `entity_dao.py` + `graph_store.py` facade.
+- **Phase 4**: Embedding `batch_size` 5 → 50 (API payloads are small, ~100 tokens/chunk)
+- **Phase 5**: Post-import phases parallelized — `asyncio.gather(embeddings, co-occurrence)`, then semantic rels, then gap analysis
+- **Result**: ~20 min → ~5-7 min for 150 papers
+
+### Technical
+- 4 files changed, ~320 insertions, ~260 deletions
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no frontend changes
+- Memory safe: Semaphore(3) limits concurrent papers for 512MB Render Docker
 
 ---
 

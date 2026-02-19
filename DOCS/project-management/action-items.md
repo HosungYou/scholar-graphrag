@@ -11,14 +11,33 @@
 
 | Priority | Total | Completed | In Progress | Pending |
 |----------|-------|-----------|-------------|---------|
-| 🔴 High | 28 | 28 | 0 | 0 |
+| 🔴 High | 29 | 29 | 0 | 0 |
 | 🟡 Medium | 27 | 27 | 0 | 0 |
 | 🟢 Low | 5 | 5 | 0 | 0 |
-| **Total** | **60** | **60** | **0** | **0** |
+| **Total** | **61** | **61** | **0** | **0** |
 
 ---
 
 ## 🔴 High Priority (Immediate Action Required)
+
+### PERF-014: Zotero Import Speed Optimization (65-75% faster)
+- **Source**: v0.32.4 (2026-02-18)
+- **Status**: ✅ Completed
+- **Priority**: 🔴 High
+- **Files**:
+  - `backend/importers/zotero_rdf_importer.py`
+  - `backend/graph/persistence/entity_dao.py`
+  - `backend/graph/graph_store.py`
+  - `backend/graph/embedding/embedding_pipeline.py`
+- **Description**: 150-paper Zotero RDF import taking ~20 minutes due to sequential processing, O(n²) individual DB inserts for co-occurrence, small embedding batches, and sequential post-import phases.
+- **Fix**:
+  - Phase 1: Concurrent paper processing with `asyncio.Semaphore(3)` + `asyncio.gather()` batches of 5
+  - Phase 2: PDF extraction moved to `asyncio.to_thread()` (non-blocking)
+  - Phase 3A: Batch co-occurrence relationships via new `batch_add_relationships()` with `executemany`
+  - Phase 4: Embedding `batch_size` increased from 5 to 50
+  - Phase 5: Post-import phases (embeddings + co-occurrence) run in parallel via `asyncio.gather()`
+- **Result**: ~20 min → ~5-7 min for 150 papers (65-75% reduction)
+- **Completed**: 2026-02-18
 
 ### BUG-064: Zotero Import Resume with File Re-upload
 - **Source**: v0.32.2 (2026-02-18)
