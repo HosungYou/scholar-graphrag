@@ -85,6 +85,7 @@ class EntityDAO:
         name: str,
         properties: dict = None,
         embedding: list[float] = None,
+        source_paper_ids: list = None,
     ) -> str:
         """
         Add an entity to the graph.
@@ -103,7 +104,7 @@ class EntityDAO:
 
         if self.db:
             # _db_add_entity returns the actual ID (may differ on upsert)
-            actual_id = await self._db_add_entity(node)
+            actual_id = await self._db_add_entity(node, source_paper_ids=source_paper_ids)
             return actual_id
         else:
             self._nodes[entity_id] = node
@@ -161,6 +162,7 @@ class EntityDAO:
         source_paper_id: str = None,
         confidence: float = 0.5,
         properties: dict = None,
+        source_paper_ids: list = None,
     ) -> str:
         """
         Store an entity in the knowledge graph (wrapper for importers).
@@ -172,12 +174,36 @@ class EntityDAO:
             entity_properties["source_paper_id"] = source_paper_id
         entity_properties["confidence"] = confidence
 
+        # BUG-066: Build source_paper_ids array for the DB column
+        paper_ids_array = list(source_paper_ids or [])
+        if source_paper_id and source_paper_id not in paper_ids_array:
+            paper_ids_array.append(source_paper_id)
+
         return await self.add_entity(
             project_id=project_id,
             entity_type=entity_type,
             name=name,
             properties=entity_properties,
+            source_paper_ids=paper_ids_array,
         )
+
+    async def append_source_paper_id(self, entity_id: str, paper_id: str):
+        """Append a paper ID to entity's source_paper_ids if not already present."""
+        if not self.db:
+            return
+        try:
+            await self.db.execute("""
+                UPDATE entities
+                SET source_paper_ids = array_append(
+                    COALESCE(source_paper_ids, ARRAY[]::uuid[]),
+                    $2::uuid
+                ),
+                updated_at = NOW()
+                WHERE id = $1::uuid
+                AND NOT ($2::uuid = ANY(COALESCE(source_paper_ids, ARRAY[]::uuid[])))
+            """, entity_id, paper_id)
+        except Exception as e:
+            logger.warning(f"Failed to append source_paper_id {paper_id} to entity {entity_id}: {e}")
 
     # =========================================================================
     # Relationship Operations
@@ -345,7 +371,7 @@ class EntityDAO:
     # Private DB Methods
     # =========================================================================
 
-    async def _db_add_entity(self, node: Node) -> str:
+    async def _db_add_entity(self, node: Node, source_paper_ids: list = None) -> str:
         """
         Add entity to PostgreSQL with name-based upsert.
 
@@ -359,16 +385,27 @@ class EntityDAO:
 
         properties_json = json.dumps(node.properties)
 
+        # BUG-066: Convert source_paper_ids to UUID list for PostgreSQL
+        paper_ids = source_paper_ids or []
+
         # Try name-based upsert first
         try:
             row = await self.db.fetchrow(
                 """
-                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
-                VALUES ($1, $2, $3::entity_type, $4, $5, $6)
+                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding, source_paper_ids)
+                VALUES ($1, $2, $3::entity_type, $4, $5, $6, $7::uuid[])
                 ON CONFLICT (project_id, entity_type, LOWER(TRIM(name)))
                 DO UPDATE SET
                     properties = entities.properties || EXCLUDED.properties,
                     embedding = COALESCE(EXCLUDED.embedding, entities.embedding),
+                    source_paper_ids = (
+                        SELECT array_agg(DISTINCT x) FROM unnest(
+                            array_cat(
+                                COALESCE(entities.source_paper_ids, ARRAY[]::uuid[]),
+                                COALESCE(EXCLUDED.source_paper_ids, ARRAY[]::uuid[])
+                            )
+                        ) x
+                    ),
                     updated_at = NOW()
                 RETURNING id
                 """,
@@ -378,6 +415,7 @@ class EntityDAO:
                 node.name,
                 properties_json,
                 embedding_str,
+                paper_ids,
             )
             if row:
                 return str(row["id"])
@@ -386,12 +424,20 @@ class EntityDAO:
             logger.debug(f"Name-based upsert failed, falling back to id-based: {e}")
             await self.db.execute(
                 """
-                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding)
-                VALUES ($1, $2, $3::entity_type, $4, $5, $6)
+                INSERT INTO entities (id, project_id, entity_type, name, properties, embedding, source_paper_ids)
+                VALUES ($1, $2, $3::entity_type, $4, $5, $6, $7::uuid[])
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     properties = EXCLUDED.properties,
                     embedding = EXCLUDED.embedding,
+                    source_paper_ids = (
+                        SELECT array_agg(DISTINCT x) FROM unnest(
+                            array_cat(
+                                COALESCE(entities.source_paper_ids, ARRAY[]::uuid[]),
+                                COALESCE(EXCLUDED.source_paper_ids, ARRAY[]::uuid[])
+                            )
+                        ) x
+                    ),
                     updated_at = NOW()
                 """,
                 node.id,
@@ -400,6 +446,7 @@ class EntityDAO:
                 node.name,
                 properties_json,
                 embedding_str,
+                paper_ids,
             )
 
         return node.id

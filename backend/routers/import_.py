@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, List, Any, Deque
 from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 from enum import Enum
@@ -1034,9 +1035,32 @@ async def delete_interrupted_jobs(
         except Exception as e:
             logger.warning(f"Failed to delete job {job.id}: {e}")
 
+    # BUG-065: Clean up orphan "Resumed Import" projects (no entities)
+    orphan_count = 0
+    try:
+        result = await db.execute("""
+            DELETE FROM projects p
+            WHERE p.name = 'Resumed Import'
+            AND NOT EXISTS (
+                SELECT 1 FROM entities e WHERE e.project_id = p.id
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM paper_metadata pm WHERE pm.project_id = p.id
+            )
+        """)
+        if result:
+            # result is like "DELETE N"
+            parts = result.split()
+            if len(parts) >= 2:
+                orphan_count = int(parts[1])
+        logger.info(f"Cleaned up {orphan_count} orphan 'Resumed Import' projects")
+    except Exception as e:
+        logger.warning(f"Failed to clean up orphan projects: {e}")
+
     return {
         "deleted_count": deleted_count,
-        "message": f"Deleted {deleted_count} interrupted import jobs"
+        "orphan_projects_deleted": orphan_count,
+        "message": f"Deleted {deleted_count} interrupted import jobs and {orphan_count} orphan projects"
     }
 
 
@@ -2374,32 +2398,24 @@ async def resume_import(
             detail="Cannot resume: No checkpoint found. The job may have failed before any papers were processed."
         )
 
-    # If checkpoint is missing project_id, create a new project so resume can proceed
-    if not checkpoint.get("project_id"):
-        project_name = original_job.metadata.get("project_name") or "Resumed Import"
-        owner_id = current_user.id if current_user else None
-        new_project_id = uuid4()
-        now_ts = datetime.now()
-        try:
-            await db.execute(
-                """
-                INSERT INTO projects (id, name, owner_id, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5)
-                """,
-                new_project_id, project_name, owner_id, now_ts, now_ts,
-            )
-            checkpoint["project_id"] = str(new_project_id)
-            logger.info(f"[Resume {job_id}] Created missing project {new_project_id} for resume")
-        except Exception as e:
-            logger.error(f"[Resume {job_id}] Failed to create project for resume: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail="Cannot resume: Failed to create project. Please start a new import."
-            )
-
     # Get original job metadata for re-running the import
     original_metadata = original_job.metadata
     job_type = original_job.job_type
+
+    # BUG-065: Don't create orphan projects on resume. Require re-import instead.
+    if not checkpoint.get("project_id"):
+        if job_type == "zotero_import":
+            return JSONResponse(content={
+                "status": "requires_reupload",
+                "job_id": job_id,
+                "resume_job_id": job_id,
+                "message": "Zotero import requires re-uploading files. Project was never created.",
+            })
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot resume: project was never created. Please start a new import."
+            )
 
     # Create new job for the resumed import
     new_job = await job_store.create_job(
@@ -2445,11 +2461,12 @@ async def resume_import(
             "project_id": checkpoint.get("project_id"),
         }
 
-    # For other job types (like PDF import), start the background task
-    # This is a placeholder - specific implementations would go here
-    logger.info(f"[Resume {new_job.id}] Created resume job from {job_id}, {processed_count}/{total_count} papers already processed")
-
-    return response
+    # BUG-065: Non-Zotero imports (PDF, ScholarAG) cannot be resumed without file re-upload.
+    # Instead of silently creating a job that never runs, return an error.
+    raise HTTPException(
+        status_code=400,
+        detail="Cannot resume non-Zotero imports. Please start a new import with your files."
+    )
 
 
 @router.get("/resume/{job_id}/info")

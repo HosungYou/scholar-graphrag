@@ -1,7 +1,7 @@
 # CLAUDE.md - ScholaRAG_Graph Project Instructions
 
 > **Last Updated**: 2026-02-18
-> **Version**: 6.7.2 (v0.32.2 Zotero Resume + Import Speed)
+> **Version**: 6.7.3 (v0.32.3 Resume 500 Fix + Cross-Paper Entity Merging)
 
 ## Project Overview
 
@@ -734,6 +734,31 @@ When making architectural changes:
 | Container Diagram | `DOCS/architecture/diagrams/container-diagram.mmd` | Internal architecture |
 | Overview | `DOCS/architecture/overview.md` | Detailed architecture |
 | ADRs | `DOCS/.meta/decisions/` | Decision records |
+
+---
+
+## 📊 v0.32.3 Release Notes
+
+> **Version**: 0.32.3 | **Date**: 2026-02-18 | **Codename**: Resume 500 Fix + Cross-Paper Entity Merging
+> **Full Notes**: See `RELEASE_NOTES_v0.32.3.md`
+
+### Resume Import 500 Fix
+
+**BUG-065: Resume Button Creates Orphan Projects + 500 Error**
+- v0.32.1 BUG-063 auto-create project logic created empty "Resumed Import" projects on every Resume click, and non-Zotero imports had no background task runner
+- **Fix**: Removed orphan project auto-creation. Missing `project_id` → Zotero returns `requires_reupload`, others raise HTTP 400. Non-Zotero resume returns explicit error instead of ghost job. `DELETE /jobs/interrupted` now also cleans up orphan "Resumed Import" projects (no entities/papers)
+
+### Cross-Paper Entity source_paper_ids
+
+**BUG-066: Entity source_paper_ids Not Accumulating (Always 0 Papers)**
+- `entity_dao.store_entity()` stored `source_paper_id` (singular) in JSON blob only, never touched ARRAY column. ON CONFLICT had no accumulation. Zotero cache hits skipped update entirely
+- **Fix**: `store_entity()` + `add_entity()` + `_db_add_entity()` now accept and persist `source_paper_ids` with `array_cat` + `DISTINCT` dedup on conflict. New `append_source_paper_id()` method for cache-hit path. Both Zotero cache-hit locations (line ~1021, ~1537) now call it. `graph_store.py` wrapper forwards new param
+
+### Technical
+- 4 files changed, +108/-36 lines
+- 0 TypeScript errors, 0 Python errors
+- No DB migrations, no new env vars, no frontend changes
+- Data recovery SQL documented in release notes for existing projects
 
 ---
 

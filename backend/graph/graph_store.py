@@ -99,10 +99,12 @@ class GraphStore:
         source_paper_id: str = None,
         confidence: float = 0.5,
         properties: dict = None,
+        source_paper_ids: list = None,
     ) -> str:
         """Store an entity in the knowledge graph (wrapper for importers)."""
         return await self._entity_dao.store_entity(
-            project_id, name, entity_type, description, source_paper_id, confidence, properties
+            project_id, name, entity_type, description, source_paper_id, confidence, properties,
+            source_paper_ids=source_paper_ids,
         )
 
     # =========================================================================

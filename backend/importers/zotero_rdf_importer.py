@@ -1018,6 +1018,9 @@ class ZoteroRDFImporter:
                                 if cache_key in self._concept_cache:
                                     entity_id = self._concept_cache[cache_key]["entity_id"]
                                     results["merges_applied"] += 1
+                                    # BUG-066: Accumulate source_paper_ids across papers
+                                    if paper_id and self.graph_store:
+                                        await self.graph_store._entity_dao.append_source_paper_id(entity_id, paper_id)
                                 else:
                                     entity_id = await self.graph_store.store_entity(
                                         project_id=project_id,
@@ -1531,6 +1534,9 @@ class ZoteroRDFImporter:
                                 if cache_key in self._concept_cache:
                                     entity_id = self._concept_cache[cache_key]["entity_id"]
                                     results["merges_applied"] += 1
+                                    # BUG-066: Accumulate source_paper_ids across papers
+                                    if paper_id and self.graph_store:
+                                        await self.graph_store._entity_dao.append_source_paper_id(entity_id, paper_id)
                                 else:
                                     entity_id = await self.graph_store.store_entity(
                                         project_id=project_id,
