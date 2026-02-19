@@ -258,7 +258,7 @@ class EmbeddingPipeline:
         self,
         project_id: str,
         embedding_provider=None,
-        batch_size: int = 5,  # PERF-010: Further reduced for 512MB memory limit
+        batch_size: int = 50,  # PERF-014: Embedding API payloads are small (~100 tokens/chunk)
         use_specter: bool = False,
     ) -> int:
         """

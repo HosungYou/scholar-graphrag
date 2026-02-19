@@ -205,6 +205,46 @@ class EntityDAO:
         except Exception as e:
             logger.warning(f"Failed to append source_paper_id {paper_id} to entity {entity_id}: {e}")
 
+    async def batch_add_relationships(self, project_id: str, relationships: list) -> int:
+        """
+        PERF-014: Batch insert co-occurrence relationships using executemany.
+
+        Each item in relationships is a tuple:
+        (id, project_id, source_id, target_id, relationship_type, properties_json, weight)
+
+        Returns number of relationships inserted.
+        """
+        if not self.db or not relationships:
+            return 0
+
+        try:
+            await self.db.executemany("""
+                INSERT INTO relationships (id, project_id, source_id, target_id, relationship_type, properties, weight)
+                VALUES ($1, $2, $3, $4, $5::relationship_type, $6, $7)
+                ON CONFLICT (source_id, target_id, relationship_type) DO UPDATE SET
+                    weight = relationships.weight + 1,
+                    updated_at = NOW()
+            """, relationships)
+            logger.info(f"PERF-014: Batch inserted {len(relationships)} relationships")
+            return len(relationships)
+        except Exception as e:
+            logger.error(f"PERF-014: Batch relationship insert failed: {e}")
+            # Fallback to individual inserts
+            count = 0
+            for rel in relationships:
+                try:
+                    await self.db.execute("""
+                        INSERT INTO relationships (id, project_id, source_id, target_id, relationship_type, properties, weight)
+                        VALUES ($1, $2, $3, $4, $5::relationship_type, $6, $7)
+                        ON CONFLICT (source_id, target_id, relationship_type) DO UPDATE SET
+                            weight = relationships.weight + 1,
+                            updated_at = NOW()
+                    """, *rel)
+                    count += 1
+                except Exception as inner_e:
+                    logger.debug(f"Individual relationship insert failed: {inner_e}")
+            return count
+
     # =========================================================================
     # Relationship Operations
     # =========================================================================

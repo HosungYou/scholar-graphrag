@@ -19,7 +19,9 @@ Process:
 5. Build concept-centric knowledge graph
 """
 
+import asyncio
 import gc
+import json
 import logging
 import os
 import re
@@ -655,69 +657,56 @@ class ZoteroRDFImporter:
         project_id: str,
     ) -> int:
         """
-        Build CO_OCCURS_WITH relationships between entities that appear in the same paper.
+        PERF-014: Build CO_OCCURS_WITH relationships using batch INSERT.
 
-        This method creates relationships based on co-occurrence - entities extracted
-        from the same paper are considered related. This works WITHOUT embeddings,
-        providing a fallback when Cohere API or other embedding services are unavailable.
-
-        The weight of the relationship is set to 1.0 for same-paper co-occurrence.
-
-        Args:
-            project_id: Project UUID
-
-        Returns:
-            Number of relationships created
+        Collects all co-occurrence pairs in memory, then inserts via executemany.
         """
         if not self.graph_store or not self._paper_entities:
             logger.info("No paper entities tracked for co-occurrence relationships")
             return 0
 
-        relationships_created = 0
-        seen_pairs = set()  # Track (entity1_id, entity2_id) pairs to avoid duplicates
+        seen_pairs = set()
+        relationship_batch = []
 
         for paper_id, paper_entity_tracker in self._paper_entities.items():
             entity_ids = paper_entity_tracker.entity_ids
-
-            # Skip papers with 0 or 1 entities (no co-occurrence possible)
             if len(entity_ids) < 2:
                 continue
 
-            # Create relationships between all pairs of entities in this paper
             for i, entity1_id in enumerate(entity_ids):
                 for entity2_id in entity_ids[i + 1:]:
-                    # Ensure consistent ordering for deduplication
                     pair_key = tuple(sorted([entity1_id, entity2_id]))
-
                     if pair_key in seen_pairs:
                         continue
-
                     seen_pairs.add(pair_key)
 
-                    try:
-                        await self.graph_store.add_relationship(
-                            project_id=project_id,
-                            source_id=entity1_id,
-                            target_id=entity2_id,
-                            relationship_type="CO_OCCURS_WITH",
-                            properties={
-                                "source_paper_id": paper_id,
-                                "auto_generated": True,
-                                "generation_method": "cooccurrence",
-                            },
-                            weight=1.0,
-                        )
-                        relationships_created += 1
-                    except Exception as e:
-                        # Log but continue - may fail due to unique constraint if relationship exists
-                        logger.debug(f"Could not create co-occurrence relationship: {e}")
+                    relationship_batch.append((
+                        str(uuid4()),
+                        project_id,
+                        entity1_id,
+                        entity2_id,
+                        "CO_OCCURS_WITH",
+                        json.dumps({
+                            "source_paper_id": paper_id,
+                            "auto_generated": True,
+                            "generation_method": "cooccurrence",
+                        }),
+                        1.0,
+                    ))
+
+        relationships_created = 0
+        if relationship_batch:
+            relationships_created = await self.graph_store.batch_add_relationships(
+                project_id=project_id,
+                relationships=relationship_batch,
+            )
 
         logger.info(
-            f"Created {relationships_created} co-occurrence relationships "
-            f"from {len(self._paper_entities)} papers"
+            f"PERF-014: Created {relationships_created} co-occurrence relationships "
+            f"from {len(self._paper_entities)} papers (batch insert)"
         )
 
-        # MEM-001: Clear the tracker and force GC after building relationships
+        # MEM-001: Clear tracker
         papers_count = len(self._paper_entities)
         self._paper_entities.clear()
         gc.collect()
@@ -788,6 +777,179 @@ class ZoteroRDFImporter:
 
         validation["valid"] = True
         return validation
+
+    async def _process_single_paper(
+        self,
+        item: ZoteroItem,
+        pdf_map: Dict[str, str],
+        project_id: str,
+        research_question: Optional[str],
+        extract_concepts: bool,
+        semaphore: 'asyncio.Semaphore',
+        concept_cache_lock: 'asyncio.Lock',
+        results: Dict[str, Any],
+        results_lock: 'asyncio.Lock',
+    ) -> None:
+        """PERF-014: Process a single paper with concurrency control."""
+        async with semaphore:
+            paper_start_time = time.time()
+
+            try:
+                # Get PDF text if available (PERF-014: run in thread pool)
+                pdf_text = ""
+                if item.item_key in pdf_map:
+                    pdf_path = pdf_map[item.item_key]
+                    pdf_text = await asyncio.to_thread(self.extract_text_from_pdf, pdf_path)
+                    if pdf_text:
+                        async with results_lock:
+                            self.progress.pdfs_processed += 1
+                            results["pdfs_processed"] += 1
+
+                # Store paper metadata
+                paper_id = None
+                if self.graph_store:
+                    paper_id = await self.graph_store.store_paper_metadata(
+                        project_id=project_id,
+                        title=item.title,
+                        abstract=item.abstract or "",
+                        authors=item.authors,
+                        year=item.year,
+                        doi=item.doi,
+                        source="zotero",
+                        properties={
+                            "zotero_key": item.item_key,
+                            "item_type": item.item_type,
+                            "journal": item.journal,
+                            "volume": item.volume,
+                            "issue": item.issue,
+                            "pages": item.pages,
+                            "url": item.url,
+                            "tags": item.tags,
+                            "has_pdf": item.item_key in pdf_map,
+                        },
+                    )
+                else:
+                    paper_id = str(uuid4())
+
+                async with results_lock:
+                    self.progress.papers_processed += 1
+                    results["papers_imported"] += 1
+
+                # Semantic Chunking
+                if pdf_text and paper_id and self.graph_store and len(pdf_text) > 500:
+                    try:
+                        chunked_result = self.semantic_chunker.chunk_academic_text(
+                            text=pdf_text,
+                            paper_id=paper_id,
+                            detect_sections=True,
+                            max_chunk_tokens=400,
+                        )
+                        if chunked_result.get("chunks"):
+                            await self.graph_store.store_chunks(
+                                project_id=project_id,
+                                paper_id=paper_id,
+                                chunks=chunked_result["chunks"],
+                            )
+                            async with results_lock:
+                                results["chunks_created"] = results.get("chunks_created", 0) + len(chunked_result["chunks"])
+                            logger.info(f"Created {len(chunked_result['chunks'])} chunks for {item.title[:30]}...")
+                    except Exception as e:
+                        logger.warning(f"Semantic chunking failed for {item.title}: {e}")
+
+                # Entity extraction
+                _entity_ids_and_names: list[tuple[str, str]] = []
+
+                if extract_concepts and self.llm and (item.abstract or pdf_text):
+                    try:
+                        entities = await self._extract_entities_from_full_text(
+                            pdf_text=pdf_text,
+                            item=item,
+                            research_question=research_question,
+                        )
+                        resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
+                            entities,
+                            use_llm_confirmation=False,
+                        )
+                        async with results_lock:
+                            self._accumulate_resolution_stats(results, resolution)
+
+                        paper_entity_tracker = PaperEntities(paper_id=paper_id)
+
+                        for entity in resolved_entities:
+                            if self.graph_store:
+                                entity_type = (
+                                    entity.entity_type.value
+                                    if hasattr(entity.entity_type, "value")
+                                    else str(entity.entity_type)
+                                )
+                                canonical_name = self.entity_resolution.canonicalize_name(entity.name)
+                                cache_key = f"{entity_type}:{canonical_name}"
+
+                                async with concept_cache_lock:
+                                    cached = self._concept_cache.get(cache_key)
+
+                                if cached:
+                                    entity_id = cached["entity_id"]
+                                    async with results_lock:
+                                        results["merges_applied"] += 1
+                                    if paper_id and self.graph_store:
+                                        await self.graph_store._entity_dao.append_source_paper_id(entity_id, paper_id)
+                                else:
+                                    entity_id = await self.graph_store.store_entity(
+                                        project_id=project_id,
+                                        name=canonical_name,
+                                        entity_type=entity_type,
+                                        description=entity.description or "",
+                                        source_paper_id=paper_id,
+                                        confidence=entity.confidence,
+                                        properties=entity.properties or {},
+                                    )
+                                    async with concept_cache_lock:
+                                        self._concept_cache[cache_key] = {"entity_id": entity_id}
+                                    async with results_lock:
+                                        results["entities_stored_unique"] += 1
+
+                                if entity_id not in paper_entity_tracker.entity_ids:
+                                    paper_entity_tracker.entity_ids.append(entity_id)
+
+                                if entity_id:
+                                    _entity_ids_and_names.append((entity_id, canonical_name))
+
+                                async with results_lock:
+                                    self.progress.concepts_extracted += 1
+                                    results["concepts_extracted"] += 1
+
+                        if paper_entity_tracker.entity_ids:
+                            async with concept_cache_lock:
+                                self._paper_entities[paper_id] = paper_entity_tracker
+
+                    except Exception as e:
+                        logger.warning(f"Entity extraction failed for {item.title}: {e}")
+
+                # Link entities to chunks
+                if paper_id and results.get("chunks_created", 0) > 0 and _entity_ids_and_names:
+                    await self._link_entities_to_chunks(project_id, paper_id, _entity_ids_and_names)
+
+                del pdf_text
+
+                paper_elapsed = time.time() - paper_start_time
+                if paper_elapsed > 30.0:
+                    logger.warning(
+                        f"PERF-014: Slow paper processing: {paper_elapsed:.1f}s for "
+                        f"'{item.title[:40]}...'"
+                    )
+                else:
+                    logger.info(
+                        f"PERF-014: Completed paper in {paper_elapsed:.1f}s: "
+                        f"'{item.title[:40]}...'"
+                    )
+
+            except Exception as e:
+                error_msg = f"Item processing failed ({item.title}): {e}"
+                logger.error(error_msg)
+                async with results_lock:
+                    self.progress.errors.append(error_msg)
+                    results["errors"].append(error_msg)
 
     async def import_folder(
         self,
@@ -891,246 +1053,95 @@ class ZoteroRDFImporter:
             "warnings": validation.get("warnings", []),
         }
 
+        # PERF-014: Concurrent paper processing with semaphore
+        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent papers (Groq 28 RPM)
+        concept_cache_lock = asyncio.Lock()
+        results_lock = asyncio.Lock()
+        batch_size = 5
+
         # BUG-028 Extension: Initialize skip set
         skip_ids = skip_paper_ids or set()
         skipped_count = 0
 
-        # Import each item
-        for i, item in enumerate(items):
-            # BUG-028 Extension: Skip already processed papers (for resume)
+        # Filter items to process
+        items_to_process = []
+        for item in items:
             if item.item_key in skip_ids:
                 skipped_count += 1
                 logger.debug(f"Skipping already processed paper: {item.item_key}")
                 continue
+            items_to_process.append(item)
 
-            # PERF-011: Track timing for each paper to identify slow processing
-            paper_start_time = time.time()
+        # Process in batches with asyncio.gather
+        for batch_start in range(0, len(items_to_process), batch_size):
+            batch = items_to_process[batch_start:batch_start + batch_size]
 
-            try:
-                # BUG-028 Extension: Update progress with current paper info for checkpoint
-                self.progress.current_paper_id = item.item_key
-                self.progress.current_paper_index = i
-
-                progress_pct = 0.25 + (0.65 * (i / len(items)))
-                self._update_progress(
-                    "importing",
-                    progress_pct,
-                    f"Processing papers: {i+1}/{len(items)} - {item.title[:50]}..."
+            tasks = [
+                self._process_single_paper(
+                    item=item,
+                    pdf_map=pdf_map,
+                    project_id=project_id,
+                    research_question=research_question,
+                    extract_concepts=extract_concepts,
+                    semaphore=semaphore,
+                    concept_cache_lock=concept_cache_lock,
+                    results=results,
+                    results_lock=results_lock,
                 )
+                for item in batch
+            ]
 
-                # PERF-011: Log paper processing start
-                logger.info(f"PERF-011: Starting paper {i+1}/{len(items)}: '{item.title[:50]}...'")
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Get PDF text if available
-                pdf_text = ""
-                if item.item_key in pdf_map:
-                    pdf_path = pdf_map[item.item_key]
-                    pdf_text = self.extract_text_from_pdf(pdf_path)
-                    if pdf_text:
-                        self.progress.pdfs_processed += 1
-                        results["pdfs_processed"] += 1
+            # Progress update per batch
+            processed_so_far = min(batch_start + batch_size, len(items_to_process))
+            progress_pct = 0.25 + (0.65 * (processed_so_far / len(items_to_process)))
+            self._update_progress(
+                "importing",
+                progress_pct,
+                f"Processing papers: {processed_so_far}/{len(items_to_process)}..."
+            )
 
-                # Store paper metadata
-                paper_id = None
-                if self.graph_store:
-                    paper_id = await self.graph_store.store_paper_metadata(
-                        project_id=project_id,
-                        title=item.title,
-                        abstract=item.abstract or "",
-                        authors=item.authors,
-                        year=item.year,
-                        doi=item.doi,
-                        source="zotero",
-                        properties={
-                            "zotero_key": item.item_key,
-                            "item_type": item.item_type,
-                            "journal": item.journal,
-                            "volume": item.volume,
-                            "issue": item.issue,
-                            "pages": item.pages,
-                            "url": item.url,
-                            "tags": item.tags,
-                            "has_pdf": item.item_key in pdf_map,
-                        },
-                    )
-                else:
-                    paper_id = str(uuid4())
+            # MEM-002: Memory cleanup every batch
+            self.entity_extractor.clear_cache()
+            if self.graph_store and hasattr(self.graph_store, '_entity_dao'):
+                self.graph_store._entity_dao.clear_memory_cache()
+            gc.collect()
+            logger.info(f"MEM-002: Memory cleanup after batch {batch_start // batch_size + 1}")
 
-                self.progress.papers_processed += 1
-                results["papers_imported"] += 1
-
-                # Semantic Chunking: Create hierarchical chunks from PDF text
-                if pdf_text and paper_id and self.graph_store and len(pdf_text) > 500:
-                    try:
-                        chunked_result = self.semantic_chunker.chunk_academic_text(
-                            text=pdf_text,
-                            paper_id=paper_id,
-                            detect_sections=True,
-                            max_chunk_tokens=400,
-                        )
-                        
-                        if chunked_result.get("chunks"):
-                            await self.graph_store.store_chunks(
-                                project_id=project_id,
-                                paper_id=paper_id,
-                                chunks=chunked_result["chunks"],
-                            )
-                            if "chunks_created" not in results:
-                                results["chunks_created"] = 0
-                            results["chunks_created"] += len(chunked_result["chunks"])
-                            logger.info(f"Created {len(chunked_result['chunks'])} chunks for {item.title[:30]}...")
-                    except Exception as e:
-                        logger.warning(f"Semantic chunking failed for {item.title}: {e}")
-
-                # Extract concepts if enabled - use full PDF text with chunking
-                # Phase 7A: Track entity_id -> name for chunk-entity linking
-                _entity_ids_and_names: list[tuple[str, str]] = []
-
-                if extract_concepts and self.llm and (item.abstract or pdf_text):
-                    try:
-                        # Use chunking strategy to process full PDF content
-                        # instead of truncating to 4000 chars (which loses 95%+ of content)
-                        entities = await self._extract_entities_from_full_text(
-                            pdf_text=pdf_text,
-                            item=item,
-                            research_question=research_question,
-                        )
-                        resolved_entities, resolution = await self.entity_resolution.resolve_entities_async(
-                            entities,
-                            use_llm_confirmation=False,  # PERF-013: Skip LLM pair verification during import (saves ~7.5min/150 papers)
-                        )
-                        self._accumulate_resolution_stats(results, resolution)
-
-                        # Track entities per paper for co-occurrence relationships
-                        paper_entity_tracker = PaperEntities(paper_id=paper_id)
-
-                        # Store entities
-                        for entity in resolved_entities:
-                            if self.graph_store:
-                                entity_type = (
-                                    entity.entity_type.value
-                                    if hasattr(entity.entity_type, "value")
-                                    else str(entity.entity_type)
-                                )
-                                canonical_name = self.entity_resolution.canonicalize_name(entity.name)
-                                cache_key = f"{entity_type}:{canonical_name}"
-
-                                if cache_key in self._concept_cache:
-                                    entity_id = self._concept_cache[cache_key]["entity_id"]
-                                    results["merges_applied"] += 1
-                                    # BUG-066: Accumulate source_paper_ids across papers
-                                    if paper_id and self.graph_store:
-                                        await self.graph_store._entity_dao.append_source_paper_id(entity_id, paper_id)
-                                else:
-                                    entity_id = await self.graph_store.store_entity(
-                                        project_id=project_id,
-                                        name=canonical_name,
-                                        entity_type=entity_type,
-                                        description=entity.description or "",
-                                        source_paper_id=paper_id,
-                                        confidence=entity.confidence,
-                                        properties=entity.properties or {},
-                                    )
-                                    self._concept_cache[cache_key] = {"entity_id": entity_id}
-                                    results["entities_stored_unique"] += 1
-
-                                # Track entity ID for co-occurrence relationships
-                                if entity_id not in paper_entity_tracker.entity_ids:
-                                    paper_entity_tracker.entity_ids.append(entity_id)
-
-                                # Phase 7A: Track for chunk-entity linking
-                                if entity_id:
-                                    _entity_ids_and_names.append((entity_id, canonical_name))
-
-                                self.progress.concepts_extracted += 1
-                                results["concepts_extracted"] += 1
-
-                        # Store paper entities for later co-occurrence building
-                        if paper_entity_tracker.entity_ids:
-                            self._paper_entities[paper_id] = paper_entity_tracker
-
-                    except Exception as e:
-                        logger.warning(f"Entity extraction failed for {item.title}: {e}")
-
-                # Phase 7A: Link entities to source chunks for provenance
-                if paper_id and results.get("chunks_created", 0) > 0 and _entity_ids_and_names:
-                    await self._link_entities_to_chunks(project_id, paper_id, _entity_ids_and_names)
-
-                # MEM-002: Free PDF text after extraction and chunking complete
-                del pdf_text
-
-                # PERF-011: Log paper processing completion with timing
-                paper_elapsed = time.time() - paper_start_time
-                if paper_elapsed > 30.0:  # Warn if paper takes more than 30 seconds
-                    logger.warning(
-                        f"PERF-011: Slow paper processing: {paper_elapsed:.1f}s for "
-                        f"'{item.title[:40]}...' (paper {i+1}/{len(items)})"
-                    )
-                else:
-                    logger.info(
-                        f"PERF-011: Completed paper {i+1}/{len(items)} in {paper_elapsed:.1f}s: "
-                        f"'{item.title[:40]}...'"
-                    )
-
-            except Exception as e:
-                error_msg = f"Item processing failed ({item.title}): {e}"
-                logger.error(error_msg)
-                self.progress.errors.append(error_msg)
-                results["errors"].append(error_msg)
-
-            # MEM-002: Aggressive memory cleanup every 3 papers
-            if (i + 1) % 3 == 0:
-                # Clear entity extractor cache
-                self.entity_extractor.clear_cache()
-
-                # Clear EntityDAO in-memory cache if using DB
-                if self.graph_store and hasattr(self.graph_store, '_entity_dao'):
-                    self.graph_store._entity_dao.clear_memory_cache()
-
-                # Force garbage collection
-                gc.collect()
-                logger.info(f"MEM-002: Memory cleanup after paper {i+1}/{len(items)}")
-
-            # MEM-002: Every 25 papers, do aggressive cache trimming
-            if (i + 1) % 25 == 0:
-                # Trim paper_entities for already-built co-occurrence pairs
-                # Keep only the last 25 papers' entity tracking
-                if len(self._paper_entities) > 50:
-                    old_keys = list(self._paper_entities.keys())[:-25]
-                    for key in old_keys:
-                        del self._paper_entities[key]
-                    gc.collect()
-                    logger.info(f"MEM-002: Trimmed paper_entities cache, kept last 25 of {len(self._paper_entities) + len(old_keys)}")
-
-        # Create embeddings (optional - may fail if Cohere API unavailable)
+        # PERF-014: Post-import phases — run embeddings + co-occurrence in parallel
         embeddings_created = 0
+        total_relationships = 0
+
         if self.graph_store and self.progress.concepts_extracted > 0:
-            self._update_progress("embeddings", 0.85, "Creating embeddings...")
-            try:
-                embeddings_created = await self.graph_store.create_embeddings(project_id=project_id)
-                logger.info(f"Created {embeddings_created} embeddings")
-            except Exception as e:
-                logger.error(f"Embedding creation failed: {e}. Gap detection will use TF-IDF fallback.")
-                self._update_progress("embeddings", 0.87, "Embedding failed - will use TF-IDF fallback")
+            self._update_progress("post_processing", 0.85, "Post-processing: embeddings + relationships...")
 
-        # Build relationships - ALWAYS build co-occurrence, optionally build semantic
-        if extract_concepts and self.graph_store:
-            total_relationships = 0
+            # Run embeddings and co-occurrence in parallel (they're independent)
+            async def _create_embeddings_safe():
+                try:
+                    return await self.graph_store.create_embeddings(project_id=project_id)
+                except Exception as e:
+                    logger.error(f"Embedding creation failed: {e}. Gap detection will use TF-IDF fallback.")
+                    return 0
 
-            # Step 1: Build co-occurrence relationships (NO embeddings needed)
-            # Entities that appear in the same paper are related
-            self._update_progress("building_relationships", 0.90, "Building co-occurrence relationships...")
-            try:
-                cooccurrence_count = await self._build_cooccurrence_relationships(
-                    project_id=project_id
-                )
-                total_relationships += cooccurrence_count
-                logger.info(f"Created {cooccurrence_count} co-occurrence relationships")
-            except Exception as e:
-                logger.warning(f"Co-occurrence relationship building failed: {e}")
+            async def _build_cooccurrence_safe():
+                try:
+                    return await self._build_cooccurrence_relationships(project_id=project_id)
+                except Exception as e:
+                    logger.warning(f"Co-occurrence relationship building failed: {e}")
+                    return 0
 
-            # Step 2: Build semantic relationships (ONLY if embeddings exist)
-            if embeddings_created > 0:
+            emb_result, cooc_result = await asyncio.gather(
+                _create_embeddings_safe(),
+                _build_cooccurrence_safe(),
+            )
+
+            embeddings_created = emb_result
+            total_relationships = cooc_result
+            logger.info(f"PERF-014: Parallel post-processing: {embeddings_created} embeddings, {cooc_result} co-occurrence rels")
+
+            # Semantic relationships need embeddings, so run after
+            if embeddings_created > 0 and extract_concepts:
                 self._update_progress("building_relationships", 0.95, "Building semantic relationships...")
                 try:
                     semantic_count = await self.graph_store.build_concept_relationships(
@@ -1140,8 +1151,6 @@ class ZoteroRDFImporter:
                     logger.info(f"Created {semantic_count} semantic relationships")
                 except Exception as e:
                     logger.warning(f"Semantic relationship building failed: {e}")
-            else:
-                logger.info("Skipping semantic relationships (no embeddings available)")
 
             self.progress.relationships_created = total_relationships
             results["relationships_created"] = total_relationships

@@ -137,6 +137,10 @@ class GraphStore:
             project_id, relationship_type, limit, offset
         )
 
+    async def batch_add_relationships(self, project_id: str, relationships: list) -> int:
+        """PERF-014: Batch insert relationships. Returns count inserted."""
+        return await self._entity_dao.batch_add_relationships(project_id, relationships)
+
     # =========================================================================
     # Project & Paper Operations (delegated to EntityDAO)
     # =========================================================================
@@ -289,7 +293,7 @@ class GraphStore:
         self,
         project_id: str,
         embedding_provider=None,
-        batch_size: int = 5,  # PERF-010: Further reduced for 512MB memory limit
+        batch_size: int = 50,  # PERF-014: Embedding API payloads are small (~100 tokens/chunk)
         use_specter: bool = False,
     ) -> int:
         """Create embeddings for chunks without embeddings."""
