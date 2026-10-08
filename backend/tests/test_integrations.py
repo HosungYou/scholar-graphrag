@@ -489,7 +489,7 @@ async def test_get_effective_api_key_user_key_priority():
     mock_user.id = "user-123"
 
     with patch("routers.integrations.db") as mock_db:
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {"semantic_scholar": "user-key-abc"}}
         })
 
@@ -511,7 +511,7 @@ async def test_get_effective_api_key_fallback_when_no_user_key():
     mock_user.id = "user-123"
 
     with patch("routers.integrations.db") as mock_db:
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {}}
         })
 
@@ -526,7 +526,7 @@ async def test_get_effective_api_key_fallback_when_empty_user_key():
     mock_user.id = "user-123"
 
     with patch("routers.integrations.db") as mock_db:
-        mock_db.fetch_one = AsyncMock(return_value={
+        mock_db.fetchrow = AsyncMock(return_value={
             "preferences": {"api_keys": {"semantic_scholar": ""}}
         })
 
@@ -541,7 +541,7 @@ async def test_get_effective_api_key_fallback_when_no_preferences():
     mock_user.id = "user-123"
 
     with patch("routers.integrations.db") as mock_db:
-        mock_db.fetch_one = AsyncMock(return_value={"preferences": None})
+        mock_db.fetchrow = AsyncMock(return_value={"preferences": None})
 
         result = await get_effective_api_key(mock_user, "semantic_scholar", "server-key-xyz")
         assert result == "server-key-xyz"
@@ -554,7 +554,7 @@ async def test_get_effective_api_key_fallback_when_db_error():
     mock_user.id = "user-123"
 
     with patch("routers.integrations.db") as mock_db:
-        mock_db.fetch_one = AsyncMock(side_effect=Exception("DB connection error"))
+        mock_db.fetchrow = AsyncMock(side_effect=Exception("DB connection error"))
 
         result = await get_effective_api_key(mock_user, "semantic_scholar", "server-key-xyz")
         assert result == "server-key-xyz"
