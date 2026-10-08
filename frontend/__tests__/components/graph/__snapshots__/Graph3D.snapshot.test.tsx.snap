@@ -11,14 +11,14 @@ exports[`Graph3D snapshots matches canonical graph mapping snapshot with low-tru
       "entityType": "Concept",
       "clusterId": 0,
       "color": "#F7DC6F",
-      "val": 13.954451150103322
+      "val": 8.040000000000001
     },
     {
       "id": "n-2",
       "entityType": "Method",
       "clusterId": 1,
       "color": "#BB8FCE",
-      "val": 17.14213562373095
+      "val": 9
     }
   ],
   "links": [
@@ -48,14 +48,14 @@ exports[`Graph3D snapshots matches ghost-edge enabled snapshot 1`] = `
       "entityType": "Concept",
       "clusterId": 0,
       "color": "#F7DC6F",
-      "val": 13.954451150103322
+      "val": 8.040000000000001
     },
     {
       "id": "n-2",
       "entityType": "Method",
       "clusterId": 1,
       "color": "#BB8FCE",
-      "val": 17.14213562373095
+      "val": 9
     }
   ],
   "links": [

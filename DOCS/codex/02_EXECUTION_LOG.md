@@ -639,4 +639,9 @@
 
 ## 오픈 이슈
 
+### 2026-10-08 Snapshot Triage
+- 판정: Accept. v0.25의 정규화된 노드 크기와 v0.31/v0.32의 Research Frontiers·영문 UI·도구 정리는 이미 main에 구현돼 있으며 이번 변경은 제품 UI를 바꾸지 않는다.
+- 오래된 snapshot을 현재 구현과 맞추고, 기존 shell mock에 새 WebGL 하위 컴포넌트 ClusterDrillDown을 포함했다. low-trust/ghost edge 매핑과 Import 상태 검증은 유지한다.
+- 검증: frontend core 9개 suite, 38개 test, 9개 snapshot 통과. import-page Suspense 수정은 Vercel preview 빌드 통과로 확인했다.
+
 - 현재 기준 블로킹 이슈 없음

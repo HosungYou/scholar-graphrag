@@ -142,6 +142,10 @@ jest.mock('@/components/graph/Graph3D', () => ({
   Graph3D: React.forwardRef((_props: unknown, _ref) => <div data-testid="graph3d">Graph3D</div>),
 }));
 
+jest.mock('@/components/graph/ClusterDrillDown', () => ({
+  ClusterDrillDown: () => <div data-testid="cluster-drill-down">ClusterDrillDown</div>,
+}));
+
 jest.mock('@/components/graph/GapPanel', () => ({
   GapPanel: () => <div data-testid="gap-panel">GapPanel</div>,
 }));

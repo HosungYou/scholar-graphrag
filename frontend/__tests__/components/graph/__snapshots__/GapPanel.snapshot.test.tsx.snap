@@ -67,13 +67,13 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
         <span
           class="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper block"
         >
-          Research Gaps
+          Research Frontiers
         </span>
         <span
           class="font-mono text-xs text-accent-amber"
         >
           1
-           detected
+           frontiers
         </span>
       </div>
     </div>
@@ -137,10 +137,13 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
         <p
           class="text-xs text-muted leading-relaxed"
         >
-          Research gaps are areas where concept clusters have weak connections. Click a gap to see AI-suggested research questions.
+          Research Frontiers represent unexplored connections between concept clusters. Each frontier is a potential research opportunity. Click to view AI research suggestions.
         </p>
       </div>
     </div>
+    <div
+      class="p-3 border-b border-ink/10 dark:border-paper/10"
+    />
     <div
       class="p-3 space-y-2"
       tabindex="0"
@@ -205,6 +208,15 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
               Fairness
             </span>
           </div>
+          <p
+            class="text-[11px] text-muted mt-1 leading-relaxed"
+          >
+            Insufficient connections between 
+            Trust
+             and 
+            Fairness
+             present a new research opportunity.
+          </p>
           <div
             class="flex items-center gap-2 mb-2"
           >
@@ -213,13 +225,16 @@ exports[`GapPanel snapshots matches collapsed list view snapshot 1`] = `
             >
               <div
                 class="h-full transition-all duration-500"
-                style="width: 62%;"
+                style="width: 38%;"
               />
             </div>
             <span
-              class="font-mono text-xs flex-shrink-0 text-accent-amber"
+              class="font-mono text-xs flex-shrink-0 text-muted"
+              title="Opportunity level: Low"
             >
-              62%
+              ★★☆☆☆
+               
+              Low
             </span>
             <button
               aria-label="Find related papers"
@@ -454,13 +469,13 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
         <span
           class="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper block"
         >
-          Research Gaps
+          Research Frontiers
         </span>
         <span
           class="font-mono text-xs text-accent-amber"
         >
           1
-           detected
+           frontiers
         </span>
       </div>
     </div>
@@ -524,10 +539,13 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
         <p
           class="text-xs text-muted leading-relaxed"
         >
-          Research gaps are areas where concept clusters have weak connections. Click a gap to see AI-suggested research questions.
+          Research Frontiers represent unexplored connections between concept clusters. Each frontier is a potential research opportunity. Click to view AI research suggestions.
         </p>
       </div>
     </div>
+    <div
+      class="p-3 border-b border-ink/10 dark:border-paper/10"
+    />
     <div
       class="p-3 space-y-2"
       tabindex="0"
@@ -592,6 +610,15 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
               Fairness
             </span>
           </div>
+          <p
+            class="text-[11px] text-muted mt-1 leading-relaxed"
+          >
+            Insufficient connections between 
+            Trust
+             and 
+            Fairness
+             present a new research opportunity.
+          </p>
           <div
             class="flex items-center gap-2 mb-2"
           >
@@ -600,13 +627,16 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
             >
               <div
                 class="h-full transition-all duration-500"
-                style="width: 62%;"
+                style="width: 38%;"
               />
             </div>
             <span
-              class="font-mono text-xs flex-shrink-0 text-accent-amber"
+              class="font-mono text-xs flex-shrink-0 text-muted"
+              title="Opportunity level: Low"
             >
-              62%
+              ★★☆☆☆
+               
+              Low
             </span>
             <button
               aria-label="Find related papers"
@@ -668,6 +698,240 @@ exports[`GapPanel snapshots matches expanded gap detail snapshot 1`] = `
         <div
           class="px-4 pb-4 space-y-4 border-t border-ink/10 dark:border-paper/10 pt-4"
         >
+          <div
+            class="border border-ink/10 dark:border-paper/10 bg-paper dark:bg-ink"
+          >
+            <div
+              class="flex items-center gap-2 p-3 border-b border-ink/10 dark:border-paper/10"
+            >
+              <svg
+                class="lucide lucide-git-branch w-3 h-3 text-accent-teal"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <line
+                  x1="6"
+                  x2="6"
+                  y1="3"
+                  y2="15"
+                />
+                <circle
+                  cx="18"
+                  cy="6"
+                  r="3"
+                />
+                <circle
+                  cx="6"
+                  cy="18"
+                  r="3"
+                />
+                <path
+                  d="M18 9a9 9 0 0 1-9 9"
+                />
+              </svg>
+              <span
+                class="font-mono text-xs uppercase tracking-wider text-ink dark:text-paper"
+              >
+                Bridge Storyline
+              </span>
+            </div>
+            <div
+              class="p-3"
+            >
+              <div
+                class="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-stretch gap-1"
+              >
+                <div
+                  class="p-2 border border-ink/10 dark:border-paper/10"
+                  style="border-left-color: #E63946; border-left-width: 3px;"
+                >
+                  <div
+                    class="flex items-center gap-1 mb-1.5"
+                  >
+                    <svg
+                      class="lucide lucide-hexagon w-3 h-3 flex-shrink-0"
+                      fill="none"
+                      height="24"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      style="color: rgb(230, 57, 70);"
+                      viewBox="0 0 24 24"
+                      width="24"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                      />
+                    </svg>
+                    <span
+                      class="font-mono text-[10px] uppercase tracking-wider text-ink dark:text-paper truncate"
+                      title="Trust"
+                    >
+                      Trust
+                    </span>
+                  </div>
+                  <div
+                    class="space-y-0.5"
+                  >
+                    <div
+                      class="font-mono text-[10px] text-muted truncate"
+                      title="Trust"
+                    >
+                      Trust
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="flex items-center justify-center px-0.5"
+                >
+                  <svg
+                    class="lucide lucide-arrow-right w-3 h-3 text-accent-amber/50"
+                    fill="none"
+                    height="24"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                    width="24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M5 12h14"
+                    />
+                    <path
+                      d="m12 5 7 7-7 7"
+                    />
+                  </svg>
+                </div>
+                <div
+                  class="p-2 border border-accent-amber/30 bg-accent-amber/5"
+                >
+                  <div
+                    class="flex items-center gap-1 mb-1.5"
+                  >
+                    <svg
+                      class="lucide lucide-sparkles w-3 h-3 text-accent-amber flex-shrink-0"
+                      fill="none"
+                      height="24"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      viewBox="0 0 24 24"
+                      width="24"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"
+                      />
+                      <path
+                        d="M5 3v4"
+                      />
+                      <path
+                        d="M19 17v4"
+                      />
+                      <path
+                        d="M3 5h4"
+                      />
+                      <path
+                        d="M17 19h4"
+                      />
+                    </svg>
+                    <span
+                      class="font-mono text-[10px] uppercase tracking-wider text-accent-amber"
+                    >
+                      Bridge
+                    </span>
+                  </div>
+                  <div
+                    class="space-y-0.5"
+                  >
+                    <div
+                      class="font-mono text-[10px] text-ink dark:text-paper truncate"
+                      title="Calibration"
+                    >
+                      Calibration
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="flex items-center justify-center px-0.5"
+                >
+                  <svg
+                    class="lucide lucide-arrow-right w-3 h-3 text-accent-amber/50"
+                    fill="none"
+                    height="24"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                    width="24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M5 12h14"
+                    />
+                    <path
+                      d="m12 5 7 7-7 7"
+                    />
+                  </svg>
+                </div>
+                <div
+                  class="p-2 border border-ink/10 dark:border-paper/10"
+                  style="border-left-color: #2EC4B6; border-left-width: 3px;"
+                >
+                  <div
+                    class="flex items-center gap-1 mb-1.5"
+                  >
+                    <svg
+                      class="lucide lucide-hexagon w-3 h-3 flex-shrink-0"
+                      fill="none"
+                      height="24"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      style="color: rgb(46, 196, 182);"
+                      viewBox="0 0 24 24"
+                      width="24"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                      />
+                    </svg>
+                    <span
+                      class="font-mono text-[10px] uppercase tracking-wider text-ink dark:text-paper truncate"
+                      title="Fairness"
+                    >
+                      Fairness
+                    </span>
+                  </div>
+                  <div
+                    class="space-y-0.5"
+                  >
+                    <div
+                      class="font-mono text-[10px] text-muted truncate"
+                      title="Fairness"
+                    >
+                      Fairness
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           <div>
             <p
               class="font-mono text-xs uppercase tracking-wider text-accent-amber mb-2 flex items-center gap-1"
