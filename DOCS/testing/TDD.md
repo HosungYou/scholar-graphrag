@@ -77,7 +77,7 @@ cd frontend && npm test
 | File | Module Under Test | Test Count | Coverage |
 |------|-------------------|------------|----------|
 | `test_settings.py` | `routers/settings.py` | 20+ | Unit + Integration |
-| `test_chat_router.py` | `routers/chat.py` | 10+ | Unit + Integration |
+| `test_chat_router.py` | `ExplainRequest` | 3 | Request model validation |
 | `test_graph_router.py` | `routers/graph.py` | 10+ | Integration |
 | `test_importer.py` | `importers/` | 10+ | Integration |
 | `test_agents.py` | `agents/` | 5+ | Unit |
@@ -86,7 +86,6 @@ cd frontend && npm test
 | `test_entity_extractor.py` | `graph/entity_extractor.py` | 5+ | Unit |
 | `test_gap_detector.py` | `graph/gap_detector.py` | 5+ | Unit |
 | `test_integrations.py` | `integrations/` | 5+ | Integration |
-| `test_api_contracts.py` | API contracts | 10+ | Contract |
 | `test_api_integration.py` | Full API flow | 5+ | Integration |
 | `test_zotero_api.py` | `integrations/zotero/` | 5+ | Integration |
 | `test_zotero_rdf_importer.py` | `importers/zotero_rdf/` | 5+ | Integration |
@@ -99,7 +98,6 @@ cd frontend && npm test
 |------|-------------------|------------|----------|
 | `__tests__/lib/api.test.ts` | `lib/api.ts` (explainNode) | 4 | Unit |
 | `__tests__/lib/settings-api.test.ts` | `lib/api.ts` (settings methods) | 10+ | Unit |
-| `__tests__/components/graph/Graph3D.test.tsx` | `Graph3D` component | 3+ | Component |
 | `__tests__/hooks/useGraphStore.test.ts` | `useGraphStore` hook | 3+ | Unit |
 | `__tests__/components/ui/ErrorDisplay.test.tsx` | `ErrorDisplay` | 2+ | Component |
 | `__tests__/components/ui/Skeleton.test.tsx` | `Skeleton` | 2+ | Component |
@@ -150,7 +148,7 @@ cd frontend && npm test
 
 ### 4.2 Chat/Explain (v0.9.0-v0.10.0)
 
-Tests for UUID fallback in explain endpoint — see `test_chat_router.py`.
+`test_chat_router.py` validates the actual `ExplainRequest` model defaults. It does not prove the endpoint fallback or error flow.
 
 ### 4.3 Graph Router
 
@@ -218,18 +216,6 @@ Graph visualization, gap analysis, temporal timeline — see `test_graph_router.
 | Confirming clear calls deleteInterruptedJobs API | Integration |
 | Successful clear refreshes interrupted jobs query | Integration |
 | deleteInterruptedJobs sends DELETE to correct URL | Unit |
-
-### 4.9 3D Hover Jitter Fix (v0.17.0)
-
-**Frontend** (`Graph3D.test.tsx` — extend existing):
-
-| Test Case | Type |
-|-----------|------|
-| nodesRef.current syncs when nodes prop changes | Unit |
-| handleNodeHover uses nodesRef instead of stale nodes closure | Unit |
-| scene.traverse casts material as MeshPhongMaterial | Unit |
-| Hover callback deps do not include `nodes` | Unit |
-| Hover does not trigger nodeThreeObject recreation | Integration |
 
 ### 4.10 Intent Agent Pattern Matching (v0.17.0)
 

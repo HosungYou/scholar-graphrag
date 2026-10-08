@@ -15,7 +15,7 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
     Graph3D
   </div>
   <div
-    class="absolute top-4 right-4 flex gap-2"
+    class="absolute top-4 right-4 flex gap-2 z-40"
   >
     <div
       class="bg-paper dark:bg-ink border border-ink/10 dark:border-paper/10 p-1 flex gap-1"
@@ -32,37 +32,6 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
           class="absolute bottom-0 left-0 right-0 h-0.5 bg-white"
         />
       </div>
-      <div
-        class="w-px bg-ink/10 dark:bg-paper/10"
-      />
-      <button
-        class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
-        title="Enable bloom effect (highlight important nodes)"
-      >
-        <svg
-          class="w-4 h-4"
-          data-testid="icon"
-        />
-      </button>
-      <button
-        class="p-2 transition-colors bg-accent-teal/10 text-accent-teal"
-        title="Labels: Top 20% nodes (click to toggle)"
-      >
-        <svg
-          class="w-4 h-4"
-          data-testid="icon"
-        />
-      </button>
-      <button
-        aria-label="교차 논문 연결 표시/숨김"
-        class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
-        title="Cross-Paper Links (SAME_AS): Hidden"
-      >
-        <svg
-          class="w-4 h-4"
-          data-testid="icon"
-        />
-      </button>
       <div
         class="w-px bg-ink/10 dark:bg-paper/10"
       />
@@ -95,24 +64,6 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
         />
       </button>
       <button
-        class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
-        title="Toggle Centrality Panel"
-      >
-        <svg
-          class="w-4 h-4"
-          data-testid="icon"
-        />
-      </button>
-      <button
-        class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
-        title="Toggle Cluster Panel"
-      >
-        <svg
-          class="w-4 h-4"
-          data-testid="icon"
-        />
-      </button>
-      <button
         class="p-2 transition-colors bg-accent-teal/10 text-accent-teal"
         title="Toggle Analysis HUD"
       >
@@ -123,7 +74,7 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
       </button>
       <button
         class="p-2 transition-colors hover:bg-surface/10 text-muted hover:text-ink dark:hover:text-paper"
-        title="Toggle Top Topics Panel"
+        title="Paper Fit Analysis"
       >
         <svg
           class="w-4 h-4"
@@ -180,7 +131,7 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
         </button>
         <button
           class="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10"
-          title="시간축 시각화 (Temporal)"
+          title="Temporal View"
         >
           <svg
             class="w-4 h-4"
@@ -190,6 +141,20 @@ exports[`KnowledgeGraph3D snapshots matches 3D view shell snapshot 1`] = `
             class="font-mono text-xs uppercase tracking-wider"
           >
             Temporal
+          </span>
+        </button>
+        <button
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-all text-ink/70 dark:text-paper/70 hover:text-ink dark:hover:text-paper hover:bg-ink/10 dark:hover:bg-paper/10"
+          title="Research Summary"
+        >
+          <svg
+            class="w-4 h-4"
+            data-testid="icon"
+          />
+          <span
+            class="font-mono text-xs uppercase tracking-wider"
+          >
+            Summary
           </span>
         </button>
       </div>

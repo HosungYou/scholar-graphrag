@@ -91,7 +91,6 @@ tests/
 | `test_entity_extractor.py` | Entity extraction with LLMs |
 | `test_api_integration.py` | API endpoint contracts |
 | `test_agents.py` | AGENTiGraph 6-agent pipeline |
-| `test_api_contracts.py` | API schema validation |
 
 ---
 

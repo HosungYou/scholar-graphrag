@@ -4,8 +4,6 @@
 
 ## 문서 구성
 
-- `01_EXECUTION_PROCEDURE.md`
-  - 단계별 실행 절차, 입력/출력, 완료 기준
 - `02_EXECUTION_LOG.md`
   - 실제 수행 이력(타임스탬프, 결과, 이슈)
 - `SDD.md`
@@ -18,10 +16,6 @@
   - 학술 도메인 Entity Resolution 고도화(약어/표기 변형) 실행 기록
 - `05_PHASE5_SEMANTIC_SCHOLAR.md`
   - Semantic Scholar 운영화(429/재시도/추천 경로 안정화) 실행 기록
-- `06_SNAPSHOT_REVIEW_CHECKLIST.md`
-  - 스냅샷 승인/리뷰 체크리스트
-- `07_SNAPSHOT_DIFF_TRIAGE.md`
-  - 스냅샷 diff triage 절차(허용/회귀/분리)
 - `08_PLAYWRIGHT_E2E_VISUAL.md`
   - Playwright 상호작용/E2E/시각회귀 실행 가이드
 

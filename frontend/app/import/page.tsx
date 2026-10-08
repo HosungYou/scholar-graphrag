@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, DragEvent, useCallback, ChangeEvent, useEffect } from 'react';
+import { Suspense, useState, useRef, DragEvent, useCallback, ChangeEvent, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -91,7 +91,7 @@ const importMethods = [
   { id: 'scholarag' as const, label: 'ScholaRAG', icon: FolderOpen, recommended: false },
 ];
 
-export default function ImportPage() {
+function ImportPageContent() {
   const [importMethod, setImportMethod] = useState<ImportMethod>('pdf');
   const [folderPath, setFolderPath] = useState('');
   const [validation, setValidation] = useState<ImportValidationResult | null>(null);
@@ -1121,5 +1121,13 @@ export default function ImportPage() {
         </ErrorBoundary>
       </main>
     </div>
+  );
+}
+
+export default function ImportPage() {
+  return (
+    <Suspense fallback={null}>
+      <ImportPageContent />
+    </Suspense>
   );
 }

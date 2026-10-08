@@ -3,7 +3,7 @@ FastAPI Dependency Injection Module
 Replaces global singletons with proper DI pattern
 """
 from functools import lru_cache
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from fastapi import Depends
 
@@ -11,6 +11,9 @@ from fastapi import Depends
 from backend.database import Database
 from backend.config import Settings
 from backend.llm.base import BaseLLMProvider
+
+if TYPE_CHECKING:
+    from backend.agents.orchestrator import AgentOrchestrator
 
 
 @lru_cache()
