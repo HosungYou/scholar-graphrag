@@ -141,13 +141,6 @@ make test-backend-core
 make test-frontend-core
 ```
 
-### Frontend (full check, known issues may fail)
-
-```bash
-cd frontend
-npm run type-check
-```
-
 ## 6. Acceptance Criteria
 
 1. 백엔드 계약/기본 importer 테스트 통과
@@ -159,11 +152,4 @@ npm run type-check
 
 1. Playwright 그래프 테스트는 `NEXT_PUBLIC_E2E_MOCK_3D=1` 기반이므로 실제 WebGL 물리 흔들림 회귀는 별도 브라우저 트랙 필요
 2. 시각 회귀 baseline은 현재 Chromium 단일 브라우저 기준이며 cross-browser 편차(Firefox/WebKit)는 미커버
-3. Phase 11-12 UI 컴포넌트의 스냅샷 테스트는 향후 추가 예정 (EdgeContextModal, ChatInterface)
-4. Evaluation 페이지/Query Metrics는 목(mock) 데이터 기반으로만 테스트됨; 실제 백엔드 통합 테스트 필요
-
-## 8. Immediate Next Test Work
-
-1. Firefox/WebKit 시각 회귀 프로젝트 추가
-2. 실제 3D 렌더 경로(비 mock) 야간 회귀 잡 분리
-3. Playwright trace/video artifact를 PR 코멘트에 자동 링크
+3. Evaluation 페이지/Query Metrics는 목(mock) 데이터 기반으로만 테스트됨; 실제 백엔드 통합 테스트 필요

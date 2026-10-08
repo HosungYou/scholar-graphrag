@@ -48,6 +48,8 @@ npx playwright test -c playwright.config.ts e2e/visual-regression.spec.ts --upda
 
 ## CI 연동
 
-1. PR triage gate: `.github/workflows/ci.yml` `snapshot-triage` 잡
-2. PR 상호작용 E2E: `.github/workflows/ci.yml` `frontend-e2e-visual` 잡. Linux 기준 이미지가 없는 시각 비교는 PR 필수 검사에서 제외한다. 기존 macOS 시각 기준과 로컬 명령은 해당 디자인 변경을 검토할 때 사용한다.
-3. PR 템플릿 체크리스트: `.github/pull_request_template.md`
+CI는 핵심 테스트·인증/권한 검사, 그래프 상호작용 E2E, 운영 Render 백엔드 이미지 빌드, 보안 검사를 실행한다. 프론트 빌드는 Vercel 배포 검사에서 확인한다. 스냅샷 라벨·체크박스·별도 실행 로그는 통과 요건이 아니다.
+
+Linux 기준 이미지가 없는 픽셀 비교는 기본 CI에서 제외한다. 기존 macOS 기준 이미지와 `make test-frontend-visual` 명령은 관련 디자인 변경을 확인할 때 사용할 수 있다.
+
+전체 백엔드 테스트는 `make test-backend-full`로 수동 실행한다. 기존 인증 fixture·HTTPX/DB 인터페이스·예전 기대값에서 실패가 남아 있으며, 핵심 CI 통과는 전체 테스트 통과를 의미하지 않는다.
