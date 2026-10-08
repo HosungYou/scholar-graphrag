@@ -49,5 +49,5 @@ npx playwright test -c playwright.config.ts e2e/visual-regression.spec.ts --upda
 ## CI 연동
 
 1. PR triage gate: `.github/workflows/ci.yml` `snapshot-triage` 잡
-2. PR E2E/Visual gate: `.github/workflows/ci.yml` `frontend-e2e-visual` 잡
+2. PR 상호작용 E2E: `.github/workflows/ci.yml` `frontend-e2e-visual` 잡. Linux 기준 이미지가 없는 시각 비교는 PR 필수 검사에서 제외한다. 기존 macOS 시각 기준과 로컬 명령은 해당 디자인 변경을 검토할 때 사용한다.
 3. PR 템플릿 체크리스트: `.github/pull_request_template.md`

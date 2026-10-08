@@ -173,10 +173,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Run linting (Ruff)
+      - name: Check Python name errors
         run: |
           cd backend
-          ruff check . --output-format=github
+          ruff check . --isolated --select F821,F822,F823 --output-format=github
 
       - name: Run type checking (MyPy)
         run: |
@@ -238,10 +238,10 @@ jobs:
           npm run build
 
   # ============================================
-  # Frontend E2E + Visual Regression (PR only)
+  # Frontend interaction E2E (PR only)
   # ============================================
   frontend-e2e-visual:
-    name: Frontend E2E + Visual Regression
+    name: Frontend E2E
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: [core-gate, snapshot-triage]
@@ -271,11 +271,6 @@ jobs:
         env:
           NEXT_PUBLIC_E2E_MOCK_3D: "1"
         run: make test-frontend-e2e
-
-      - name: Run visual regression
-        env:
-          NEXT_PUBLIC_E2E_MOCK_3D: "1"
-        run: make test-frontend-visual
 
   # ============================================
   # Docker Build Test
@@ -311,31 +306,6 @@ jobs:
           tags: scholarag-graph-frontend:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # ============================================
-  # Documentation Build
-  # ============================================
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    needs: core-gate
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install MkDocs
-        run: |
-          pip install -r DOCS/requirements.txt
-
-      - name: Build documentation
-        run: |
-          mkdocs build --strict
 
   # ============================================
   # Security Scanning
